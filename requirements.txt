@@ -1,0 +1,17 @@
+# FastMCP Windows Automation Server Dependencies
+
+# FastMCP - Model Context Protocol server
+mcp>=1.0.0
+
+# pywinauto - Windows GUI automation
+pywinauto>=0.6.8
+
+# Pixel-based automation (optional)
+pyautogui>=0.9.54
+Pillow>=10.0.0
+
+# Configuration
+PyYAML>=6.0
+
+# Type hints
+typing-extensions>=4.0.0

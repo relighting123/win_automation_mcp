@@ -1,0 +1,177 @@
+# UI Locator Configuration
+# UI 요소 탐색 설정 (pywinauto child_window() 인자로 전달됨)
+#
+# auto_id (AutomationId)가 있는 경우 가장 권장되는 방식입니다.
+# auto_id가 없는 경우 다음 조합을 시도할 수 있습니다:
+# 1. title + control_type
+# 2. class_name + control_type
+# 3. found_index (같은 속성의 요소가 여러 개일 때 0부터 시작하는 인덱스)
+#
+# 기타 지원 속성: name, control_id, depth, help_text, friendly_class_name 등
+# pywinauto의 child_window()에서 지원하는 모든 검색 조건을 사용할 수 있습니다.
+
+# 로그인 윈도우
+login_window:
+  # 윈도우 식별
+  window:
+    title: "ezDFS2 Login"
+    control_type: "Window"
+    auto_id: "LoginWindow"
+  
+  # UI 요소들
+  elements:
+    username_input:
+      auto_id: "txtUsername"
+      control_type: "Edit"
+      description: "사용자명 입력 필드"
+    
+    password_input:
+      auto_id: "txtPassword"
+      control_type: "Edit"
+      description: "비밀번호 입력 필드"
+    
+    login_button:
+      auto_id: "btnLogin"
+      control_type: "Button"
+      description: "로그인 버튼"
+    
+    cancel_button:
+      auto_id: "btnCancel"
+      control_type: "Button"
+      description: "취소 버튼"
+    
+    error_message:
+      auto_id: "lblError"
+      control_type: "Text"
+      description: "오류 메시지 레이블"
+    
+    remember_checkbox:
+      auto_id: "chkRemember"
+      control_type: "CheckBox"
+      description: "자동 로그인 체크박스"
+
+# 메인 윈도우
+main_window:
+  # 윈도우 식별
+  window:
+    title: "Main Application"
+    control_type: "Window"
+    auto_id: "MainWindow"
+  
+  # UI 요소들
+  elements:
+    # 메뉴바
+    menu_bar:
+      auto_id: "menuBar"
+      control_type: "MenuBar"
+      description: "메인 메뉴바"
+    
+    file_menu:
+      auto_id: "menuFile"
+      control_type: "MenuItem"
+      description: "파일 메뉴"
+    
+    # 툴바
+    toolbar:
+      auto_id: "toolBar"
+      control_type: "ToolBar"
+      description: "메인 툴바"
+    
+    run_button:
+      auto_id: "btnRun"
+      control_type: "Button"
+      description: "실행 버튼"
+    
+    stop_button:
+      auto_id: "btnStop"
+      control_type: "Button"
+      description: "중지 버튼"
+    
+    export_button:
+      auto_id: "btnExport"
+      control_type: "Button"
+      description: "내보내기 버튼"
+    
+    # 상태바
+    status_bar:
+      auto_id: "statusBar"
+      control_type: "StatusBar"
+      description: "상태바"
+    
+    status_text:
+      auto_id: "lblStatus"
+      control_type: "Text"
+      description: "상태 텍스트"
+    
+    # 데이터 영역
+    data_grid:
+      auto_id: "gridData"
+      control_type: "DataGrid"
+      description: "데이터 그리드"
+    
+    tree_view:
+      auto_id: "treeView"
+      control_type: "Tree"
+      description: "트리 뷰"
+    
+    # 입력 필드들
+    search_input:
+      auto_id: "txtSearch"
+      control_type: "Edit"
+      description: "검색 입력 필드"
+    
+    search_button:
+      auto_id: "btnSearch"
+      control_type: "Button"
+      description: "검색 버튼"
+
+# 결과 윈도우 (모달 다이얼로그)
+result_window:
+  window:
+    title: "Result"
+    control_type: "Window"
+    auto_id: "ResultDialog"
+  
+  elements:
+    result_text:
+      auto_id: "txtResult"
+      control_type: "Text"
+      description: "결과 텍스트"
+    
+    ok_button:
+      auto_id: "btnOK"
+      control_type: "Button"
+      description: "확인 버튼"
+    
+    save_button:
+      auto_id: "btnSave"
+      control_type: "Button"
+      description: "저장 버튼"
+
+# 설정 윈도우
+settings_window:
+  window:
+    title: "Settings"
+    control_type: "Window"
+    auto_id: "SettingsWindow"
+  
+  elements:
+    tab_control:
+      auto_id: "tabSettings"
+      control_type: "Tab"
+      description: "설정 탭 컨트롤"
+    
+    apply_button:
+      auto_id: "btnApply"
+      control_type: "Button"
+      description: "적용 버튼"
+    
+    ok_button:
+      auto_id: "btnOK"
+      control_type: "Button"
+      description: "확인 버튼"
+    
+    cancel_button:
+      auto_id: "btnCancel"
+      control_type: "Button"
+      description: "취소 버튼"

@@ -1,0 +1,44 @@
+# Application Configuration for Windows Automation
+# FastMCP + pywinauto 기반 윈도우 자동화 설정
+
+application:
+  # 타겟 애플리케이션 경로
+  executable_path: "C:\\Users\\jaehw\\OneDrive\\바탕 화면\\김재환(910905)-2025년도자료(1.19).pdf"
+  # 애플리케이션 이름 (프로세스 식별용)
+  process_name: "app.exe"
+  # pywinauto backend 설정 (uia 권장)
+  backend: "uia"
+  # 애플리케이션 시작 후 초기화 대기 시간 (초)
+  startup_timeout: 30
+
+timeouts:
+  # 기본 요소 대기 시간 (초)
+  default_wait: 10
+  # 긴 작업 대기 시간 (초)
+  long_wait: 60
+  # 짧은 작업 대기 시간 (초)
+  short_wait: 3
+  # 재시도 간격 (초)
+  retry_interval: 0.5
+
+retry:
+  # 기본 재시도 횟수
+  default_attempts: 3
+  # 연결 재시도 횟수
+  connection_attempts: 5
+
+logging:
+  # 로그 레벨 (DEBUG, INFO, WARNING, ERROR)
+  level: "INFO"
+  # 로그 파일 경로
+  file_path: "logs/automation.log"
+  # 로그 파일 최대 크기 (MB)
+  max_size_mb: 10
+  # 로그 파일 보관 개수
+  backup_count: 5
+
+server:
+  # FastMCP 서버 이름
+  name: "Windows Automation MCP Server"
+  # 서버 버전
+  version: "1.0.0"
