@@ -15,3 +15,13 @@ PyYAML>=6.0
 
 # Type hints
 typing-extensions>=4.0.0
+
+# Finetuning Dependencies
+torch
+transformers
+peft
+trl
+bitsandbytes
+accelerate
+datasets
+sentencepiece

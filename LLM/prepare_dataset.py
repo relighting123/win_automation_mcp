@@ -49,7 +49,11 @@ def generate_scenarios() -> List[Dict[str, Any]]:
         "messages": [
             {"role": "user", "content": "메모장 하나 열어줘."},
             {"role": "assistant", "content": None, "tool_calls": [
-                {"name": "launch_program", "arguments": {"program_name": "notepad"}}
+                {
+                    "id": "call_001",
+                    "type": "function",
+                    "function": {"name": "launch_program", "arguments": json.dumps({"program_name": "notepad"})}
+                }
             ]}
         ]
     })
@@ -59,7 +63,11 @@ def generate_scenarios() -> List[Dict[str, Any]]:
         "messages": [
             {"role": "user", "content": "여기에 '안녕하세요'라고 입력해."},
             {"role": "assistant", "content": None, "tool_calls": [
-                {"name": "type_text", "arguments": {"text": "안녕하세요", "clear_first": False}}
+                {
+                    "id": "call_002",
+                    "type": "function",
+                    "function": {"name": "type_text", "arguments": json.dumps({"text": "안녕하세요", "clear_first": False})}
+                }
             ]}
         ]
     })
@@ -69,7 +77,11 @@ def generate_scenarios() -> List[Dict[str, Any]]:
         "messages": [
             {"role": "user", "content": "C:\\temp\\test.txt 경로에 저장해줘."},
             {"role": "assistant", "content": None, "tool_calls": [
-                {"name": "save_file", "arguments": {"file_path": "C:\\temp\\test.txt"}}
+                {
+                    "id": "call_003",
+                    "type": "function",
+                    "function": {"name": "save_file", "arguments": json.dumps({"file_path": "C:\\temp\\test.txt"})}
+                }
             ]}
         ]
     })
@@ -85,4 +97,3 @@ if __name__ == "__main__":
     dataset = generate_scenarios()
     save_dataset("tool_calling_dataset.jsonl", dataset)
     print(f"Generated {len(dataset)} scenarios in tool_calling_dataset.jsonl")
-泛泛泛

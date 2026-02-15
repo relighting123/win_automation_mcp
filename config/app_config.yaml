@@ -2,9 +2,9 @@
 # FastMCP + pywinauto 기반 윈도우 자동화 설정
 
 application:
-  # 타겟 애플리케이션 경로
-  executable_path: "C:\\Users\\jaehw\\OneDrive\\바탕 화면\\김재환(910905)-2025년도자료(1.19).pdf"
-  # 애플리케이션 이름 (프로세스 식별용)
+  # 타겟 애플리케이션 경로(프로그램 실행시 사용)
+  executable_path: "C:\\Program Files\\cursor\\Cursor.exe"
+  # 애플리케이션 이름 (프로세스 실행 중인지 등을 판단하는 용도)
   process_name: "app.exe"
   # pywinauto backend 설정 (uia 권장)
   backend: "uia"
