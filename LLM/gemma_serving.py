@@ -44,8 +44,176 @@ class ChatMessage(BaseModel):
 
 class ToolCallRequest(BaseModel):
     messages: List[ChatMessage]
-    tools: List[Dict[str, Any]]
+    tools: Optional[List[Dict[str, Any]]] = None
     temperature: float = 0.1
+
+# MCP 서버의 통합 도구 정의 목록
+MCP_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "launch_application",
+            "description": "Start or launch a new Windows application. Use this only when the application is NOT currently running.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "executable_path": {"type": "string", "description": "Path to the executable file (e.g., notepad, calc, chrome)"},
+                    "wait_for_window": {"type": "boolean", "description": "Whether to wait for the main window to appear (default: True)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "connect_to_application",
+            "description": "이미 실행 중인 애플리케이션에 연결합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "process_id": {"type": "integer", "description": "프로세스 ID"},
+                    "window_title": {"type": "string", "description": "윈도우 제목"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_application",
+            "description": "Close or terminate the currently running target application. Use this when the user wants to exit, quit, or stop the program.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "force": {"type": "boolean", "description": "Whether to force kill the process (default: False)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "restart_application",
+            "description": "애플리케이션을 재시작합니다."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_connection_status",
+            "description": "현재 애플리케이션 연결 상태를 확인합니다."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_analysis",
+            "description": "분석/처리 작업을 실행합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "wait_for_completion": {"type": "boolean", "description": "완료 대기 여부"},
+                    "timeout": {"type": "number", "description": "대기 시간(초)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_analysis",
+            "description": "실행 중인 분석 작업을 중지합니다."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "export_result",
+            "description": "분석 결과를 파일로 내보냅니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "저장할 파일 경로"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "데이터를 검색합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "검색할 텍스트"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_application_status",
+            "description": "애플리케이션의 현재 UI 상태를 조회합니다."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "right_click_by_rgb",
+            "description": "화면에서 특정 RGB 픽셀을 찾아 우클릭합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "r": {"type": "integer", "description": "Red (0-255)"},
+                    "g": {"type": "integer", "description": "Green (0-255)"},
+                    "b": {"type": "integer", "description": "Blue (0-255)"},
+                    "tolerance": {"type": "integer", "description": "허용 오차"}
+                },
+                "required": ["r", "g", "b"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "login",
+            "description": "애플리케이션에 로그인합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "username": {"type": "string"},
+                    "password": {"type": "string"},
+                    "remember_me": {"type": "boolean"}
+                },
+                "required": ["username", "password"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "logout",
+            "description": "로그아웃합니다."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_login_status",
+            "description": "로그인 상태를 확인합니다."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_for_login_window",
+            "description": "로그인 윈도우가 나타날 때까지 대기합니다."
+        }
+    }
+]
 
 # MCP 서버 URL (기본값)
 MCP_URL = "http://localhost:8000/mcp"
@@ -164,14 +332,21 @@ async def chat_completions(request: ToolCallRequest):
         for msg in request.messages:
             chat.append({"role": msg.role, "content": msg.content})
             
-        # 텐서 준비 (attention_mask 포함)
+        # 텐서 준비 (서버에 정의된 MCP_TOOLS 우선 사용)
+        actual_tools = request.tools if request.tools is not None else MCP_TOOLS
         inputs = tokenizer.apply_chat_template(
             chat,
-            tools=request.tools,
+            tools=actual_tools,
             add_generation_prompt=True,
             return_tensors="pt",
             return_dict=True
         ).to(model.device)
+        
+        # 디버깅: 모델에게 전달되는 실제 프롬프트 확인
+        full_prompt = tokenizer.decode(inputs["input_ids"][0])
+        print("--- DEBUG: FULL PROMPT SENT TO MODEL ---")
+        print(full_prompt)
+        print("--- DEBUG: END PROMPT ---")
         
         # 생성
         outputs = model.generate(

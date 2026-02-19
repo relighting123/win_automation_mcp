@@ -110,7 +110,7 @@ class RunAction:
         timeout = timeout or self._session.get_timeout("long_wait")
         
         logger.info("분석 실행 시도")
-        
+        # [추가됨] 윈도우 키 한 번 누르기
         try:
             # 1. 메인 윈도우 확인
             if not self.main_window.exists():
@@ -129,7 +129,9 @@ class RunAction:
             # 3. 실행 버튼 클릭
             import time
             start_time = time.monotonic()
-            
+          
+  
+
             self.main_window.click_run_button()
             logger.info("실행 버튼 클릭")
             

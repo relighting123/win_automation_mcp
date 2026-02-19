@@ -3,9 +3,9 @@
 
 application:
   # 타겟 애플리케이션 경로(프로그램 실행시 사용)
-  executable_path: "C:\\Program Files\\cursor\\Cursor.exe"
+  executable_path: "C:\\Program Files\\Notepad++\\notepad++.exe"
   # 애플리케이션 이름 (프로세스 실행 중인지 등을 판단하는 용도)
-  process_name: "app.exe"
+  process_name: "notepad++.exe"
   # pywinauto backend 설정 (uia 권장)
   backend: "uia"
   # 애플리케이션 시작 후 초기화 대기 시간 (초)

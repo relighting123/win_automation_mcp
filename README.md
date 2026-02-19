@@ -307,3 +307,8 @@ window.child_window(**locator)
 ## 라이선스
 
 MIT License
+
+
+streamlit run streamlit_app.py
+python mcp_server.py
+python gemma_serving.py
