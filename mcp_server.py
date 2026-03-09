@@ -95,20 +95,28 @@ def register_all_tools() -> None:
     """모든 도구를 FastMCP 서버에 등록"""
     from tools.app_tool import register_app_tools
     from tools.color_click_tool import register_color_click_tools
+    from tools.desktop_tool import register_desktop_tools
     from tools.login_tool import register_login_tools
     from tools.run_tool import register_run_tools
+    from tools.source_open_tool import register_source_open_tools
     
     # 애플리케이션 관리 도구
     register_app_tools(mcp)
     
     # 색상 기반 도구
     register_color_click_tools(mcp)
+
+    # 공용 데스크톱 도구
+    register_desktop_tools(mcp)
     
     # 로그인 관련 도구
     register_login_tools(mcp)
     
     # 실행/분석 관련 도구
     register_run_tools(mcp)
+
+    # 소스 오픈 도구
+    register_source_open_tools(mcp)
     
     logger.info("모든 도구 등록 완료")
 
