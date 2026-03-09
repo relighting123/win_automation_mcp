@@ -95,6 +95,7 @@ def register_all_tools() -> None:
     """모든 도구를 FastMCP 서버에 등록"""
     from tools.app_tool import register_app_tools
     from tools.color_click_tool import register_color_click_tools
+    from tools.locator_tool import register_locator_tools
     from tools.login_tool import register_login_tools
     from tools.run_tool import register_run_tools
     
@@ -103,6 +104,9 @@ def register_all_tools() -> None:
     
     # 색상 기반 도구
     register_color_click_tools(mcp)
+
+    # locator 갱신 도구
+    register_locator_tools(mcp)
     
     # 로그인 관련 도구
     register_login_tools(mcp)

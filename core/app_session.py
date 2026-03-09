@@ -141,6 +141,16 @@ class AppSession:
                     logger.warning(f"Locator 로드 실패: {e}")
         
         self._locators = {}
+
+    def reload_locators(self) -> Dict[str, Any]:
+        """
+        locator 설정을 다시 로드합니다.
+
+        Returns:
+            최신 locator 딕셔너리
+        """
+        self._load_locators()
+        return self._locators
     
     @property
     def state(self) -> SessionState:
