@@ -120,79 +120,37 @@ class LoginAction:
             self._main_window = MainWindow(self._session)
         return self._main_window
     
-    def login(
+    def prepare_login(self, timeout: float = 5.0) -> bool:
+        """로그인 입력 전 준비 (입력 필드 대기 및 초기화)"""
+        try:
+            self.login_window.wait_until_inputs_ready(timeout=timeout)
+            self.login_window.clear_all_inputs()
+            return True
+        except Exception as e:
+            logger.error(f"로그인 준비 실패: {e}")
+            return False
+
+    def perform_login_inputs(
         self,
         username: str,
         password: str,
-        remember_me: bool = False,
-        timeout: Optional[float] = None
-    ) -> LoginResponse:
-        """
-        로그인 수행
-        
-        Args:
-            username: 사용자명
-            password: 비밀번호
-            remember_me: 자동 로그인 체크 여부
-            timeout: 로그인 완료 대기 시간
-        
-        Returns:
-            LoginResponse: 로그인 결과
-        
-        Raises:
-            LoginError: 복구 불가능한 로그인 오류 발생 시
-        """
-        timeout = timeout or self._session.get_timeout("default_wait")
-        
-        logger.info(f"로그인 시도: {username}")
-        
+        remember_me: bool = False
+    ) -> bool:
+        """로그인 정보 입력 및 버튼 클릭 (Atomic Action들의 조합이지만, UI 레벨의 한 단위로 볼 수 있음)"""
         try:
-            # 1. 로그인 윈도우 대기
-            if not self._wait_for_login_window(timeout):
-                return LoginResponse(
-                    result=LoginResult.TIMEOUT,
-                    message="로그인 윈도우가 나타나지 않았습니다",
-                    username=username
-                )
-            
-            # 2. 입력 필드 준비 대기
-            self.login_window.wait_until_inputs_ready(timeout=5)
-            
-            # 3. 기존 입력 삭제
-            self.login_window.clear_all_inputs()
-            
-            # 4. 사용자명 입력
             self.login_window.input_username(username)
-            
-            # 5. 비밀번호 입력
             self.login_window.input_password(password)
-            
-            # 6. 자동 로그인 설정 (옵션)
             if remember_me:
                 self.login_window.set_remember_me(True)
-            
-            # 7. 로그인 버튼 클릭
             self.login_window.click_login_button()
-            
-            # 8. 결과 확인
-            return self._check_login_result(username, timeout)
-            
-        except TimeoutError as e:
-            logger.error(f"로그인 시간 초과: {e}")
-            return LoginResponse(
-                result=LoginResult.TIMEOUT,
-                message=str(e),
-                username=username,
-                error_detail=str(e)
-            )
+            return True
         except Exception as e:
-            logger.error(f"로그인 중 예외 발생: {e}")
-            return LoginResponse(
-                result=LoginResult.UNKNOWN_ERROR,
-                message=f"로그인 중 오류 발생: {e}",
-                username=username,
-                error_detail=str(e)
-            )
+            logger.error(f"로그인 입력 처리 실패: {e}")
+            return False
+
+    def check_result(self, username: str, timeout: float) -> LoginResponse:
+        """로그인 결과 확인 (Atomic Action)"""
+        return self._check_login_result(username, timeout)
     
     def _wait_for_login_window(self, timeout: float) -> bool:
         """로그인 윈도우 대기"""

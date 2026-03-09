@@ -59,15 +59,44 @@ def register_login_tools(mcp: Any) -> None:
             >>> await login("user", "wrong_password")
             {"is_success": False, "result": "invalid_credentials", "message": "로그인 실패: 잘못된 자격 증명", ...}
         """
-        logger.info(f"[Tool] login 호출: username={username}, remember_me={remember_me}")
-        
         try:
             action = get_login_action()
-            response: LoginResponse = action.login(
+            from actions.login_action import LoginResult, LoginResponse
+            
+            # 1. 로그인 윈도우 대기 (Atomic Action)
+            timeout = 30.0 # 기본 대기 시간
+            if not action.wait_for_login_window(timeout=timeout):
+                return {
+                    "is_success": False,
+                    "result": "timeout",
+                    "message": "로그인 윈도우가 나타나지 않았습니다",
+                    "username": username
+                }
+            
+            # 2. 로그인 준비 (Atomic Action - 입력 필드 초기화 등)
+            if not action.prepare_login(timeout=5.0):
+                return {
+                    "is_success": False,
+                    "result": "error",
+                    "message": "로그인 화면 준비 실패",
+                    "username": username
+                }
+            
+            # 3. 로그인 정보 입력 및 실행 (Atomic Action)
+            if not action.perform_login_inputs(
                 username=username,
                 password=password,
                 remember_me=remember_me
-            )
+            ):
+                return {
+                    "is_success": False,
+                    "result": "error",
+                    "message": "로그인 정보 입력 실패",
+                    "username": username
+                }
+            
+            # 4. 결과 확인 (Atomic Action)
+            response: LoginResponse = action.check_result(username, timeout=timeout)
             
             result = response.to_dict()
             logger.info(f"[Tool] login 결과: {result['result']}")

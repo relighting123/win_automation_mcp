@@ -5,6 +5,7 @@ LLM이 호출할 수 있는 애플리케이션 실행/종료 관련 도구들을
 """
 
 import logging
+import sys
 from typing import Optional, Any
 
 from core.app_launcher import AppLauncher, get_launcher
@@ -295,4 +296,51 @@ def register_app_tools(mcp: Any) -> None:
                 "error": str(e)
             }
     
-    logger.info("애플리케이션 관리 도구 등록 완료: launch_application, connect_to_application, close_application, restart_application, get_connection_status")
+    @mcp.tool()
+    async def generate_locators(window_type: Optional[str] = None) -> dict:
+        """
+        현재 활성화된 윈도우의 UI 요소를 추출하여 locator.yaml을 생성/업데이트합니다.
+        
+        대상을 지정하지 않으면 윈도우 제목을 바탕으로 login_window, main_window, 
+        result_window 중 하나로 자동 판단합니다.
+        
+        Args:
+            window_type: 윈도우 타입 (login_window, main_window, result_window 중 선택)
+            
+        Returns:
+            dict: 생성 결과
+        """
+        logger.info(f"[Tool] generate_locators 호출: type={window_type}")
+        
+        import subprocess
+        from pathlib import Path
+        
+        try:
+            script_path = Path(__file__).parent.parent / "scripts" / "generate_locators.py"
+            cmd = [sys.executable, str(script_path)]
+            if window_type:
+                cmd.extend(["--type", window_type])
+                
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            return {
+                "success": True,
+                "message": f"Locator 생성 완료: {window_type or '자동 판단'}",
+                "output": result.stdout
+            }
+        except subprocess.CalledProcessError as e:
+            logger.error(f"[Tool] generate_locators 실패: {e.stderr}")
+            return {
+                "success": False,
+                "message": f"Locator 생성 실패: {e.stderr}",
+                "error": str(e)
+            }
+        except Exception as e:
+            logger.error(f"[Tool] generate_locators 예외: {e}")
+            return {
+                "success": False,
+                "message": f"Locator 생성 오류: {e}",
+                "error_detail": str(e)
+            }
+
+    logger.info("애플리케이션 관리 도구 등록 완료: launch_application, connect_to_application, close_application, restart_application, get_connection_status, generate_locators")

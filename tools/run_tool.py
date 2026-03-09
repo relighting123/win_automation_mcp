@@ -57,15 +57,22 @@ def register_run_tools(mcp: Any) -> None:
         
         try:
             action = get_run_action()
-            response: RunResponse = action.run_analysis(
-                wait_for_completion=wait_for_completion,
-                timeout=timeout
-            )
+            import time
+            start_time = time.monotonic()
             
-            result = response.to_dict()
-            logger.info(f"[Tool] run_analysis 결과: {result['result']}")
+            # 1. 분석 시작 (Atomic Action)
+            response = action.start_analysis()
+            if not response.is_success:
+                return response.to_dict()
             
-            return result
+            # 2. 실행 상태 진입 대기 (Atomic Action)
+            action.wait_for_running(timeout=10.0)
+            
+            # 3. 완료 대기 (선택적, Atomic Action)
+            if wait_for_completion:
+                return action.wait_for_completion(start_time, timeout).to_dict()
+            else:
+                return response.to_dict()
             
         except AutomationError as e:
             logger.error(f"[Tool] run_analysis 오류: {e}")

@@ -398,4 +398,18 @@ async def chat_completions(request: ToolCallRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    
+    # 프로젝트 루트를 Python 경로에 추가 (core 모듈을 찾기 위함)
+    project_root = Path(__file__).parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+        
+    try:
+        from core.network_utils import kill_process_on_port
+        kill_process_on_port(8001)
+    except ImportError:
+        print("Warning: Could not import kill_process_on_port. Skipping port cleanup.")
+        
     uvicorn.run(app, host="0.0.0.0", port=8001)

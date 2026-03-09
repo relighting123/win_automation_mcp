@@ -95,7 +95,7 @@ def register_all_tools() -> None:
     """모든 도구를 FastMCP 서버에 등록"""
     from tools.app_tool import register_app_tools
     from tools.color_click_tool import register_color_click_tools
-    from tools.desktop_tool import register_desktop_tools
+    from tools.app_ui_tool import register_app_ui_tools
     from tools.login_tool import register_login_tools
     from tools.run_tool import register_run_tools
     from tools.source_open_tool import register_source_open_tools
@@ -106,8 +106,8 @@ def register_all_tools() -> None:
     # 색상 기반 도구
     register_color_click_tools(mcp)
 
-    # 공용 데스크톱 도구
-    register_desktop_tools(mcp)
+    # 애플리케이션 UI 도구 (OCR/픽셀)
+    register_app_ui_tools(mcp)
     
     # 로그인 관련 도구
     register_login_tools(mcp)
@@ -212,6 +212,76 @@ async def get_locators_config() -> str:
 # 서버 실행
 # ============================================================
 
+def run_with_reloader(args):
+    """파일 변경 감지 및 자동 재시작 로직 (Master Process)"""
+    import subprocess
+    import time
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+
+    class ReloadHandler(FileSystemEventHandler):
+        def __init__(self, restart_func):
+            self.restart_func = restart_func
+            self._last_reload = 0
+
+        def on_any_event(self, event):
+            # .py 또는 .yaml 파일 변경 시에만 재시작
+            if event.is_directory:
+                return
+            if not event.src_path.endswith(('.py', '.yaml')):
+                return
+            
+            # 디바운싱: 너무 빈번한 재시작 방지 (1초 간격)
+            now = time.time()
+            if now - self._last_reload < 1.0:
+                return
+            self._last_reload = now
+            
+            logger.info(f"변경 감지됨: {event.src_path}. 서버를 재시작합니다...")
+            self.restart_func()
+
+    process = None
+
+    def start_server():
+        nonlocal process
+        if process:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        
+        # 실제 서버 프로세스 실행 (자신을 subprocess로 실행하되 --reload 없이)
+        cmd = [sys.executable] + [a for a in sys.argv if a != "--reload"]
+        process = subprocess.Popen(cmd)
+
+    # 초기 실행
+    start_server()
+
+    # 파일 감시 시작
+    event_handler = ReloadHandler(start_server)
+    observer = Observer()
+    # 현재 디렉토리 감시
+    observer.schedule(event_handler, path=str(Path(__file__).parent), recursive=True)
+    observer.start()
+
+    logger.info("Auto-reload 활성화됨. 파일 변경을 감시합니다.")
+
+    try:
+        while True:
+            time.sleep(1)
+            # 하위 프로세스가 죽었는지 체크
+            if process.poll() is not None:
+                logger.warning("서버 프로세스가 종료되었습니다. 재시작 대기 중...")
+                time.sleep(2)
+                start_server()
+    except KeyboardInterrupt:
+        observer.stop()
+        if process:
+            process.terminate()
+    observer.join()
+
+
 def main():
     """메인 진입점"""
     import argparse
@@ -252,11 +322,25 @@ def main():
         default="/mcp",
         help="HTTP 경로 (기본: /mcp)"
     )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="파일 변경 시 자동 재시작 활성화"
+    )
     
     args = parser.parse_args()
     
+    if args.reload:
+        run_with_reloader(args)
+        return
+
     # 로깅 레벨 업데이트
     logging.getLogger().setLevel(getattr(logging, args.log_level))
+    
+    # 포트 충돌 해결 (기존 프로세스 종료)
+    if args.transport in ("http", "streamable-http", "sse"):
+        from core.network_utils import kill_process_on_port
+        kill_process_on_port(args.port)
     
     # 서버 초기화
     _server_state.initialize()
@@ -285,7 +369,9 @@ def main():
         logger.info("서버 종료 요청")
     except Exception as e:
         logger.error(f"서버 오류: {e}")
-        raise
+        # subprocess 환경이 아닐 때만 raise (reloader에서 핸들링하도록)
+        if not args.reload:
+            raise
     finally:
         _server_state.cleanup()
         logger.info("서버 종료")

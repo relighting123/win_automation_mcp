@@ -5,8 +5,6 @@
 import logging
 from typing import Any
 
-from actions.color_click_action import ColorClickAction
-
 logger = logging.getLogger(__name__)
 
 
@@ -48,8 +46,25 @@ def register_color_click_tools(mcp: Any) -> None:
             timeout,
         )
 
-        action = ColorClickAction((r, g, b), tolerance=tolerance, step=step)
-        result = action.find_and_right_click(timeout=timeout)
-        return result.to_dict()
+        from actions.app_ui_action import get_app_ui_action
+        action = get_app_ui_action()
+        
+        # 1. 위치 찾기 (Atomic Action)
+        find_result = action.find_rgb_position(
+            rgb=(r, g, b),
+            tolerance=tolerance,
+            step=step,
+            timeout=timeout,
+        )
+        if not find_result.is_success:
+            return find_result.to_dict()
+
+        # 2. 우클릭하기 (Atomic Action)
+        click_result = action.click_position(
+            x=find_result.x or 0,
+            y=find_result.y or 0,
+            button="right",
+        )
+        return click_result.to_dict()
 
     logger.info("색상 기반 도구 등록 완료: right_click_by_rgb")

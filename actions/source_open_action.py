@@ -5,13 +5,13 @@
 소스를 여는 시나리오를 업무 단위로 제공합니다.
 """
 
-from __future__ import annotations
-
 import logging
+import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from actions.desktop_action import DesktopAction
+from core.app_session import AppSession
+from actions.app_ui_action import AppUIAction, AppUIActionResult
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ class SourceOpenAction:
     룰 검색 기반 소스 오픈 Action
     """
 
-    def __init__(self, desktop_action: Optional[DesktopAction] = None):
-        self._desktop_action = desktop_action or DesktopAction()
+    def __init__(self, ui_action: Optional[AppUIAction] = None):
+        self._ui_action = ui_action or AppUIAction()
 
     def open_source_by_rule_search(
         self,
@@ -94,7 +94,7 @@ class SourceOpenAction:
             icon_rgb,
         )
 
-        open_result = self._desktop_action.press_shortcut(open_shortcut)
+        open_result = self._ui_action.press_shortcut(open_shortcut)
         if not open_result.is_success:
             return SourceOpenResponse(
                 result="error",
@@ -103,7 +103,7 @@ class SourceOpenAction:
                 open_shortcut=open_shortcut,
             )
 
-        click_result = self._desktop_action.click_by_rgb(
+        click_result = self._ui_action.click_by_rgb(
             rgb=icon_rgb,
             tolerance=icon_tolerance,
             step=scan_step,
@@ -120,7 +120,7 @@ class SourceOpenAction:
                 icon_y=click_result.y,
             )
 
-        input_result = self._desktop_action.type_text(
+        input_result = self._ui_action.type_text(
             text=query,
             interval=input_interval,
             submit_shortcut=submit_shortcut,

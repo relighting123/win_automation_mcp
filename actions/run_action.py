@@ -92,25 +92,8 @@ class RunAction:
             self._main_window = MainWindow(self._session)
         return self._main_window
     
-    def run_analysis(
-        self,
-        wait_for_completion: bool = True,
-        timeout: Optional[float] = None
-    ) -> RunResponse:
-        """
-        분석 실행
-        
-        Args:
-            wait_for_completion: 완료까지 대기 여부
-            timeout: 완료 대기 시간 (wait_for_completion=True일 때)
-        
-        Returns:
-            RunResponse: 실행 결과
-        """
-        timeout = timeout or self._session.get_timeout("long_wait")
-        
-        logger.info("분석 실행 시도")
-        # [추가됨] 윈도우 키 한 번 누르기
+    def start_analysis(self) -> RunResponse:
+        """분석 시작 (Atomic Action: 실행 버튼 클릭)"""
         try:
             # 1. 메인 윈도우 확인
             if not self.main_window.exists():
@@ -127,38 +110,29 @@ class RunAction:
                 )
             
             # 3. 실행 버튼 클릭
-            import time
-            start_time = time.monotonic()
-          
-  
-
             self.main_window.click_run_button()
             logger.info("실행 버튼 클릭")
             
-            # 4. 실행 시작 확인
-            try:
-                self.main_window.wait_until_running(timeout=10)
-            except TimeoutError:
-                # 실행이 즉시 완료되었을 수 있음
-                pass
-            
-            # 5. 완료 대기 (옵션)
-            if wait_for_completion:
-                return self._wait_for_completion(start_time, timeout)
-            else:
-                return RunResponse(
-                    result=RunResult.SUCCESS,
-                    message="분석이 시작되었습니다",
-                    elapsed_time=time.monotonic() - start_time
-                )
-                
+            return RunResponse(result=RunResult.SUCCESS, message="분석이 시작되었습니다")
         except Exception as e:
-            logger.error(f"분석 실행 중 오류: {e}")
+            logger.error(f"분석 시작 중 오류: {e}")
             return RunResponse(
                 result=RunResult.ERROR,
-                message=f"분석 실행 실패: {e}",
+                message=f"분석 시작 실패: {e}",
                 error_detail=str(e)
             )
+
+    def wait_for_running(self, timeout: float = 10.0) -> bool:
+        """실행 중 상태로 전환 대기 (Atomic Action)"""
+        try:
+            self.main_window.wait_until_running(timeout=timeout)
+            return True
+        except TimeoutError:
+            return False
+
+    def wait_for_completion(self, start_time: float, timeout: float) -> RunResponse:
+        """작업 완료 대기 (Atomic Action)"""
+        return self._wait_for_completion(start_time, timeout)
     
     def _wait_for_completion(
         self,
