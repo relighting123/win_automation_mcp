@@ -8,9 +8,10 @@ UIA 접근이 어려운 경우에만 사용하는 픽셀 기반 동작입니다.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from typing import Optional, Tuple
+
+from actions.desktop_action import DesktopAction
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,7 @@ class ColorClickAction:
         self.rgb = rgb
         self.tolerance = max(0, tolerance)
         self.step = max(1, step)
-
-    def _match(self, pixel: Iterable[int]) -> bool:
-        return all(abs(p - t) <= self.tolerance for p, t in zip(pixel, self.rgb))
+        self._desktop_action = DesktopAction()
 
     def find_and_right_click(self, timeout: Optional[float] = None) -> ColorClickResult:
         """
@@ -53,24 +52,17 @@ class ColorClickAction:
         Args:
             timeout: 탐색 제한 시간 (초, None이면 무제한)
         """
-        try:
-            import pyautogui
-        except Exception as e:  # pragma: no cover
-            logger.error(f"pyautogui 로드 실패: {e}")
-            return ColorClickResult(result="error", message=f"pyautogui 로드 실패: {e}")
+        result = self._desktop_action.click_by_rgb(
+            rgb=self.rgb,
+            tolerance=self.tolerance,
+            step=self.step,
+            button="right",
+            timeout=timeout,
+        )
 
-        start = time.monotonic()
-        screenshot = pyautogui.screenshot()
-        width, height = screenshot.size
-        pixels = screenshot.load()
-
-        for y in range(0, height, self.step):
-            if timeout is not None and time.monotonic() - start > timeout:
-                return ColorClickResult(result="timeout", message="색상 탐색 시간 초과")
-            for x in range(0, width, self.step):
-                if self._match(pixels[x, y]):
-                    pyautogui.moveTo(x, y)
-                    pyautogui.click(button="right")
-                    return ColorClickResult(result="success", x=x, y=y)
-
-        return ColorClickResult(result="not_found", message="RGB not found")
+        return ColorClickResult(
+            result=result.result,
+            x=result.x,
+            y=result.y,
+            message=result.message,
+        )
