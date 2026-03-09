@@ -8,6 +8,8 @@
 - RGB 기반 클릭
 - 텍스트(OCR) 위치 탐색
 - 텍스트(OCR) 기반 클릭
+- 이미지 위치 탐색
+- 이미지 기반 클릭
 """
 
 import logging
@@ -223,7 +225,103 @@ def register_desktop_tools(mcp: Any) -> None:
         )
         return result.to_dict()
 
+    @mcp.tool()
+    async def find_image_position(
+        image_path: str,
+        confidence: float | None = None,
+        grayscale: bool = False,
+        timeout: float | None = None,
+        region_left: int | None = None,
+        region_top: int | None = None,
+        region_width: int | None = None,
+        region_height: int | None = None,
+    ) -> dict:
+        """
+        화면에서 이미지(아이콘/그림) 위치를 찾습니다.
+
+        Args:
+            image_path: 템플릿 이미지 파일 경로
+            confidence: 유사도 임계값(0~1, OpenCV 필요)
+            grayscale: 흑백 매칭 사용 여부
+            timeout: 최대 탐색 시간
+            region_left: 탐색 영역 left
+            region_top: 탐색 영역 top
+            region_width: 탐색 영역 width
+            region_height: 탐색 영역 height
+        """
+        logger.info(
+            "[Tool] find_image_position 호출: image_path=%s, confidence=%s, timeout=%s",
+            image_path,
+            confidence,
+            timeout,
+        )
+        region = None
+        if None not in (region_left, region_top, region_width, region_height):
+            region = (int(region_left), int(region_top), int(region_width), int(region_height))
+
+        action = get_desktop_action()
+        result = action.find_image_position(
+            image_path=image_path,
+            confidence=confidence,
+            grayscale=grayscale,
+            timeout=timeout,
+            region=region,
+        )
+        return result.to_dict()
+
+    @mcp.tool()
+    async def click_by_image(
+        image_path: str,
+        button: str = "left",
+        clicks: int = 1,
+        confidence: float | None = None,
+        grayscale: bool = False,
+        timeout: float | None = None,
+        region_left: int | None = None,
+        region_top: int | None = None,
+        region_width: int | None = None,
+        region_height: int | None = None,
+    ) -> dict:
+        """
+        이미지(아이콘/그림)를 찾아 해당 위치를 클릭합니다.
+
+        Args:
+            image_path: 템플릿 이미지 파일 경로
+            button: left/right/middle
+            clicks: 클릭 횟수
+            confidence: 유사도 임계값(0~1, OpenCV 필요)
+            grayscale: 흑백 매칭 사용 여부
+            timeout: 최대 탐색 시간
+            region_left: 탐색 영역 left
+            region_top: 탐색 영역 top
+            region_width: 탐색 영역 width
+            region_height: 탐색 영역 height
+        """
+        logger.info(
+            "[Tool] click_by_image 호출: image_path=%s, button=%s, clicks=%d, confidence=%s, timeout=%s",
+            image_path,
+            button,
+            clicks,
+            confidence,
+            timeout,
+        )
+        region = None
+        if None not in (region_left, region_top, region_width, region_height):
+            region = (int(region_left), int(region_top), int(region_width), int(region_height))
+
+        action = get_desktop_action()
+        result = action.click_by_image(
+            image_path=image_path,
+            button=button,
+            clicks=clicks,
+            confidence=confidence,
+            grayscale=grayscale,
+            timeout=timeout,
+            region=region,
+        )
+        return result.to_dict()
+
     logger.info(
         "공용 데스크톱 도구 등록 완료: press_shortcut, find_rgb_position, click_position, click_by_rgb, "
-        "find_text_position, click_by_text"
+        "find_text_position, click_by_text, find_image_position, click_by_image"
     )

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -399,6 +400,105 @@ class DesktopAction:
         if click_result.is_success:
             click_result.matched_text = find_result.matched_text
         return click_result
+
+    def find_image_position(
+        self,
+        image_path: str,
+        *,
+        confidence: Optional[float] = None,
+        grayscale: bool = False,
+        timeout: Optional[float] = None,
+        region: Optional[Tuple[int, int, int, int]] = None,
+    ) -> DesktopActionResult:
+        """
+        화면에서 이미지(아이콘/그림) 위치를 찾습니다.
+
+        Args:
+            image_path: 찾을 템플릿 이미지 파일 경로
+            confidence: 유사도 임계값(0~1). 값 사용 시 OpenCV 필요
+            grayscale: 흑백 매칭 사용 여부
+            timeout: 최대 탐색 시간(None이면 1회 탐색)
+            region: 탐색 영역 (left, top, width, height)
+        """
+        pyautogui, error_result = self._get_pyautogui()
+        if error_result:
+            return error_result
+
+        target = Path(image_path)
+        if not target.exists() or not target.is_file():
+            return DesktopActionResult(result="error", message=f"이미지 파일을 찾을 수 없습니다: {image_path}")
+
+        if confidence is not None and not (0.0 <= confidence <= 1.0):
+            return DesktopActionResult(result="error", message="confidence는 0.0~1.0 범위여야 합니다")
+
+        if region is not None:
+            if len(region) != 4:
+                return DesktopActionResult(result="error", message="region은 (left, top, width, height) 형식이어야 합니다")
+            if any(v < 0 for v in region):
+                return DesktopActionResult(result="error", message="region 값은 음수일 수 없습니다")
+
+        start = time.monotonic()
+
+        while True:
+            locate_kwargs = {"grayscale": grayscale}
+            if region is not None:
+                locate_kwargs["region"] = region
+            if confidence is not None:
+                locate_kwargs["confidence"] = confidence
+
+            try:
+                box = pyautogui.locateOnScreen(str(target), **locate_kwargs)
+            except Exception as e:
+                err_text = str(e).lower()
+                if "confidence" in err_text or "opencv" in err_text or "cv2" in err_text:
+                    return DesktopActionResult(
+                        result="error",
+                        message=(
+                            f"confidence 기반 이미지 탐색 실패: {e}. "
+                            "opencv-python 설치 후 다시 시도하세요."
+                        ),
+                    )
+                return DesktopActionResult(result="error", message=f"이미지 탐색 실패: {e}")
+
+            if box is not None:
+                center = pyautogui.center(box)
+                return DesktopActionResult(result="success", x=int(center.x), y=int(center.y))
+
+            if timeout is None:
+                return DesktopActionResult(result="not_found", message="이미지를 찾을 수 없습니다")
+            if time.monotonic() - start > timeout:
+                return DesktopActionResult(result="timeout", message="이미지 탐색 시간 초과")
+
+    def click_by_image(
+        self,
+        image_path: str,
+        *,
+        button: str = "left",
+        clicks: int = 1,
+        confidence: Optional[float] = None,
+        grayscale: bool = False,
+        timeout: Optional[float] = None,
+        region: Optional[Tuple[int, int, int, int]] = None,
+    ) -> DesktopActionResult:
+        """
+        이미지(아이콘/그림)를 찾아 해당 위치를 클릭합니다.
+        """
+        find_result = self.find_image_position(
+            image_path=image_path,
+            confidence=confidence,
+            grayscale=grayscale,
+            timeout=timeout,
+            region=region,
+        )
+        if not find_result.is_success:
+            return find_result
+
+        return self.click_position(
+            x=find_result.x or 0,
+            y=find_result.y or 0,
+            button=button,
+            clicks=clicks,
+        )
 
 
 def get_desktop_action() -> DesktopAction:

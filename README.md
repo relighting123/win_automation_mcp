@@ -138,6 +138,8 @@ pip install mcp pywinauto pyyaml
 
 > OCR 기반 도구(`find_text_position`, `click_by_text`)를 사용하려면
 > Python 패키지 외에 OS에 Tesseract 실행 파일이 설치되어 있어야 합니다.
+> 이미지 기반 도구에서 `confidence` 옵션을 쓰려면 OpenCV가 필요합니다
+> (requirements에 `opencv-python` 포함).
 
 ## 설정
 
@@ -221,6 +223,8 @@ python mcp_server.py --transport http --host 127.0.0.1 --port 8000 --path /mcp
 - `click_by_rgb`: RGB 위치 탐색 후 클릭
 - `find_text_position`: OCR 텍스트 위치 탐색
 - `click_by_text`: OCR 텍스트 위치 탐색 후 클릭
+- `find_image_position`: 이미지(아이콘/그림) 위치 탐색
+- `click_by_image`: 이미지(아이콘/그림) 탐색 후 클릭
 
 ### 소스 오픈
 - `open_source_by_rule_search`: 단축키→아이콘 클릭→검색어 입력으로 소스 열기

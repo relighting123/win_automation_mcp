@@ -9,6 +9,7 @@ pywinauto>=0.6.8
 # Pixel-based automation (optional)
 pyautogui>=0.9.54
 Pillow>=10.0.0
+opencv-python>=4.13.0.92
 pytesseract>=0.3.13
 
 # Configuration
