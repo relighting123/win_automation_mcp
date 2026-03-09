@@ -25,6 +25,7 @@ class DesktopActionResult:
     y: Optional[int] = None
     shortcut: Optional[str] = None
     button: Optional[str] = None
+    matched_text: Optional[str] = None
 
     @property
     def is_success(self) -> bool:
@@ -38,6 +39,7 @@ class DesktopActionResult:
             "y": self.y,
             "shortcut": self.shortcut,
             "button": self.button,
+            "matched_text": self.matched_text,
             "is_success": self.is_success,
         }
 
@@ -70,6 +72,10 @@ class DesktopAction:
 
     def _match(self, pixel: Sequence[int], rgb: Tuple[int, int, int], tolerance: int) -> bool:
         return all(abs(int(p) - int(t)) <= tolerance for p, t in zip(pixel, rgb))
+
+    def _normalize_text(self, value: str, case_sensitive: bool) -> str:
+        text = " ".join(value.split())
+        return text if case_sensitive else text.lower()
 
     def press_shortcut(self, shortcut: str, interval: float = 0.05) -> DesktopActionResult:
         """
@@ -207,6 +213,192 @@ class DesktopAction:
             y=find_result.y or 0,
             button=button,
         )
+
+    def find_text_position(
+        self,
+        text: str,
+        *,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        timeout: Optional[float] = None,
+        min_confidence: float = 50.0,
+        language: str = "eng",
+    ) -> DesktopActionResult:
+        """
+        OCR로 화면에서 텍스트 위치를 찾습니다.
+
+        Args:
+            text: 찾을 텍스트 문자열
+            match_mode: "contains" 또는 "exact"
+            case_sensitive: 대소문자 구분 여부
+            timeout: 최대 탐색 시간(None이면 1회만 탐색)
+            min_confidence: OCR 최소 신뢰도 (0~100)
+            language: tesseract 언어 코드(기본: eng)
+        """
+        pyautogui, error_result = self._get_pyautogui()
+        if error_result:
+            return error_result
+
+        target_text = " ".join(text.split())
+        if not target_text:
+            return DesktopActionResult(result="error", message="찾을 텍스트가 비어 있습니다")
+
+        match_mode = match_mode.lower().strip()
+        if match_mode not in {"contains", "exact"}:
+            return DesktopActionResult(result="error", message=f"지원하지 않는 match_mode: {match_mode}")
+
+        try:
+            import pytesseract
+            from pytesseract import Output
+        except Exception as e:  # pragma: no cover
+            return DesktopActionResult(
+                result="error",
+                message=f"pytesseract 로드 실패: {e}. pip install pytesseract 후 사용하세요.",
+            )
+
+        try:
+            _ = pytesseract.get_tesseract_version()
+        except Exception as e:  # pragma: no cover
+            return DesktopActionResult(
+                result="error",
+                message=f"Tesseract 실행 파일을 찾을 수 없습니다: {e}",
+            )
+
+        target_norm = self._normalize_text(target_text, case_sensitive=case_sensitive)
+        target_words = target_norm.split()
+        start = time.monotonic()
+
+        while True:
+            screenshot = pyautogui.screenshot()
+            ocr_data = pytesseract.image_to_data(
+                screenshot,
+                lang=language,
+                output_type=Output.DICT,
+            )
+
+            # line 단위 그룹핑을 위해 word 결과를 먼저 정리합니다.
+            line_groups: dict[tuple[int, int, int], list[tuple[str, int, int, int, int]]] = {}
+            total = len(ocr_data.get("text", []))
+            for i in range(total):
+                raw_text = str(ocr_data["text"][i] or "").strip()
+                if not raw_text:
+                    continue
+
+                try:
+                    confidence = float(ocr_data["conf"][i])
+                except Exception:
+                    confidence = -1.0
+                if confidence < min_confidence:
+                    continue
+
+                left = int(ocr_data["left"][i])
+                top = int(ocr_data["top"][i])
+                width = int(ocr_data["width"][i])
+                height = int(ocr_data["height"][i])
+                block = int(ocr_data["block_num"][i])
+                paragraph = int(ocr_data["par_num"][i])
+                line = int(ocr_data["line_num"][i])
+
+                key = (block, paragraph, line)
+                line_groups.setdefault(key, []).append((raw_text, left, top, width, height))
+
+            # 1) 단일 단어 탐색
+            if len(target_words) == 1:
+                needle = target_words[0]
+                for words in line_groups.values():
+                    for word_text, left, top, width, height in words:
+                        candidate = self._normalize_text(word_text, case_sensitive=case_sensitive)
+                        matched = candidate == needle if match_mode == "exact" else needle in candidate
+                        if matched:
+                            return DesktopActionResult(
+                                result="success",
+                                x=left + width // 2,
+                                y=top + height // 2,
+                                matched_text=word_text,
+                            )
+            else:
+                # 2) 다중 단어(문구) 탐색: line 내 연속 단어 슬라이딩 윈도우
+                target_len = len(target_words)
+                for words in line_groups.values():
+                    sorted_words = sorted(words, key=lambda item: item[1])
+                    normalized_words = [
+                        self._normalize_text(word_text, case_sensitive=case_sensitive)
+                        for word_text, _, _, _, _ in sorted_words
+                    ]
+
+                    for start_idx in range(0, len(normalized_words)):
+                        if match_mode == "exact":
+                            end_idx = start_idx + target_len
+                            if end_idx > len(normalized_words):
+                                continue
+                            segment = " ".join(normalized_words[start_idx:end_idx])
+                            if segment != target_norm:
+                                continue
+                        else:
+                            end_idx = len(normalized_words)
+                            found = False
+                            for j in range(start_idx + target_len, len(normalized_words) + 1):
+                                segment = " ".join(normalized_words[start_idx:j])
+                                if target_norm in segment:
+                                    end_idx = j
+                                    found = True
+                                    break
+                            if not found:
+                                continue
+
+                        matched_chunk = sorted_words[start_idx:end_idx]
+                        left = min(item[1] for item in matched_chunk)
+                        top = min(item[2] for item in matched_chunk)
+                        right = max(item[1] + item[3] for item in matched_chunk)
+                        bottom = max(item[2] + item[4] for item in matched_chunk)
+
+                        return DesktopActionResult(
+                            result="success",
+                            x=(left + right) // 2,
+                            y=(top + bottom) // 2,
+                            matched_text=" ".join(item[0] for item in matched_chunk),
+                        )
+
+            if timeout is None:
+                return DesktopActionResult(result="not_found", message="텍스트를 찾을 수 없습니다")
+            if time.monotonic() - start > timeout:
+                return DesktopActionResult(result="timeout", message="텍스트 탐색 시간 초과")
+
+    def click_by_text(
+        self,
+        text: str,
+        *,
+        button: str = "left",
+        clicks: int = 1,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        timeout: Optional[float] = None,
+        min_confidence: float = 50.0,
+        language: str = "eng",
+    ) -> DesktopActionResult:
+        """
+        OCR로 텍스트를 찾아 해당 위치를 클릭합니다.
+        """
+        find_result = self.find_text_position(
+            text=text,
+            match_mode=match_mode,
+            case_sensitive=case_sensitive,
+            timeout=timeout,
+            min_confidence=min_confidence,
+            language=language,
+        )
+        if not find_result.is_success:
+            return find_result
+
+        click_result = self.click_position(
+            x=find_result.x or 0,
+            y=find_result.y or 0,
+            button=button,
+            clicks=clicks,
+        )
+        if click_result.is_success:
+            click_result.matched_text = find_result.matched_text
+        return click_result
 
 
 def get_desktop_action() -> DesktopAction:

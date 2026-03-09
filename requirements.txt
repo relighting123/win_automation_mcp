@@ -9,6 +9,7 @@ pywinauto>=0.6.8
 # Pixel-based automation (optional)
 pyautogui>=0.9.54
 Pillow>=10.0.0
+pytesseract>=0.3.13
 
 # Configuration
 PyYAML>=6.0

@@ -136,6 +136,9 @@ pip install -r win_mcp/requirements.txt
 pip install mcp pywinauto pyyaml
 ```
 
+> OCR 기반 도구(`find_text_position`, `click_by_text`)를 사용하려면
+> Python 패키지 외에 OS에 Tesseract 실행 파일이 설치되어 있어야 합니다.
+
 ## 설정
 
 ### 1. 애플리케이션 설정 (config/app_config.yaml)
@@ -216,6 +219,8 @@ python mcp_server.py --transport http --host 127.0.0.1 --port 8000 --path /mcp
 - `find_rgb_position`: RGB 위치 탐색
 - `click_position`: 좌표 클릭
 - `click_by_rgb`: RGB 위치 탐색 후 클릭
+- `find_text_position`: OCR 텍스트 위치 탐색
+- `click_by_text`: OCR 텍스트 위치 탐색 후 클릭
 
 ### 소스 오픈
 - `open_source_by_rule_search`: 단축키→아이콘 클릭→검색어 입력으로 소스 열기

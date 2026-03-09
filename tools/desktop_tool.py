@@ -6,6 +6,8 @@
 - RGB 위치 탐색
 - 좌표 클릭
 - RGB 기반 클릭
+- 텍스트(OCR) 위치 탐색
+- 텍스트(OCR) 기반 클릭
 """
 
 import logging
@@ -139,6 +141,89 @@ def register_desktop_tools(mcp: Any) -> None:
         )
         return result.to_dict()
 
+    @mcp.tool()
+    async def find_text_position(
+        text: str,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        timeout: float | None = None,
+        min_confidence: float = 50.0,
+        language: str = "eng",
+    ) -> dict:
+        """
+        OCR로 화면에서 특정 텍스트 위치를 찾습니다.
+
+        Args:
+            text: 찾을 텍스트
+            match_mode: contains 또는 exact
+            case_sensitive: 대소문자 구분 여부
+            timeout: 최대 탐색 시간
+            min_confidence: OCR 최소 신뢰도 (0~100)
+            language: tesseract 언어 코드 (기본: eng)
+        """
+        logger.info(
+            "[Tool] find_text_position 호출: text=%s, mode=%s, timeout=%s",
+            text,
+            match_mode,
+            timeout,
+        )
+        action = get_desktop_action()
+        result = action.find_text_position(
+            text=text,
+            match_mode=match_mode,
+            case_sensitive=case_sensitive,
+            timeout=timeout,
+            min_confidence=min_confidence,
+            language=language,
+        )
+        return result.to_dict()
+
+    @mcp.tool()
+    async def click_by_text(
+        text: str,
+        button: str = "left",
+        clicks: int = 1,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        timeout: float | None = None,
+        min_confidence: float = 50.0,
+        language: str = "eng",
+    ) -> dict:
+        """
+        OCR로 텍스트를 찾아 해당 위치를 클릭합니다.
+
+        Args:
+            text: 찾을 텍스트
+            button: left/right/middle
+            clicks: 클릭 횟수
+            match_mode: contains 또는 exact
+            case_sensitive: 대소문자 구분 여부
+            timeout: 최대 탐색 시간
+            min_confidence: OCR 최소 신뢰도 (0~100)
+            language: tesseract 언어 코드 (기본: eng)
+        """
+        logger.info(
+            "[Tool] click_by_text 호출: text=%s, button=%s, clicks=%d, mode=%s, timeout=%s",
+            text,
+            button,
+            clicks,
+            match_mode,
+            timeout,
+        )
+        action = get_desktop_action()
+        result = action.click_by_text(
+            text=text,
+            button=button,
+            clicks=clicks,
+            match_mode=match_mode,
+            case_sensitive=case_sensitive,
+            timeout=timeout,
+            min_confidence=min_confidence,
+            language=language,
+        )
+        return result.to_dict()
+
     logger.info(
-        "공용 데스크톱 도구 등록 완료: press_shortcut, find_rgb_position, click_position, click_by_rgb"
+        "공용 데스크톱 도구 등록 완료: press_shortcut, find_rgb_position, click_position, click_by_rgb, "
+        "find_text_position, click_by_text"
     )
