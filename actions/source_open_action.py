@@ -6,12 +6,10 @@
 """
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from core.app_session import AppSession
-from actions.app_ui_action import AppUIAction, AppUIActionResult
+from actions.app_ui_action import AppUIAction
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +101,26 @@ class SourceOpenAction:
                 open_shortcut=open_shortcut,
             )
 
-        click_result = self._ui_action.click_by_rgb(
+        find_result = self._ui_action.find_rgb_position(
             rgb=icon_rgb,
             tolerance=icon_tolerance,
             step=scan_step,
-            button=click_button,
             timeout=icon_timeout,
+        )
+        if not find_result.is_success:
+            return SourceOpenResponse(
+                result=find_result.result,
+                message=f"아이콘 위치 탐색 실패: {find_result.message or find_result.result}",
+                query=query,
+                open_shortcut=open_shortcut,
+                icon_x=find_result.x,
+                icon_y=find_result.y,
+            )
+
+        click_result = self._ui_action.click_position(
+            x=find_result.x or 0,
+            y=find_result.y or 0,
+            button=click_button,
         )
         if not click_result.is_success:
             return SourceOpenResponse(
@@ -116,22 +128,33 @@ class SourceOpenAction:
                 message=f"아이콘 클릭 실패: {click_result.message or click_result.result}",
                 query=query,
                 open_shortcut=open_shortcut,
-                icon_x=click_result.x,
-                icon_y=click_result.y,
+                icon_x=find_result.x,
+                icon_y=find_result.y,
             )
 
         input_result = self._ui_action.type_text(
             text=query,
             interval=input_interval,
-            submit_shortcut=submit_shortcut,
         )
         if not input_result.is_success:
             return SourceOpenResponse(
                 result="error",
                 message=f"검색어 입력/실행 실패: {input_result.message}",
                 query=query,
-                icon_x=click_result.x,
-                icon_y=click_result.y,
+                icon_x=find_result.x,
+                icon_y=find_result.y,
+                open_shortcut=open_shortcut,
+                submit_shortcut=submit_shortcut,
+            )
+
+        submit_result = self._ui_action.press_shortcut(submit_shortcut)
+        if not submit_result.is_success:
+            return SourceOpenResponse(
+                result="error",
+                message=f"검색 실행 단축키 실패: {submit_result.message}",
+                query=query,
+                icon_x=find_result.x,
+                icon_y=find_result.y,
                 open_shortcut=open_shortcut,
                 submit_shortcut=submit_shortcut,
             )
@@ -140,8 +163,8 @@ class SourceOpenAction:
             result="success",
             message="소스 검색 및 열기 동작을 완료했습니다",
             query=query,
-            icon_x=click_result.x,
-            icon_y=click_result.y,
+            icon_x=find_result.x,
+            icon_y=find_result.y,
             open_shortcut=open_shortcut,
             submit_shortcut=submit_shortcut,
         )

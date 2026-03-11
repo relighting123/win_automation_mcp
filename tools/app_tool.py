@@ -301,11 +301,10 @@ def register_app_tools(mcp: Any) -> None:
         """
         현재 활성화된 윈도우의 UI 요소를 추출하여 locator.yaml을 생성/업데이트합니다.
         
-        대상을 지정하지 않으면 윈도우 제목을 바탕으로 login_window, main_window, 
-        result_window 중 하나로 자동 판단합니다.
+        대상을 지정하지 않으면 active_window 키로 저장합니다.
         
         Args:
-            window_type: 윈도우 타입 (login_window, main_window, result_window 중 선택)
+            window_type: 저장할 윈도우 키 이름 (예: active_window)
             
         Returns:
             dict: 생성 결과

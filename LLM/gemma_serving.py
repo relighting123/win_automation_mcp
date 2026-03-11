@@ -107,13 +107,13 @@ MCP_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "run_analysis",
-            "description": "분석/처리 작업을 실행합니다.",
+            "name": "analyze_app_screen",
+            "description": "현재 앱 화면 상태를 분석하고 keyword 좌표(UIA/OCR)를 반환합니다.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "wait_for_completion": {"type": "boolean", "description": "완료 대기 여부"},
-                    "timeout": {"type": "number", "description": "대기 시간(초)"}
+                    "keyword": {"type": "string", "description": "탐색할 키워드"},
+                    "auto_click_keyword": {"type": "boolean", "description": "키워드 타겟 자동 클릭 여부"}
                 }
             }
         }
@@ -121,42 +121,52 @@ MCP_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "stop_analysis",
-            "description": "실행 중인 분석 작업을 중지합니다."
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "export_result",
-            "description": "분석 결과를 파일로 내보냅니다.",
+            "name": "click_app_keyword",
+            "description": "키워드 기반으로 좌표를 찾고 즉시 클릭합니다.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "저장할 파일 경로"}
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search",
-            "description": "데이터를 검색합니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "검색할 텍스트"}
+                    "keyword": {"type": "string", "description": "클릭할 키워드 텍스트"},
+                    "button": {"type": "string", "description": "left/right/middle"}
                 },
-                "required": ["query"]
+                "required": ["keyword"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "get_application_status",
-            "description": "애플리케이션의 현재 UI 상태를 조회합니다."
+            "name": "check_app_screen_state",
+            "description": "현재 active window 기준 화면 상태 플래그를 확인합니다."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_app_icon_target",
+            "description": "사전 정의된 아이콘 메타데이터로 좌표(x,y)를 탐색합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "icon_name": {"type": "string", "description": "아이콘 이름"},
+                    "keyword": {"type": "string", "description": "아이콘 키워드"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "click_app_icon_target",
+            "description": "사전 정의된 아이콘 좌표를 탐색한 뒤 클릭합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "icon_name": {"type": "string", "description": "아이콘 이름"},
+                    "keyword": {"type": "string", "description": "아이콘 키워드"},
+                    "button": {"type": "string", "description": "left/right/middle"}
+                }
+            }
         }
     },
     {
@@ -179,38 +189,30 @@ MCP_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "login",
-            "description": "애플리케이션에 로그인합니다.",
+            "name": "press_app_shortcut",
+            "description": "현재 앱에 단축키를 입력합니다.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "username": {"type": "string"},
-                    "password": {"type": "string"},
-                    "remember_me": {"type": "boolean"}
+                    "shortcut": {"type": "string", "description": "예: ctrl+s, enter"}
                 },
-                "required": ["username", "password"]
+                "required": ["shortcut"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "logout",
-            "description": "로그아웃합니다."
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "check_login_status",
-            "description": "로그인 상태를 확인합니다."
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "wait_for_login_window",
-            "description": "로그인 윈도우가 나타날 때까지 대기합니다."
+            "name": "type_app_text",
+            "description": "현재 포커스 위치에 텍스트를 입력합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "submit_shortcut": {"type": "string"}
+                },
+                "required": ["text"]
+            }
         }
     }
 ]

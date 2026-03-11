@@ -469,31 +469,26 @@ class AppUIAction:
         }
 
     def get_screen_state_flags(self) -> dict:
-        """로그인/메인 화면 여부를 포함한 상태 플래그를 반환합니다."""
-        flags = {
-            "login_window_visible": False,
-            "main_window_visible": False,
+        """현재 active window 기준 화면 상태 플래그를 반환합니다."""
+        wrapper = self._pick_target_window()
+        title = ""
+        control_type = ""
+        if wrapper is not None:
+            title = str(self._safe_call(wrapper.window_text, "") or "")
+            control_type = str(self._safe_call(wrapper.control_type, "") or "")
+
+        title_norm = title.lower()
+        login_like_keywords = ["login", "sign in", "signin", "log in", "인증", "로그인"]
+        is_login_like = any(keyword in title_norm for keyword in login_like_keywords)
+
+        current_screen = "login" if is_login_like else ("main" if title else "unknown")
+        return {
+            "active_window_detected": bool(wrapper is not None),
+            "active_window_title": title,
+            "active_window_control_type": control_type,
+            "login_like": is_login_like,
+            "current_screen": current_screen,
         }
-        try:
-            from ui.login_window import LoginWindow
-
-            flags["login_window_visible"] = bool(LoginWindow(self._session).exists(timeout=0))
-        except Exception:
-            pass
-        try:
-            from ui.main_window import MainWindow
-
-            flags["main_window_visible"] = bool(MainWindow(self._session).exists(timeout=0))
-        except Exception:
-            pass
-        flags["current_screen"] = (
-            "login"
-            if flags["login_window_visible"] and not flags["main_window_visible"]
-            else "main"
-            if flags["main_window_visible"]
-            else "unknown"
-        )
-        return flags
 
     async def describe_current_state(
         self,
