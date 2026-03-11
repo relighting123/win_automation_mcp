@@ -175,6 +175,18 @@ login_window:
       control_type: "Button"
 ```
 
+### 3. 아이콘 레지스트리 설정 (config/icon_registry.yaml)
+
+```yaml
+icons:
+  login_submit:
+    image_path: "assets/icons/login_submit.png"
+    confidence: 0.82
+    grayscale: false
+    keywords: ["login", "signin", "로그인"]
+    description: "로그인 실행 아이콘"
+```
+
 ## 서버 실행
 
 ```bash
@@ -223,6 +235,13 @@ python mcp_server.py --transport http --host 127.0.0.1 --port 8000 --path /mcp
 - `click_by_text`: Windows OCR 텍스트 위치 탐색 후 클릭
 - `find_image_position`: 이미지(아이콘/그림) 위치 탐색 (PyAutoGUI 기본 기능)
 - `click_by_image`: 이미지(아이콘/그림) 탐색 후 클릭
+
+### AI 화면 분석 / 동적 요소 제어
+- `analyze_app_screen`: 현재 앱 구성요소(UIA) + 화면 상태 + keyword 좌표(UIA/OCR) 출력
+- `click_app_keyword`: keyword 기반으로 좌표를 찾고 즉시 클릭
+- `check_app_screen_state`: 로그인/메인 화면 여부 등 상태 플래그 확인
+- `find_app_icon_target`: 사전 정의된 아이콘 메타(config/icon_registry.yaml)로 좌표 탐색
+- `click_app_icon_target`: 사전 정의된 아이콘 좌표 탐색 후 클릭
 
 ### 소스 오픈
 - `open_source_by_rule_search`: 단축키→아이콘 클릭→검색어 입력으로 소스 열기

@@ -1,0 +1,9 @@
+icons:
+  # 예시:
+  # login_submit:
+  #   image_path: "assets/icons/login_submit.png"
+  #   confidence: 0.82
+  #   grayscale: false
+  #   keywords: ["login", "signin", "로그인"]
+  #   description: "로그인 실행 아이콘"
+
