@@ -227,3 +227,190 @@ def register_app_ui_tools(mcp: FastMCP) -> None:
             clicks=clicks,
         )
         return str(click_result.to_dict())
+
+    @mcp.tool()
+    async def analyze_app_screen(
+        keyword: Optional[str] = None,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        language: str = "eng",
+        include_components: bool = True,
+        component_limit: int = 150,
+        include_ocr_hits: bool = True,
+        ocr_timeout: Optional[float] = 2.0,
+        auto_click_keyword: bool = False,
+        click_button: str = "left",
+        clicks: int = 1,
+    ) -> dict:
+        """
+        현재 연결된 앱의 화면 상태/구성요소를 분석하고 keyword 좌표를 반환합니다.
+
+        - exe path로 연결된 앱 기준 현재 화면 구성요소(UIA)를 덤프
+        - keyword가 있으면 UIA/OCR에서 매칭 좌표(x, y)를 함께 반환
+        - auto_click_keyword=True면 매칭 좌표를 즉시 클릭
+        """
+        action = get_app_ui_action()
+        analysis = await action.describe_current_state(
+            keyword=keyword,
+            match_mode=match_mode,
+            case_sensitive=case_sensitive,
+            language=language,
+            include_components=include_components,
+            component_limit=component_limit,
+            include_ocr_hits=include_ocr_hits,
+            ocr_timeout=ocr_timeout,
+        )
+
+        if not keyword:
+            return analysis
+
+        uia_hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
+        ocr_hits = (analysis.get("keyword_hits", {}) or {}).get("ocr", []) or []
+
+        selected = None
+        if uia_hits:
+            button_hits = [
+                hit for hit in uia_hits if "button" in str(hit.get("control_type", "")).lower()
+            ]
+            selected = (button_hits or uia_hits)[0]
+        elif ocr_hits:
+            selected = ocr_hits[0]
+
+        keyword_action = {
+            "requested_keyword": keyword,
+            "selected_target": selected,
+            "clicked": False,
+        }
+
+        if auto_click_keyword and selected:
+            click_result = action.click_position(
+                x=int(selected.get("x", 0)),
+                y=int(selected.get("y", 0)),
+                button=click_button,
+                clicks=clicks,
+            )
+            keyword_action["clicked"] = click_result.is_success
+            keyword_action["click_result"] = click_result.to_dict()
+
+        analysis["keyword_action"] = keyword_action
+        return analysis
+
+    @mcp.tool()
+    async def click_app_keyword(
+        keyword: str,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        language: str = "eng",
+        button: str = "left",
+        clicks: int = 1,
+        ocr_timeout: Optional[float] = 2.0,
+    ) -> dict:
+        """
+        keyword 기반 텍스트 버튼 동작:
+        현재 상태 분석 -> keyword 좌표 추출(x,y) -> 클릭을 한 번에 수행합니다.
+        """
+        action = get_app_ui_action()
+        analysis = await action.describe_current_state(
+            keyword=keyword,
+            match_mode=match_mode,
+            case_sensitive=case_sensitive,
+            language=language,
+            include_components=True,
+            include_ocr_hits=True,
+            ocr_timeout=ocr_timeout,
+        )
+
+        uia_hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
+        ocr_hits = (analysis.get("keyword_hits", {}) or {}).get("ocr", []) or []
+
+        target = None
+        if uia_hits:
+            button_hits = [
+                hit for hit in uia_hits if "button" in str(hit.get("control_type", "")).lower()
+            ]
+            target = (button_hits or uia_hits)[0]
+        elif ocr_hits:
+            target = ocr_hits[0]
+
+        if not target:
+            return {
+                "result": "not_found",
+                "is_success": False,
+                "message": f"keyword '{keyword}'에 해당하는 좌표를 찾지 못했습니다",
+                "analysis": analysis,
+            }
+
+        click_result = action.click_position(
+            x=int(target.get("x", 0)),
+            y=int(target.get("y", 0)),
+            button=button,
+            clicks=clicks,
+        )
+        return {
+            "result": click_result.result,
+            "is_success": click_result.is_success,
+            "message": click_result.message,
+            "target": target,
+            "click": click_result.to_dict(),
+            "screen_flags": analysis.get("screen_flags", {}),
+        }
+
+    @mcp.tool()
+    def check_app_screen_state() -> dict:
+        """
+        로그인 화면인지/메인 화면인지 등 현재 화면 상태를 반환합니다.
+        """
+        action = get_app_ui_action()
+        return action.get_screen_state_flags()
+
+    @mcp.tool()
+    def find_app_icon_target(
+        icon_name: Optional[str] = None,
+        keyword: Optional[str] = None,
+        timeout: Optional[float] = 3.0,
+    ) -> dict:
+        """
+        미리 정의된 아이콘 이미지/메타데이터를 사용해 아이콘 좌표(x,y)를 찾습니다.
+        """
+        action = get_app_ui_action()
+        action.ensure_focus()
+        return action.find_icon_from_registry(
+            icon_name=icon_name,
+            keyword=keyword,
+            timeout=timeout,
+        )
+
+    @mcp.tool()
+    def click_app_icon_target(
+        icon_name: Optional[str] = None,
+        keyword: Optional[str] = None,
+        timeout: Optional[float] = 3.0,
+        button: str = "left",
+        clicks: int = 1,
+    ) -> dict:
+        """
+        미리 정의된 아이콘 메타데이터로 좌표를 찾은 후 해당 지점을 클릭합니다.
+        """
+        action = get_app_ui_action()
+        action.ensure_focus()
+        found = action.find_icon_from_registry(
+            icon_name=icon_name,
+            keyword=keyword,
+            timeout=timeout,
+        )
+        if not found.get("is_success"):
+            return found
+
+        click_result = action.click_position(
+            x=int(found.get("x", 0)),
+            y=int(found.get("y", 0)),
+            button=button,
+            clicks=clicks,
+        )
+        return {
+            "result": click_result.result,
+            "is_success": click_result.is_success,
+            "message": click_result.message,
+            "icon": found,
+            "click": click_result.to_dict(),
+        }

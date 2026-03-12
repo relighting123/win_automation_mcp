@@ -39,7 +39,7 @@ class AppSession:
     Example:
         >>> session = AppSession()
         >>> session.connect()
-        >>> main_window = session.get_window("MainWindow")
+        >>> active_window = session.app.top_window()
     """
     
     _instance: Optional["AppSession"] = None
@@ -71,7 +71,6 @@ class AppSession:
         self._backend = backend
         self._config: Dict[str, Any] = {}
         self._locators: Dict[str, Any] = {}
-        self._main_window: Optional[Any] = None
         
         # 설정 로드
         if config_path:
@@ -188,8 +187,8 @@ class AppSession:
         locator 정보 반환
         
         Args:
-            window_name: 윈도우 이름 (예: "login_window")
-            element_name: 요소 이름 (예: "username_input")
+            window_name: 윈도우 이름 (예: "active_window")
+            element_name: 요소 이름 (예: "submit_button")
         
         Returns:
             locator 딕셔너리 (auto_id, control_type 등)
@@ -212,7 +211,7 @@ class AppSession:
         윈도우 locator 정보 반환
         
         Args:
-            window_name: 윈도우 이름 (예: "login_window")
+            window_name: 윈도우 이름 (예: "active_window")
         
         Returns:
             윈도우 locator 딕셔너리
@@ -367,7 +366,6 @@ class AppSession:
         """애플리케이션 연결 해제"""
         if self._app is not None:
             self._app = None
-            self._main_window = None
         self._state = SessionState.DISCONNECTED
         logger.info("애플리케이션 연결 해제")
     

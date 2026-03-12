@@ -77,12 +77,12 @@ Windows 애플리케이션 자동화를 위한 MCP 서버입니다.
 LLM은 제공되는 도구들을 통해 다음 작업을 수행할 수 있습니다:
 
 - 애플리케이션 실행/종료/재시작
-- 로그인/로그아웃
-- 분석/처리 작업 실행
-- 검색 및 데이터 내보내기
+- 현재 화면 상태 분석(UIA/OCR)
+- 키워드/아이콘 기반 좌표 탐색 및 클릭
+- 단축키/텍스트 입력 등 데스크톱 액션
 
 사용 전 애플리케이션 설정(config/app_config.yaml)과
-UI locator(config/locator.yaml)를 확인하세요.
+아이콘 레지스트리(config/icon_registry.yaml)를 확인하세요.
 """
 )
 
@@ -96,8 +96,6 @@ def register_all_tools() -> None:
     from tools.app_tool import register_app_tools
     from tools.color_click_tool import register_color_click_tools
     from tools.app_ui_tool import register_app_ui_tools
-    from tools.login_tool import register_login_tools
-    from tools.run_tool import register_run_tools
     from tools.source_open_tool import register_source_open_tools
     
     # 애플리케이션 관리 도구
@@ -109,12 +107,6 @@ def register_all_tools() -> None:
     # 애플리케이션 UI 도구 (OCR/픽셀)
     register_app_ui_tools(mcp)
     
-    # 로그인 관련 도구
-    register_login_tools(mcp)
-    
-    # 실행/분석 관련 도구
-    register_run_tools(mcp)
-
     # 소스 오픈 도구
     register_source_open_tools(mcp)
     

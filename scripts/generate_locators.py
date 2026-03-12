@@ -1,9 +1,8 @@
 import yaml
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 import sys
-import os
 
 # 프로젝트 루트를 Python 경로에 추가
 project_root = Path(__file__).parent.parent
@@ -11,7 +10,6 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from core.app_session import AppSession
-from pywinauto import Desktop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -79,7 +77,11 @@ def update_locator_yaml(window_type: str, window_info: Dict[str, Any], elements:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate UI Locators for the target application")
-    parser.add_argument("--type", choices=["login_window", "main_window", "result_window"], help="Type of window to generate")
+    parser.add_argument(
+        "--type",
+        default=None,
+        help="저장할 윈도우 키 이름 (기본: active_window)",
+    )
     args = parser.parse_args()
     
     print(f"DEBUG: Project Root identified as: {project_root}")
@@ -118,13 +120,7 @@ def main():
         # 윈도우 타입 결정
         win_type = args.type
         if not win_type:
-            title = window_info["title"].lower()
-            if "login" in title:
-                win_type = "login_window"
-            elif "result" in title:
-                win_type = "result_window"
-            else:
-                win_type = "main_window"
+            win_type = "active_window"
                 
         print(f"DEBUG: Using window type: {win_type}")
         

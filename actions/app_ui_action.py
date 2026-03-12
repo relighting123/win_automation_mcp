@@ -11,7 +11,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from core.app_session import AppSession
 
@@ -75,13 +75,10 @@ class AppUIAction:
             
             if not self._session.is_connected:
                 return None
-            
-            # 메인 윈도우 가져오기 시도
-            from ui.main_window import MainWindow
-            main_win = MainWindow(self._session)
-            if main_win.exists():
-                rect = main_win.window.rectangle()
-                # rect: (left, top, right, bottom)
+
+            wrapper = self._pick_target_window()
+            if wrapper is not None:
+                rect = wrapper.rectangle()
                 return (rect.left, rect.top, rect.width(), rect.height())
         except Exception as e:
             logger.debug(f"윈도우 영역 획득 실패: {e}")
@@ -93,15 +90,18 @@ class AppUIAction:
         try:
             if not self._session.is_connected:
                 self._session.connect()
-            
-            from ui.main_window import MainWindow
-            main_win = MainWindow(self._session)
-            if main_win.exists():
-                main_win.focus()
-                # 윈도우 활성화 대기 (필요시)
-                time.sleep(0.5)
-                return AppUIActionResult(result="success", message="애플리케이션 포커스 설정 완료")
-            return AppUIActionResult(result="error", message="메인 윈도우를 찾을 수 없습니다")
+
+            wrapper = self._pick_target_window()
+            if wrapper is None:
+                return AppUIActionResult(result="error", message="포커스를 줄 수 있는 앱 윈도우를 찾지 못했습니다")
+
+            wrapper.set_focus()
+            # 윈도우 활성화 대기 (필요시)
+            time.sleep(0.5)
+            return AppUIActionResult(
+                result="success",
+                message=f"애플리케이션 포커스 설정 완료: {self._safe_call(wrapper.window_text, '')}",
+            )
         except Exception as e:
             logger.error(f"포커스 설정 실패: {e}")
             return AppUIActionResult(result="error", message=f"포커스 설정 실패: {e}")
@@ -156,6 +156,403 @@ class AppUIAction:
     def _normalize_text(self, value: str, case_sensitive: bool) -> str:
         text = " ".join(value.split())
         return text if case_sensitive else text.lower()
+
+    def _safe_call(self, func, default=None):
+        try:
+            return func()
+        except Exception:
+            return default
+
+    def _rect_to_dict(self, rect: Any) -> dict:
+        if rect is None:
+            return {}
+        return {
+            "left": int(self._safe_call(lambda: rect.left, 0) or 0),
+            "top": int(self._safe_call(lambda: rect.top, 0) or 0),
+            "right": int(self._safe_call(lambda: rect.right, 0) or 0),
+            "bottom": int(self._safe_call(lambda: rect.bottom, 0) or 0),
+            "width": int(self._safe_call(lambda: rect.width(), 0) or 0),
+            "height": int(self._safe_call(lambda: rect.height(), 0) or 0),
+            "center_x": int(self._safe_call(lambda: rect.left + (rect.width() / 2), 0) or 0),
+            "center_y": int(self._safe_call(lambda: rect.top + (rect.height() / 2), 0) or 0),
+        }
+
+    def _pick_target_window(self) -> Optional[Any]:
+        """현재 앱에서 가장 가능성이 높은 대상 윈도우 wrapper를 반환합니다."""
+        try:
+            if not self._session.is_connected:
+                self._session.connect()
+            windows = self._session.app.windows()
+            if not windows:
+                return None
+
+            # 1) 가시적인 윈도우 우선
+            visible = []
+            for w in windows:
+                wrapper = self._safe_call(lambda: w.wrapper_object(), None)
+                if wrapper is None:
+                    continue
+                if self._safe_call(wrapper.is_visible, False):
+                    visible.append(wrapper)
+            if visible:
+                return visible[0]
+
+            # 2) fallback: 첫 윈도우 wrapper
+            return self._safe_call(lambda: windows[0].wrapper_object(), None)
+        except Exception as e:
+            logger.debug("대상 윈도우 선택 실패: %s", e)
+            return None
+
+    def _is_keyword_match(
+        self,
+        candidate_values: List[str],
+        keyword: str,
+        match_mode: str,
+        case_sensitive: bool,
+    ) -> bool:
+        normalized_keyword = self._normalize_text(keyword, case_sensitive=case_sensitive)
+        if not normalized_keyword:
+            return False
+        for value in candidate_values:
+            normalized_value = self._normalize_text(value or "", case_sensitive=case_sensitive)
+            if match_mode == "exact":
+                if normalized_value == normalized_keyword:
+                    return True
+            else:
+                if normalized_keyword in normalized_value:
+                    return True
+        return False
+
+    def _collect_uia_components(
+        self,
+        keyword: Optional[str] = None,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        component_limit: int = 150,
+    ) -> tuple[list[dict], list[dict], dict]:
+        """UIA 기반 구성요소를 수집하고, keyword 매칭된 좌표를 함께 반환합니다."""
+        wrapper = self._pick_target_window()
+        if wrapper is None:
+            return [], [], {}
+
+        components: list[dict] = []
+        keyword_hits: list[dict] = []
+        target_keyword = (keyword or "").strip()
+
+        # window 자신도 구성요소에 포함
+        nodes = [wrapper]
+        descendants = self._safe_call(wrapper.descendants, []) or []
+        nodes.extend(descendants[: max(0, component_limit - 1)])
+
+        for idx, node in enumerate(nodes[:component_limit]):
+            rect = self._safe_call(node.rectangle, None)
+            rect_dict = self._rect_to_dict(rect)
+
+            title = self._safe_call(node.window_text, "") or ""
+            auto_id = self._safe_call(node.automation_id, "") or ""
+            control_type = self._safe_call(node.control_type, "") or ""
+            class_name = self._safe_call(node.class_name, "") or ""
+            visible = bool(self._safe_call(node.is_visible, False))
+            enabled = bool(self._safe_call(node.is_enabled, False))
+
+            component = {
+                "index": idx,
+                "title": title,
+                "auto_id": auto_id,
+                "control_type": control_type,
+                "class_name": class_name,
+                "visible": visible,
+                "enabled": enabled,
+                "rect": rect_dict,
+                "x": rect_dict.get("center_x"),
+                "y": rect_dict.get("center_y"),
+                "source": "uia",
+            }
+            components.append(component)
+
+            if target_keyword and self._is_keyword_match(
+                candidate_values=[title, auto_id, control_type, class_name],
+                keyword=target_keyword,
+                match_mode=match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                keyword_hits.append(component)
+
+        target_window = {
+            "title": self._safe_call(wrapper.window_text, "") or "",
+            "control_type": self._safe_call(wrapper.control_type, "") or "",
+            "auto_id": self._safe_call(wrapper.automation_id, "") or "",
+            "rect": self._rect_to_dict(self._safe_call(wrapper.rectangle, None)),
+        }
+        return components, keyword_hits, target_window
+
+    async def _extract_ocr_hits(
+        self,
+        keyword: str,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        language: str = "eng",
+        timeout: Optional[float] = 2.0,
+        hit_limit: int = 20,
+    ) -> list[dict]:
+        """앱 화면 OCR 결과에서 keyword 좌표 목록을 반환합니다."""
+        if not keyword.strip():
+            return []
+
+        pyautogui, error_result = self._get_pyautogui()
+        if error_result:
+            return []
+
+        try:
+            import winocr
+        except Exception:
+            return []
+
+        lang = self._get_best_winocr_lang(language)
+        region = self._get_app_window_region()
+        normalized_keyword = self._normalize_text(keyword, case_sensitive=case_sensitive)
+        started = time.monotonic()
+
+        while True:
+            screenshot = pyautogui.screenshot(region=region)
+            raw_ocr_result = await winocr.recognize_pil(screenshot, lang)
+            ocr_result = winocr.picklify(raw_ocr_result)
+
+            hits: list[dict] = []
+            for line in ocr_result.get("lines", []):
+                for word in line.get("words", []):
+                    raw_text = word.get("text", "") or ""
+                    normalized_text = self._normalize_text(raw_text, case_sensitive=case_sensitive)
+                    is_match = (
+                        normalized_text == normalized_keyword
+                        if match_mode == "exact"
+                        else normalized_keyword in normalized_text
+                    )
+                    if not is_match:
+                        continue
+
+                    rect = word.get("bounding_rect", {})
+                    rel_x = int(rect.get("x", 0) + rect.get("width", 0) / 2)
+                    rel_y = int(rect.get("y", 0) + rect.get("height", 0) / 2)
+                    abs_x = rel_x + (region[0] if region else 0)
+                    abs_y = rel_y + (region[1] if region else 0)
+                    hits.append(
+                        {
+                            "text": raw_text,
+                            "x": abs_x,
+                            "y": abs_y,
+                            "rect": rect,
+                            "source": "ocr",
+                        }
+                    )
+                    if len(hits) >= max(1, hit_limit):
+                        return hits
+
+            if hits:
+                return hits
+            if timeout is None:
+                return []
+            if time.monotonic() - started > timeout:
+                return []
+
+    def _load_icon_registry(self) -> dict:
+        """아이콘 메타데이터 레지스트리를 로드합니다."""
+        base_dir = Path(__file__).resolve().parent.parent
+        candidate_paths = [
+            base_dir / "config" / "icon_registry.yaml",
+            Path("config/icon_registry.yaml"),
+        ]
+        for path in candidate_paths:
+            if not path.exists():
+                continue
+            try:
+                import yaml
+
+                with open(path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                data["_registry_path"] = str(path)
+                return data
+            except Exception as e:
+                logger.warning("아이콘 레지스트리 로드 실패 (%s): %s", path, e)
+        return {"icons": {}}
+
+    def _resolve_icon_candidates(self, icon_name: Optional[str], keyword: Optional[str]) -> list[dict]:
+        registry = self._load_icon_registry()
+        icons = registry.get("icons", {}) or {}
+        candidates: list[dict] = []
+
+        normalized_keyword = (keyword or "").strip().lower()
+        normalized_name = (icon_name or "").strip().lower()
+
+        for name, meta in icons.items():
+            candidate_name = str(name).strip()
+            if not candidate_name:
+                continue
+            image_path = str((meta or {}).get("image_path", "")).strip()
+            if not image_path:
+                continue
+            keywords = [str(k).lower() for k in ((meta or {}).get("keywords") or [])]
+
+            is_target = False
+            if normalized_name and candidate_name.lower() == normalized_name:
+                is_target = True
+            if normalized_keyword and (
+                normalized_keyword in candidate_name.lower() or normalized_keyword in keywords
+            ):
+                is_target = True
+            if not normalized_name and not normalized_keyword:
+                is_target = True
+
+            if not is_target:
+                continue
+
+            candidates.append(
+                {
+                    "icon_name": candidate_name,
+                    "image_path": image_path,
+                    "confidence": float((meta or {}).get("confidence", 0.8)),
+                    "grayscale": bool((meta or {}).get("grayscale", False)),
+                    "description": (meta or {}).get("description"),
+                    "keywords": (meta or {}).get("keywords", []),
+                }
+            )
+        return candidates
+
+    def find_icon_from_registry(
+        self,
+        *,
+        icon_name: Optional[str] = None,
+        keyword: Optional[str] = None,
+        timeout: Optional[float] = 3.0,
+    ) -> dict:
+        """미리 정의된 아이콘 메타데이터를 기반으로 화면 좌표를 반환합니다."""
+        candidates = self._resolve_icon_candidates(icon_name=icon_name, keyword=keyword)
+        if not candidates:
+            return {
+                "result": "not_found",
+                "message": "조건에 맞는 아이콘 메타데이터를 찾지 못했습니다",
+                "is_success": False,
+                "icon_name": icon_name,
+                "keyword": keyword,
+            }
+
+        for candidate in candidates:
+            image_path = candidate["image_path"]
+            result = self.find_image_position(
+                image_path=image_path,
+                confidence=candidate["confidence"],
+                grayscale=candidate["grayscale"],
+                timeout=timeout,
+            )
+            if result.is_success:
+                return {
+                    "result": "success",
+                    "message": "아이콘 위치를 찾았습니다",
+                    "is_success": True,
+                    "x": result.x,
+                    "y": result.y,
+                    "icon_name": candidate["icon_name"],
+                    "image_path": image_path,
+                    "metadata": {
+                        "keywords": candidate.get("keywords", []),
+                        "description": candidate.get("description"),
+                    },
+                }
+
+        return {
+            "result": "not_found",
+            "message": "등록된 아이콘 후보를 탐색했지만 화면에서 찾지 못했습니다",
+            "is_success": False,
+            "icon_name": icon_name,
+            "keyword": keyword,
+            "searched_candidates": [c["icon_name"] for c in candidates],
+        }
+
+    def get_screen_state_flags(self) -> dict:
+        """현재 active window 기준 화면 상태 플래그를 반환합니다."""
+        wrapper = self._pick_target_window()
+        title = ""
+        control_type = ""
+        if wrapper is not None:
+            title = str(self._safe_call(wrapper.window_text, "") or "")
+            control_type = str(self._safe_call(wrapper.control_type, "") or "")
+
+        title_norm = title.lower()
+        login_like_keywords = ["login", "sign in", "signin", "log in", "인증", "로그인"]
+        is_login_like = any(keyword in title_norm for keyword in login_like_keywords)
+
+        current_screen = "login" if is_login_like else ("main" if title else "unknown")
+        return {
+            "active_window_detected": bool(wrapper is not None),
+            "active_window_title": title,
+            "active_window_control_type": control_type,
+            "login_like": is_login_like,
+            "current_screen": current_screen,
+        }
+
+    async def describe_current_state(
+        self,
+        *,
+        keyword: Optional[str] = None,
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        language: str = "eng",
+        include_components: bool = True,
+        component_limit: int = 150,
+        include_ocr_hits: bool = True,
+        ocr_hit_limit: int = 20,
+        ocr_timeout: Optional[float] = 2.0,
+    ) -> dict:
+        """
+        현재 앱 상태/구성요소를 반환하고, keyword 기반 좌표를 함께 제공합니다.
+        """
+        focus_result = self.ensure_focus()
+        screen_flags = self.get_screen_state_flags()
+
+        app_info = {
+            "connected": bool(self._session.is_connected),
+            "session_state": self._session.state.value,
+            "configured_executable_path": self._session.config.get("application", {}).get("executable_path"),
+            "configured_process_name": self._session.config.get("application", {}).get("process_name"),
+        }
+
+        components: list[dict] = []
+        uia_keyword_hits: list[dict] = []
+        target_window: dict = {}
+        if include_components:
+            components, uia_keyword_hits, target_window = self._collect_uia_components(
+                keyword=keyword,
+                match_mode=match_mode,
+                case_sensitive=case_sensitive,
+                component_limit=component_limit,
+            )
+
+        ocr_keyword_hits: list[dict] = []
+        if keyword and include_ocr_hits:
+            ocr_keyword_hits = await self._extract_ocr_hits(
+                keyword=keyword,
+                match_mode=match_mode,
+                case_sensitive=case_sensitive,
+                language=language,
+                timeout=ocr_timeout,
+                hit_limit=ocr_hit_limit,
+            )
+
+        return {
+            "result": "success",
+            "is_success": True,
+            "message": "현재 화면 상태를 수집했습니다",
+            "focus": focus_result.to_dict(),
+            "app": app_info,
+            "screen_flags": screen_flags,
+            "target_window": target_window,
+            "components": components,
+            "keyword": keyword,
+            "keyword_hits": {
+                "uia": uia_keyword_hits,
+                "ocr": ocr_keyword_hits,
+            },
+        }
 
     def press_shortcut(self, shortcut: str, interval: float = 0.05) -> AppUIActionResult:
         """단축키 입력"""
