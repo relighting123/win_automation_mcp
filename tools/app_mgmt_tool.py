@@ -15,7 +15,7 @@ from errors.automation_error import AutomationError, ConnectionError
 logger = logging.getLogger(__name__)
 
 
-def register_app_tools(mcp: Any) -> None:
+def register_app_mgmt_tools(mcp: Any) -> None:
     """
     FastMCP 서버에 애플리케이션 관리 도구 등록
     

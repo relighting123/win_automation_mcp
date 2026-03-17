@@ -3,12 +3,14 @@ import requests
 import json
 import re
 import time
+import os
 from datetime import datetime
+from groq import Groq
 
 # 페이지 설정
 st.set_page_config(
-    page_title="Gemma Windows Automation",
-    page_icon="🤖",
+    page_title="Windows Automation with Groq",
+    page_icon="🦾",
     layout="wide"
 )
 
@@ -25,20 +27,137 @@ if "messages" not in st.session_state:
 # 사이드바 설정
 st.sidebar.title("Configuration")
 mcp_url = st.sidebar.text_input("MCP Server URL", "http://localhost:8000/mcp")
-gemma_url = st.sidebar.text_input("Gemma API URL", "http://localhost:8001/v1/chat/completions")
+groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
+model_name = st.sidebar.selectbox("Model", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"], index=0)
 
 if st.sidebar.button("Clear Chat"):
     st.session_state.messages = [
-        {"role": "system", "content": """당신은 Windows 자동화를 도와주는 유용한 비서입니다. 
-사용자의 요청을 수행하기 위해 필요한 도구들을 적절히 호출하세요.
-여러 단계가 필요한 경우 한 번에 하나씩 도구를 호출하여 순차적으로 작업을 수행할 수 있습니다.
-도구 실행 결과가 나오면 이를 바탕으로 다음 단계를 결정하세요. 
-모든 작업이 완료되면 사용자에게 한국어로 최종 결과를 요약해서 보고하세요."""}
+        st.session_state.messages[0]
     ]
     st.rerun()
 
-st.title("🤖 Gemma Windows Automation Chat")
-st.markdown("Gemma 모델과 대화하며 Windows 명령을 내리세요. (예: '메모장 켜줘')")
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+### How to use
+1. MCP 서버를 실행하세요 (`python mcp_server.py`)
+2. Groq API Key를 입력하세요.
+3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
+""")
+
+def get_mcp_tools():
+    """MCP 서버에서 사용 가능한 도구 목록을 가져옵니다."""
+    try:
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json"
+        }
+        
+        # 1. 초기화 (initialize) 요청
+        init_payload = {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
+            }
+        }
+        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
+        session_id = init_res.headers.get("mcp-session-id")
+        
+        if not session_id:
+            return []
+            
+        headers["mcp-session-id"] = session_id
+        
+        # 2. 도구 목록 요청
+        tools_payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "id": 1
+        }
+        res = requests.post(mcp_url, json=tools_payload, headers=headers, timeout=5)
+        
+        if res.status_code == 200:
+            # SSE 스트림 파싱
+            for line in res.iter_lines():
+                if line:
+                    decoded = line.decode('utf-8')
+                    if decoded.startswith("data: "):
+                        data = json.loads(decoded[6:])
+                        if "result" in data and "tools" in data["result"]:
+                            # Groq 형식에 맞게 변환
+                            groq_tools = []
+                            for tool in data["result"]["tools"]:
+                                groq_tools.append({
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool["name"],
+                                        "description": tool["description"],
+                                        "parameters": tool["inputSchema"]
+                                    }
+                                })
+                            return groq_tools
+        return []
+    except Exception as e:
+        st.error(f"Failed to fetch tools: {e}")
+        return []
+
+def call_mcp_tool(name, arguments):
+    """MCP 서버의 도구를 실행합니다."""
+    try:
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json"
+        }
+        
+        # 1. 초기화
+        init_payload = {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
+            }
+        }
+        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
+        session_id = init_res.headers.get("mcp-session-id")
+        
+        if not session_id:
+            return {"error": "Failed to get session ID"}
+            
+        headers["mcp-session-id"] = session_id
+        
+        # 2. 초기화 완료 알림
+        requests.post(mcp_url, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=headers, timeout=2)
+            
+        # 3. 도구 호출
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+            "id": int(time.time())
+        }
+        
+        response = requests.post(mcp_url, json=payload, headers=headers, timeout=30, stream=True)
+        
+        if response.status_code == 200:
+            for line in response.iter_lines():
+                if line:
+                    decoded = line.decode('utf-8')
+                    if decoded.startswith("data: "):
+                        res_json = json.loads(decoded[6:])
+                        if "result" in res_json:
+                            return res_json["result"]
+        return {"error": f"Status {response.status_code}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+st.title("🦾 Groq Windows Automation Chat")
+st.markdown("Groq 모델을 사용하여 Windows를 제어하세요.")
 
 # 채팅 메시지 표시
 for message in st.session_state.messages:
@@ -49,69 +168,84 @@ for message in st.session_state.messages:
 
 # 사용자 입력 처리
 if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
-    # 사용자 메시지 표시
+    if not groq_api_key:
+        st.error("Groq API Key가 필요합니다. 사이드바에 입력해주세요.")
+        st.stop()
+        
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Gemma 호출 (에이전트 루프)
+    client = Groq(api_key=groq_api_key)
+    
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
+        full_response = ""
         
-        # 최대 반복 횟수 설정 (무한 루프 방지)
-        MAX_ITERATIONS = 5
+        MAX_ITERATIONS = 10
         iteration = 0
         
         while iteration < MAX_ITERATIONS:
             iteration += 1
             
-            try:
-                payload = {
-                    "messages": st.session_state.messages,
-                    "temperature": 0.1
-                }
-                
-                response = requests.post(gemma_url, json=payload, timeout=60)
-                response.raise_for_status()
-                
-                result = response.json()
-                assistant_message = result['choices'][0]['message']
-                content = assistant_message.get('content', '')
-                
-                if content:
-                    message_placeholder.markdown(content)
-                    st.session_state.messages.append({"role": "assistant", "content": content})
-                
-                # 도구 실행 결과 확인
-                execution_results = result.get('execution_results', [])
-                
-                if not execution_results:
-                    # 도구 호출이 없으면 루프 종료
-                    break
-                    
-                # 각 도구 실행 결과를 메시지에 추가하여 다음 턴의 컨텍스트로 제공
-                for exec_info in execution_results:
-                    call = exec_info.get('call', {})
-                    tool_name = call.get('name')
-                    tool_args = call.get('arguments', {})
-                    tool_result = exec_info.get('result', {})
-                    
-                    with st.status(f"Tool Executing: {tool_name}", expanded=True) as status:
-                        st.write(f"**Arguments:** {tool_args}")
-                        st.write("**Execution Result:**", tool_result)
-                        status.update(label=f"Tool {tool_name} completed", state="complete", expanded=False)
-                    
-                    # 도구 결과를 history에 추가 (Gemma가 다음 단계를 결정할 수 있도록)
-                    # Gemma 3 형식에 맞춰 content에 결과를 포함시킴
-                    result_message = f"Tool '{tool_name}' execution result: {json.dumps(tool_result, ensure_ascii=False)}"
-                    st.session_state.messages.append({"role": "user", "content": f"[SYSTEM: {result_message}]"})
-                
-                # 도구 실행 후 짧은 대기 (데모 시각화용)
-                time.sleep(1)
-                
-            except Exception as e:
-                st.error(f"Error: {e}")
+            # 모든 도구 가져오기
+            tools = get_mcp_tools()
+            
+            # Groq 호출
+            chat_completion = client.chat.completions.create(
+                messages=st.session_state.messages,
+                model=model_name,
+                tools=tools,
+                tool_choice="auto",
+                temperature=0.1
+            )
+            
+            response_message = chat_completion.choices[0].message
+            tool_calls = response_message.tool_calls
+            
+            if response_message.content:
+                full_response += response_message.content
+                message_placeholder.markdown(full_response)
+            
+            # 응답을 메시지 히스토리에 추가
+            # 도구 호출이 있는 경우 content가 None일 수 있으므로 처리
+            msg_to_append = {
+                "role": "assistant",
+                "content": response_message.content
+            }
+            if tool_calls:
+                msg_to_append["tool_calls"] = [
+                    {
+                        "id": t.id,
+                        "type": "function",
+                        "function": {
+                            "name": t.function.name,
+                            "arguments": t.function.arguments
+                        }
+                    } for t in tool_calls
+                ]
+            st.session_state.messages.append(msg_to_append)
+            
+            if not tool_calls:
                 break
+                
+            # 도구 실행
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                with st.status(f"Executing: {function_name}...", expanded=False) as status:
+                    st.write(f"Arguments: {function_args}")
+                    result = call_mcp_tool(function_name, function_args)
+                    st.write("Result:", result)
+                    status.update(label=f"Completed: {function_name}", state="complete")
+                    
+                st.session_state.messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": json.dumps(result, ensure_ascii=False)
+                })
         
         if iteration >= MAX_ITERATIONS:
-            st.warning("최대 반복 횟수에 도달했습니다.")
+            st.warning("Maximum iterations reached.")

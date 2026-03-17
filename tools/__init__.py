@@ -1,10 +1,7 @@
-# Tools module - FastMCP tool definitions
-from .app_tool import register_app_tools
-from .app_ui_tool import register_app_ui_tools
-from .source_open_tool import register_source_open_tools
+from .app_mgmt_tool import register_app_mgmt_tools
+from .ui_vision_tool import register_ui_vision_tools
 
 __all__ = [
-    "register_app_ui_tools",
-    "register_app_tools",
-    "register_source_open_tools",
+    "register_ui_vision_tools",
+    "register_app_mgmt_tools",
 ]

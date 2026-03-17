@@ -93,22 +93,14 @@ LLM은 제공되는 도구들을 통해 다음 작업을 수행할 수 있습니
 
 def register_all_tools() -> None:
     """모든 도구를 FastMCP 서버에 등록"""
-    from tools.app_tool import register_app_tools
-    from tools.color_click_tool import register_color_click_tools
-    from tools.app_ui_tool import register_app_ui_tools
-    from tools.source_open_tool import register_source_open_tools
+    from tools.app_mgmt_tool import register_app_mgmt_tools
+    from tools.ui_vision_tool import register_ui_vision_tools
     
     # 애플리케이션 관리 도구
-    register_app_tools(mcp)
+    register_app_mgmt_tools(mcp)
     
-    # 색상 기반 도구
-    register_color_click_tools(mcp)
-
-    # 애플리케이션 UI 도구 (OCR/픽셀)
-    register_app_ui_tools(mcp)
-    
-    # 소스 오픈 도구
-    register_source_open_tools(mcp)
+    # 애플리케이션 UI 도구 (OCR/픽셀/시각 제어)
+    register_ui_vision_tools(mcp)
     
     logger.info("모든 도구 등록 완료")
 

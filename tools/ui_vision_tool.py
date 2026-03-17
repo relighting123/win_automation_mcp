@@ -1,5 +1,5 @@
 """
-애플리케이션 UI 제어 관련 도구
+애플리케이션 UI 제어 관련 도구 (시각 지능 기반)
 
 화면 캡처와 OCR을 사용하여 애플리케이션의 UI 요소를 제어합니다.
 전체 데스크톱 보다는 현재 연결된 애플리케이션 윈도우 범위를 우선적으로 탐색합니다.
@@ -15,42 +15,8 @@ from actions.app_ui_action import get_app_ui_action
 logger = logging.getLogger(__name__)
 
 
-def register_app_ui_tools(mcp: FastMCP) -> None:
-    """애플리케이션 UI 제어 도구 등록"""
-
-    @mcp.tool()
-    async def find_app_text(
-        text: str,
-        match_mode: str = "contains",
-        case_sensitive: bool = False,
-        timeout: Optional[float] = None,
-        language: str = "eng",
-    ) -> str:
-        """
-        애플리케이션 화면 내에서 OCR을 사용해 특정 텍스트의 위치를 찾습니다.
-        
-        UIA(UI Automation)로 요소를 찾기 어려울 때 사용합니다.
-        현재 연결된 앱 윈도우 영역을 우선적으로 탐색합니다.
-
-        Args:
-            text: 찾을 텍스트
-            match_mode: 일치 모드 ("contains" 또는 "exact")
-            case_sensitive: 대소문자 구분 여부
-            timeout: 최대 대기 시간(초)
-            language: OCR 언어 (eng, kor 등)
-        """
-        action = get_app_ui_action()
-        # 0. 포커스 확보 (Atomic Action)
-        action.ensure_focus()
-
-        result = await action.find_text_position(
-            text=text,
-            match_mode=match_mode,
-            case_sensitive=case_sensitive,
-            timeout=timeout,
-            language=language,
-        )
-        return str(result.to_dict())
+def register_ui_vision_tools(mcp: FastMCP) -> None:
+    """애플리케이션 UI 시각 제어 도구 등록"""
 
     @mcp.tool()
     async def click_app_text(
@@ -228,72 +194,6 @@ def register_app_ui_tools(mcp: FastMCP) -> None:
         )
         return str(click_result.to_dict())
 
-    @mcp.tool()
-    async def analyze_app_screen(
-        keyword: Optional[str] = None,
-        match_mode: str = "contains",
-        case_sensitive: bool = False,
-        language: str = "eng",
-        include_components: bool = True,
-        component_limit: int = 150,
-        include_ocr_hits: bool = True,
-        ocr_timeout: Optional[float] = 2.0,
-        auto_click_keyword: bool = False,
-        click_button: str = "left",
-        clicks: int = 1,
-    ) -> dict:
-        """
-        현재 연결된 앱의 화면 상태/구성요소를 분석하고 keyword 좌표를 반환합니다.
-
-        - exe path로 연결된 앱 기준 현재 화면 구성요소(UIA)를 덤프
-        - keyword가 있으면 UIA/OCR에서 매칭 좌표(x, y)를 함께 반환
-        - auto_click_keyword=True면 매칭 좌표를 즉시 클릭
-        """
-        action = get_app_ui_action()
-        analysis = await action.describe_current_state(
-            keyword=keyword,
-            match_mode=match_mode,
-            case_sensitive=case_sensitive,
-            language=language,
-            include_components=include_components,
-            component_limit=component_limit,
-            include_ocr_hits=include_ocr_hits,
-            ocr_timeout=ocr_timeout,
-        )
-
-        if not keyword:
-            return analysis
-
-        uia_hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
-        ocr_hits = (analysis.get("keyword_hits", {}) or {}).get("ocr", []) or []
-
-        selected = None
-        if uia_hits:
-            button_hits = [
-                hit for hit in uia_hits if "button" in str(hit.get("control_type", "")).lower()
-            ]
-            selected = (button_hits or uia_hits)[0]
-        elif ocr_hits:
-            selected = ocr_hits[0]
-
-        keyword_action = {
-            "requested_keyword": keyword,
-            "selected_target": selected,
-            "clicked": False,
-        }
-
-        if auto_click_keyword and selected:
-            click_result = action.click_position(
-                x=int(selected.get("x", 0)),
-                y=int(selected.get("y", 0)),
-                button=click_button,
-                clicks=clicks,
-            )
-            keyword_action["clicked"] = click_result.is_success
-            keyword_action["click_result"] = click_result.to_dict()
-
-        analysis["keyword_action"] = keyword_action
-        return analysis
 
     @mcp.tool()
     async def click_app_keyword(
@@ -339,6 +239,97 @@ def register_app_ui_tools(mcp: FastMCP) -> None:
                 "message": f"keyword '{keyword}'에 해당하는 좌표를 찾지 못했습니다",
                 "analysis": analysis,
             }
+
+        click_result = action.click_position(
+            x=int(target.get("x", 0)),
+            y=int(target.get("y", 0)),
+            button=button,
+            clicks=clicks,
+        )
+        return {
+            "result": click_result.result,
+            "is_success": click_result.is_success,
+            "message": click_result.message,
+            "target": target,
+            "click": click_result.to_dict(),
+            "screen_flags": analysis.get("screen_flags", {}),
+        }
+
+    @mcp.tool()
+    async def click_app_element(
+        keyword: str,
+        element_type: str = "any",
+        match_mode: str = "contains",
+        case_sensitive: bool = False,
+        button: str = "left",
+        clicks: int = 1,
+    ) -> dict:
+        """
+        텍스트(keyword)와 UI 형식(element_type)을 함께 만족하는 요소를 찾아 클릭합니다.
+        
+        Args:
+            keyword: 찾을 텍스트 (버튼 이름, 라벨 등)
+            element_type: UI 형식 (예: "Button", "Edit", "TabItem", "MenuItem" 등). "any" 이면 형식 검사 생략.
+            match_mode: 텍스트 일치 모드 ("contains" 또는 "exact")
+            case_sensitive: 대소문자 구분 여부
+            button: 마우스 버튼 ("left", "right", "middle")
+            clicks: 클릭 횟수
+        """
+        action = get_app_ui_action()
+        analysis = await action.describe_current_state(
+            keyword=keyword,
+            match_mode=match_mode,
+            case_sensitive=case_sensitive,
+            include_components=True,
+            include_ocr_hits=False,
+        )
+
+        components = analysis.get("components", [])
+        
+        matches = []
+        for comp in components:
+            comp_type = str(comp.get("control_type", "")).lower()
+            target_type = element_type.lower()
+            
+            type_matched = (target_type == "any") or (target_type in comp_type)
+            if not type_matched:
+                continue
+                
+            normalized_keyword = keyword if case_sensitive else keyword.lower()
+            normalized_keyword = " ".join(normalized_keyword.split())
+            
+            candidates = [
+                str(comp.get("title", "")),
+                str(comp.get("auto_id", "")),
+                str(comp.get("class_name", ""))
+            ]
+            
+            text_matched = False
+            for cand in candidates:
+                cand_norm = cand if case_sensitive else cand.lower()
+                cand_norm = " ".join(cand_norm.split())
+                
+                if match_mode == "exact":
+                    if cand_norm == normalized_keyword:
+                        text_matched = True
+                        break
+                else:
+                    if normalized_keyword in cand_norm:
+                        text_matched = True
+                        break
+            
+            if text_matched:
+                matches.append(comp)
+
+        if not matches:
+            return {
+                "result": "not_found",
+                "is_success": False,
+                "message": f"keyword '{keyword}' 및 형식 '{element_type}'을(를) 만족하는 요소를 찾지 못했습니다.",
+                "screen_flags": analysis.get("screen_flags", {}),
+            }
+
+        target = matches[0]
 
         click_result = action.click_position(
             x=int(target.get("x", 0)),
@@ -414,3 +405,122 @@ def register_app_ui_tools(mcp: FastMCP) -> None:
             "icon": found,
             "click": click_result.to_dict(),
         }
+
+    @mcp.tool()
+    async def run_app_ui_sequence(
+        sequence: list[dict],
+        default_interval: float = 0.5,
+        default_timeout: Optional[float] = None,
+    ) -> str:
+        """
+        다양한 UI 동작(텍스트 클릭, 아이콘 클릭, RGB 클릭 등)을 순차적으로 수행합니다.
+        
+        Args:
+            sequence: 실행할 동작 리스트. 각 항목은 'type' 필드를 포함하는 dict.
+                - type: "click_text", "click_element", "click_icon", "click_rgb", "type_text", "press_shortcut", "wait"
+                - 각 타입별 필요 매개변수는 기존 도구와 동일 (예: click_text -> text)
+            default_interval: 각 단계 사이의 대기 시간(초)
+            default_timeout: 검색 동작의 기본 타임아웃
+        """
+        action = get_app_ui_action()
+        action.ensure_focus()
+        
+        results = []
+        import asyncio
+        import time
+
+        for i, step in enumerate(sequence):
+            step_type = step.get("type")
+            step_result = {"step": i, "type": step_type, "is_success": False}
+            
+            try:
+                if step_type == "click_text":
+                    res = await action.find_text_position(
+                        text=step.get("text"),
+                        match_mode=step.get("match_mode", "contains"),
+                        case_sensitive=step.get("case_sensitive", False),
+                        timeout=step.get("timeout", default_timeout),
+                        language=step.get("language", "eng"),
+                    )
+                    if res.is_success:
+                        click_res = action.click_position(
+                            x=res.x or 0, y=res.y or 0,
+                            button=step.get("button", "left"),
+                            clicks=step.get("clicks", 1)
+                        )
+                        step_result.update(click_res.to_dict())
+                    else:
+                        step_result.update(res.to_dict())
+
+                elif step_type == "click_icon":
+                    found = action.find_icon_from_registry(
+                        icon_name=step.get("icon_name"),
+                        keyword=step.get("keyword"),
+                        timeout=step.get("timeout", default_timeout or 3.0),
+                    )
+                    if found.get("is_success"):
+                        click_res = action.click_position(
+                            x=int(found.get("x", 0)),
+                            y=int(found.get("y", 0)),
+                            button=step.get("button", "left"),
+                            clicks=step.get("clicks", 1)
+                        )
+                        step_result.update(click_res.to_dict())
+                        step_result["icon"] = found
+                    else:
+                        step_result.update(found)
+
+                elif step_type == "click_rgb":
+                    res = action.find_rgb_position(
+                        rgb=(step.get("r"), step.get("g"), step.get("b")),
+                        tolerance=step.get("tolerance", 5),
+                        timeout=step.get("timeout", default_timeout),
+                    )
+                    if res.is_success:
+                        click_res = action.click_position(
+                            x=res.x or 0, y=res.y or 0,
+                            button=step.get("button", "left")
+                        )
+                        step_result.update(click_res.to_dict())
+                    else:
+                        step_result.update(res.to_dict())
+
+                elif step_type == "type_text":
+                    res = action.type_text(
+                        text=step.get("text"),
+                        interval=step.get("interval", 0.02)
+                    )
+                    step_result.update(res.to_dict())
+
+                elif step_type == "press_shortcut":
+                    res = action.press_shortcut(step.get("shortcut"))
+                    step_result.update(res.to_dict())
+
+                elif step_type == "wait":
+                    wait_seconds = step.get("seconds", default_interval)
+                    await asyncio.sleep(wait_seconds)
+                    step_result["result"] = "success"
+                    step_result["is_success"] = True
+                    step_result["message"] = f"{wait_seconds}초 대기 완료"
+                
+                else:
+                    step_result["message"] = f"알 수 없는 동작 타입: {step_type}"
+                    step_result["result"] = "error"
+
+            except Exception as e:
+                step_result["result"] = "error"
+                step_result["message"] = f"단계 실행 중 예외 발생: {e}"
+            
+            results.append(step_result)
+            if not step_result["is_success"] and step.get("break_on_failure", True):
+                break
+            
+            if step_type != "wait" and i < len(sequence) - 1:
+                await asyncio.sleep(step.get("interval", default_interval))
+        
+        return str({
+            "is_success": all(r.get("is_success", False) for r in results),
+            "results": results
+        })
+
+    logger.info("UI 시각 제어 도구 등록 완료: click_app_text, type_app_text, press_app_shortcut, click_app_rgb, click_app_image, click_app_keyword, click_app_element, check_app_screen_state, find_app_icon_target, click_app_icon_target, run_app_ui_sequence")

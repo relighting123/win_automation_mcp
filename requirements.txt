@@ -18,3 +18,8 @@ watchdog==5.0.3
 
 # Type hints
 typing-extensions>=4.0.0
+
+# UI and LLM
+streamlit>=1.30.0
+groq>=0.5.0
+requests>=2.31.0

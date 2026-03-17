@@ -9,7 +9,7 @@
 
 - UI 분리 객체(`ui/login_window.py`, `ui/main_window.py`)를 만들지 않음
 - 실제 동작은 `actions/app_ui_action.py`에 구현
-- MCP 노출은 `tools/app_ui_tool.py`에 추가
+- MCP 노출은 `tools/ui_vision_tool.py`에 추가
 - 서버 등록은 `mcp_server.py -> register_all_tools()`에서 관리
 
 ---
@@ -21,7 +21,7 @@
    - 역할: 화면 분석, 키워드/OCR 탐색, 아이콘 탐색, 클릭/단축키/입력 로직
 
 2. **Tool 추가/수정**
-   - 위치: `tools/app_ui_tool.py`
+   - 위치: `tools/ui_vision_tool.py`
    - 역할: MCP tool 함수 정의, Action 호출
 
 3. **Tool 등록 확인**

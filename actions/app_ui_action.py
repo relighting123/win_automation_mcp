@@ -93,10 +93,25 @@ class AppUIAction:
 
             wrapper = self._pick_target_window()
             if wrapper is None:
+                # 마지막 수단: top_window() 시도
+                try:
+                    wrapper = self._safe_call(lambda: self._session.app.top_window().wrapper_object(), None)
+                except Exception:
+                    pass
+                
+            if wrapper is None:
                 return AppUIActionResult(result="error", message="포커스를 줄 수 있는 앱 윈도우를 찾지 못했습니다")
 
+            # 윈도우가 최소화되어 있으면 복구
+            if self._safe_call(wrapper.is_minimized, False):
+                logger.info("윈도우가 최소화되어 있어 복구를 시도합니다.")
+                wrapper.restore()
+                time.sleep(0.5)
+
+            # 윈도우를 최상단으로 가져오고 포커스 설정
             wrapper.set_focus()
-            # 윈도우 활성화 대기 (필요시)
+            
+            # 윈도우 활성화 대기
             time.sleep(0.5)
             return AppUIActionResult(
                 result="success",
@@ -186,19 +201,34 @@ class AppUIAction:
             if not windows:
                 return None
 
-            # 1) 가시적인 윈도우 우선
-            visible = []
+            # 1) 가시적인 윈도우 또는 최소화된 윈도우 우선
+            # pywinauto의 is_visible()은 최소화된 경우 False를 반환할 수 있으므로
+            # is_minimized()도 함께 체크합니다.
+            candidates = []
             for w in windows:
                 wrapper = self._safe_call(lambda: w.wrapper_object(), None)
                 if wrapper is None:
                     continue
-                if self._safe_call(wrapper.is_visible, False):
-                    visible.append(wrapper)
-            if visible:
-                return visible[0]
+                
+                is_visible = self._safe_call(wrapper.is_visible, False)
+                is_minimized = self._safe_call(wrapper.is_minimized, False)
+                title = self._safe_call(wrapper.window_text, "")
+                
+                logger.debug(f"윈도우 후보 확인: '{title}', visible={is_visible}, minimized={is_minimized}")
+                
+                if is_visible or is_minimized:
+                    candidates.append(wrapper)
+            
+            if candidates:
+                return candidates[0]
 
-            # 2) fallback: 첫 윈도우 wrapper
-            return self._safe_call(lambda: windows[0].wrapper_object(), None)
+            # 2) 가시성은 없지만 핸들이 있는 첫 번째 윈도우
+            if windows:
+                first_wrapper = self._safe_call(lambda: windows[0].wrapper_object(), None)
+                if first_wrapper:
+                    return first_wrapper
+
+            return None
         except Exception as e:
             logger.debug("대상 윈도우 선택 실패: %s", e)
             return None
