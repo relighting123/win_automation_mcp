@@ -1,9 +1,13 @@
 import streamlit as st
 import requests
 import json
-import re
 import time
-from datetime import datetime
+
+SYSTEM_PROMPT = """당신은 Windows 자동화를 도와주는 유용한 비서입니다.
+사용자의 요청을 수행하기 위해 필요한 도구들을 적절히 호출하세요.
+여러 단계가 필요한 경우 한 번에 하나씩 도구를 호출하여 순차적으로 작업을 수행할 수 있습니다.
+도구 실행 결과가 나오면 이를 바탕으로 다음 단계를 결정하세요.
+모든 작업이 완료되면 사용자에게 한국어로 최종 결과를 요약해서 보고하세요."""
 
 # 페이지 설정
 st.set_page_config(
@@ -14,27 +18,69 @@ st.set_page_config(
 
 # 세션 상태 초기화
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "system", "content": """당신은 Windows 자동화를 도와주는 유용한 비서입니다. 
-사용자의 요청을 수행하기 위해 필요한 도구들을 적절히 호출하세요.
-여러 단계가 필요한 경우 한 번에 하나씩 도구를 호출하여 순차적으로 작업을 수행할 수 있습니다.
-도구 실행 결과가 나오면 이를 바탕으로 다음 단계를 결정하세요. 
-모든 작업이 완료되면 사용자에게 한국어로 최종 결과를 요약해서 보고하세요."""}
-    ]
+    st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+
+def reset_chat() -> None:
+    st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+
+def build_llm_request(
+    provider: str,
+    messages: list,
+    base_url: str,
+    endpoint_url: str,
+    api_key: str,
+    model: str,
+) -> tuple[str, dict, dict]:
+    """LLM 호출 URL/헤더/페이로드를 생성합니다."""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    if provider == "OpenAI-Compatible":
+        request_url = f"{base_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.1,
+        }
+    else:
+        request_url = endpoint_url
+        payload = {
+            "messages": messages,
+            "temperature": 0.1,
+        }
+        if model.strip():
+            payload["model"] = model.strip()
+
+    return request_url, headers, payload
 
 # 사이드바 설정
 st.sidebar.title("Configuration")
 mcp_url = st.sidebar.text_input("MCP Server URL", "http://localhost:8000/mcp")
-gemma_url = st.sidebar.text_input("Gemma API URL", "http://localhost:8001/v1/chat/completions")
+provider = st.sidebar.selectbox(
+    "LLM API Provider",
+    options=["OpenAI-Compatible", "Custom Endpoint"],
+    index=0,
+)
+
+if provider == "OpenAI-Compatible":
+    base_url = st.sidebar.text_input("Base URL", "http://localhost:8001/v1")
+    model_name = st.sidebar.text_input("Model", "google/gemma-3-4b-it")
+    api_key = st.sidebar.text_input("API Key", "local-token", type="password")
+    endpoint_url = ""
+else:
+    endpoint_url = st.sidebar.text_input(
+        "LLM Endpoint URL",
+        "http://localhost:8001/v1/chat/completions",
+    )
+    model_name = st.sidebar.text_input("Model (optional)", "")
+    api_key = st.sidebar.text_input("API Key (optional)", "", type="password")
+    base_url = ""
 
 if st.sidebar.button("Clear Chat"):
-    st.session_state.messages = [
-        {"role": "system", "content": """당신은 Windows 자동화를 도와주는 유용한 비서입니다. 
-사용자의 요청을 수행하기 위해 필요한 도구들을 적절히 호출하세요.
-여러 단계가 필요한 경우 한 번에 하나씩 도구를 호출하여 순차적으로 작업을 수행할 수 있습니다.
-도구 실행 결과가 나오면 이를 바탕으로 다음 단계를 결정하세요. 
-모든 작업이 완료되면 사용자에게 한국어로 최종 결과를 요약해서 보고하세요."""}
-    ]
+    reset_chat()
     st.rerun()
 
 st.title("🤖 Gemma Windows Automation Chat")
@@ -66,17 +112,38 @@ if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
             iteration += 1
             
             try:
-                payload = {
-                    "messages": st.session_state.messages,
-                    "temperature": 0.1
-                }
-                
-                response = requests.post(gemma_url, json=payload, timeout=60)
+                request_url, headers, payload = build_llm_request(
+                    provider=provider,
+                    messages=st.session_state.messages,
+                    base_url=base_url,
+                    endpoint_url=endpoint_url,
+                    api_key=api_key,
+                    model=model_name,
+                )
+
+                response = requests.post(
+                    request_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=60,
+                )
                 response.raise_for_status()
                 
                 result = response.json()
-                assistant_message = result['choices'][0]['message']
-                content = assistant_message.get('content', '')
+                choices = result.get("choices", [])
+                if not choices:
+                    raise ValueError("LLM 응답에 choices가 없습니다.")
+
+                assistant_message = choices[0].get("message", {})
+                content = assistant_message.get("content", "")
+                if isinstance(content, list):
+                    # 멀티파트 응답(OpenAI 호환)에서 텍스트만 연결
+                    text_chunks = [
+                        part.get("text", "")
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    ]
+                    content = "".join(text_chunks)
                 
                 if content:
                     message_placeholder.markdown(content)
