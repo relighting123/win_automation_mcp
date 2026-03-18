@@ -44,115 +44,163 @@ st.sidebar.markdown("""
 3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
 """)
 
+def _parse_mcp_jsonrpc_response(response):
+    """
+    MCP JSON-RPC 응답을 파싱합니다.
+    서버가 JSON 또는 SSE(text/event-stream)로 응답하는 경우를 모두 처리합니다.
+    """
+    content_type = response.headers.get("Content-Type", "")
+
+    if "text/event-stream" in content_type:
+        for line in response.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            stripped = line.strip()
+
+            # SSE 메타 라인(event:, id:, :)
+            if (
+                stripped.startswith(":")
+                or stripped.startswith("event:")
+                or stripped.startswith("id:")
+            ):
+                continue
+
+            if not stripped.startswith("data:"):
+                continue
+
+            payload = stripped.split(":", 1)[1].strip()
+            if not payload or payload == "[DONE]":
+                continue
+
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+            if "error" in parsed:
+                error_obj = parsed["error"]
+                message = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
+                raise RuntimeError(f"MCP error: {message}")
+
+            if "result" in parsed:
+                return parsed["result"]
+
+        raise RuntimeError("MCP SSE 응답에서 result를 찾지 못했습니다.")
+
+    # application/json 응답 처리
+    parsed = response.json()
+    if "error" in parsed:
+        error_obj = parsed["error"]
+        message = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
+        raise RuntimeError(f"MCP error: {message}")
+    return parsed.get("result", {})
+
+
+def _initialize_mcp_session_headers():
+    """
+    MCP initialize -> notifications/initialized 순서로 세션을 연 뒤,
+    후속 요청에 사용할 헤더를 반환합니다.
+    """
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+
+    init_payload = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "streamlit-client", "version": "1.0.0"},
+        },
+    }
+    init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=10)
+    init_res.raise_for_status()
+
+    session_id = init_res.headers.get("mcp-session-id")
+    if not session_id:
+        raise RuntimeError("initialize 응답에서 mcp-session-id를 받지 못했습니다.")
+
+    headers["mcp-session-id"] = session_id
+
+    # 일부 MCP 서버는 initialized 알림이 없으면 tools/list가 대기 상태가 될 수 있음
+    initialized_payload = {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+        "params": {},
+    }
+    requests.post(mcp_url, json=initialized_payload, headers=headers, timeout=5)
+
+    return headers
+
+
 def get_mcp_tools():
     """MCP 서버에서 사용 가능한 도구 목록을 가져옵니다."""
     try:
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json"
-        }
-        
-        # 1. 초기화 (initialize) 요청
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
-            }
-        }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
-        session_id = init_res.headers.get("mcp-session-id")
-        
-        if not session_id:
-            return []
-            
-        headers["mcp-session-id"] = session_id
-        
-        # 2. 도구 목록 요청
+        headers = _initialize_mcp_session_headers()
+
+        # 도구 목록 요청
         tools_payload = {
             "jsonrpc": "2.0",
             "method": "tools/list",
-            "id": 1
+            "id": int(time.time() * 1000),
         }
-        res = requests.post(mcp_url, json=tools_payload, headers=headers, timeout=5)
-        
-        if res.status_code == 200:
-            # SSE 스트림 파싱
-            for line in res.iter_lines():
-                if line:
-                    decoded = line.decode('utf-8')
-                    if decoded.startswith("data: "):
-                        data = json.loads(decoded[6:])
-                        if "result" in data and "tools" in data["result"]:
-                            # Groq 형식에 맞게 변환
-                            groq_tools = []
-                            for tool in data["result"]["tools"]:
-                                groq_tools.append({
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool["name"],
-                                        "description": tool["description"],
-                                        "parameters": tool["inputSchema"]
-                                    }
-                                })
-                            return groq_tools
-        return []
+
+        with requests.post(
+            mcp_url,
+            json=tools_payload,
+            headers=headers,
+            timeout=(5, 30),
+            stream=True,
+        ) as res:
+            res.raise_for_status()
+            result = _parse_mcp_jsonrpc_response(res)
+
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+
+        # Groq 형식으로 변환
+        groq_tools = []
+        for tool in tools:
+            groq_tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.get("name", ""),
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
+                    },
+                }
+            )
+        return groq_tools
     except Exception as e:
         st.error(f"Failed to fetch tools: {e}")
         return []
 
+
 def call_mcp_tool(name, arguments):
     """MCP 서버의 도구를 실행합니다."""
     try:
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json"
-        }
-        
-        # 1. 초기화
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
-            }
-        }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
-        session_id = init_res.headers.get("mcp-session-id")
-        
-        if not session_id:
-            return {"error": "Failed to get session ID"}
-            
-        headers["mcp-session-id"] = session_id
-        
-        # 2. 초기화 완료 알림
-        requests.post(mcp_url, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=headers, timeout=2)
-            
-        # 3. 도구 호출
+        headers = _initialize_mcp_session_headers()
+
+        # 도구 호출
         payload = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments},
-            "id": int(time.time())
+            "id": int(time.time() * 1000),
         }
-        
-        response = requests.post(mcp_url, json=payload, headers=headers, timeout=30, stream=True)
-        
-        if response.status_code == 200:
-            for line in response.iter_lines():
-                if line:
-                    decoded = line.decode('utf-8')
-                    if decoded.startswith("data: "):
-                        res_json = json.loads(decoded[6:])
-                        if "result" in res_json:
-                            return res_json["result"]
-        return {"error": f"Status {response.status_code}"}
+
+        with requests.post(
+            mcp_url,
+            json=payload,
+            headers=headers,
+            timeout=(5, 60),
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            return _parse_mcp_jsonrpc_response(response)
     except Exception as e:
         return {"error": str(e)}
 
