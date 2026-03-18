@@ -11,7 +11,7 @@
 
 이 프로젝트는 **Windows 애플리케이션 자동화용 MCP 서버**입니다.
 
-- 외부 LLM(예: Claude/Groq/OpenAI 호환 클라이언트)은 MCP Tool 호출만 수행
+- 외부 LLM(예: Claude/OpenProvider/OpenAI 호환 클라이언트)은 MCP Tool 호출만 수행
 - 서버는 Tool -> Action -> Core 순으로 책임을 분리
 - 실제 GUI 제어는 `pywinauto`, `pyautogui`, `winocr`를 조합해 수행
 
@@ -68,7 +68,7 @@ config/    : 앱 설정, locator, icon registry
 core/      : 세션/런처/대기/포트 킬 유틸
 errors/    : 업무 단위 예외 계층
 tools/     : MCP 도구 정의(외부 공개 인터페이스)
-LLM/       : Streamlit+Groq 클라이언트 예시
+LLM/       : Streamlit+OpenProvider(OpenAI 호환) 클라이언트 예시
 scripts/   : 보조 스크립트(locator 생성/포트 킬 검증)
 tests/     : 수동 검증 성격의 테스트 스크립트
 ```
@@ -241,14 +241,14 @@ tests/     : 수동 검증 성격의 테스트 스크립트
 ## 4-7. LLM/운영 보조
 
 ### `LLM/streamlit_app.py`
-- 역할: Groq 기반 대화형 UI + MCP tool-call 브리지 예시
+- 역할: OpenProvider(OpenAI 호환) 기반 대화형 UI + MCP tool-call 브리지 예시
 - 핵심 내용:
   - `get_mcp_tools()`로 MCP tool schema 수집
   - `call_mcp_tool()`로 실제 tools/call 실행
   - 다중 iteration으로 tool 호출-응답 루프 수행
 
-### `LLM/groq_tool_guide.md`
-- 역할: Groq+MCP 사용 안내 문서
+### `LLM/openprovider_tool_guide.md`
+- 역할: OpenProvider(OpenAI 호환)+MCP 사용 안내 문서
 
 ### `README.md`
 - 역할: 프로젝트 개요/원칙/실행 방법 문서

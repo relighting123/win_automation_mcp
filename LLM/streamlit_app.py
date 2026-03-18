@@ -1,15 +1,12 @@
 import streamlit as st
 import requests
 import json
-import re
 import time
-import os
-from datetime import datetime
-from groq import Groq
+from openai import OpenAI
 
 # 페이지 설정
 st.set_page_config(
-    page_title="Windows Automation with Groq",
+    page_title="Windows Automation with OpenProvider",
     page_icon="🦾",
     layout="wide"
 )
@@ -27,8 +24,12 @@ if "messages" not in st.session_state:
 # 사이드바 설정
 st.sidebar.title("Configuration")
 mcp_url = st.sidebar.text_input("MCP Server URL", "http://localhost:8000/mcp")
-groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
-model_name = st.sidebar.selectbox("Model", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"], index=0)
+openprovider_base_url = st.sidebar.text_input(
+    "LLM Base URL (OpenAI-compatible)",
+    "https://api.openai.com/v1",
+)
+openprovider_api_key = st.sidebar.text_input("LLM API Key", type="password")
+model_name = st.sidebar.text_input("Model", "openai/gpt-4o-mini")
 
 if st.sidebar.button("Clear Chat"):
     st.session_state.messages = [
@@ -40,7 +41,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("""
 ### How to use
 1. MCP 서버를 실행하세요 (`python mcp_server.py`)
-2. Groq API Key를 입력하세요.
+2. OpenProvider(또는 OpenAI 호환) API Key/Base URL을 입력하세요.
 3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
 """)
 
@@ -160,10 +161,10 @@ def get_mcp_tools():
 
         tools = result.get("tools", []) if isinstance(result, dict) else []
 
-        # Groq 형식으로 변환
-        groq_tools = []
+        # OpenAI 호환 tools 형식으로 변환
+        llm_tools = []
         for tool in tools:
-            groq_tools.append(
+            llm_tools.append(
                 {
                     "type": "function",
                     "function": {
@@ -173,7 +174,7 @@ def get_mcp_tools():
                     },
                 }
             )
-        return groq_tools
+        return llm_tools
     except Exception as e:
         st.error(f"Failed to fetch tools: {e}")
         return []
@@ -204,8 +205,8 @@ def call_mcp_tool(name, arguments):
     except Exception as e:
         return {"error": str(e)}
 
-st.title("🦾 Groq Windows Automation Chat")
-st.markdown("Groq 모델을 사용하여 Windows를 제어하세요.")
+st.title("🦾 OpenProvider Windows Automation Chat")
+st.markdown("OpenAI 호환 LLM(OpenProvider 등)으로 Windows를 제어하세요.")
 
 # 채팅 메시지 표시
 for message in st.session_state.messages:
@@ -216,15 +217,22 @@ for message in st.session_state.messages:
 
 # 사용자 입력 처리
 if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
-    if not groq_api_key:
-        st.error("Groq API Key가 필요합니다. 사이드바에 입력해주세요.")
+    if not openprovider_api_key:
+        st.error("LLM API Key가 필요합니다. 사이드바에 입력해주세요.")
+        st.stop()
+
+    if not openprovider_base_url:
+        st.error("LLM Base URL이 필요합니다. 사이드바에 입력해주세요.")
         st.stop()
         
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    client = Groq(api_key=groq_api_key)
+    client = OpenAI(
+        api_key=openprovider_api_key,
+        base_url=openprovider_base_url,
+    )
     
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
@@ -239,7 +247,7 @@ if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
             # 모든 도구 가져오기
             tools = get_mcp_tools()
             
-            # Groq 호출
+            # OpenAI 호환 LLM 호출
             chat_completion = client.chat.completions.create(
                 messages=st.session_state.messages,
                 model=model_name,
