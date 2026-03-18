@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import re
 import time
 import os
 from datetime import datetime
@@ -44,164 +45,115 @@ st.sidebar.markdown("""
 3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
 """)
 
-def _parse_mcp_jsonrpc_response(response):
-    """
-    MCP JSON-RPC 응답을 파싱합니다.
-    서버가 JSON 또는 SSE(text/event-stream)로 응답하는 경우를 모두 처리합니다.
-    """
-    content_type = response.headers.get("Content-Type", "")
-
-    if "text/event-stream" in content_type:
-        for line in response.iter_lines(decode_unicode=True):
-            if not line:
-                continue
-            stripped = line.strip()
-
-            # SSE 메타 라인(event:, id:, :)
-            if (
-                stripped.startswith(":")
-                or stripped.startswith("event:")
-                or stripped.startswith("id:")
-            ):
-                continue
-
-            if not stripped.startswith("data:"):
-                continue
-
-            payload = stripped.split(":", 1)[1].strip()
-            if not payload or payload == "[DONE]":
-                continue
-
-            try:
-                parsed = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-
-            if "error" in parsed:
-                error_obj = parsed["error"]
-                message = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
-                raise RuntimeError(f"MCP error: {message}")
-
-            if "result" in parsed:
-                return parsed["result"]
-
-        raise RuntimeError("MCP SSE 응답에서 result를 찾지 못했습니다.")
-
-    # application/json 응답 처리
-    parsed = response.json()
-    if "error" in parsed:
-        error_obj = parsed["error"]
-        message = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
-        raise RuntimeError(f"MCP error: {message}")
-    return parsed.get("result", {})
-
-
-def _initialize_mcp_session_headers():
-    """
-    MCP initialize -> notifications/initialized 순서로 세션을 연 뒤,
-    후속 요청에 사용할 헤더를 반환합니다.
-    """
-    headers = {
-        "Accept": "application/json, text/event-stream",
-        "Content-Type": "application/json",
-    }
-
-    init_payload = {
-        "jsonrpc": "2.0",
-        "id": 0,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "streamlit-client", "version": "1.0.0"},
-        },
-    }
-    init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=10)
-    init_res.raise_for_status()
-
-    session_id = init_res.headers.get("mcp-session-id")
-    if not session_id:
-        raise RuntimeError("initialize 응답에서 mcp-session-id를 받지 못했습니다.")
-
-    headers["mcp-session-id"] = session_id
-
-    # 일부 MCP 서버는 initialized 알림이 없으면 tools/list가 대기 상태가 될 수 있음
-    initialized_payload = {
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized",
-        "params": {},
-    }
-    requests.post(mcp_url, json=initialized_payload, headers=headers, timeout=5)
-
-    return headers
-
-
 def get_mcp_tools():
     """MCP 서버에서 사용 가능한 도구 목록을 가져옵니다."""
     try:
-    try:
-        headers = _initialize_mcp_session_headers()
-
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json"
+        }
+        
+        # 1. 초기화 (initialize) 요청
+        init_payload = {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
+            }
+        }
+        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
+        session_id = init_res.headers.get("mcp-session-id")
+        
+        if not session_id:
+            return []
+            
+        headers["mcp-session-id"] = session_id
+        
+        # 2. 도구 목록 요청
         tools_payload = {
             "jsonrpc": "2.0",
             "method": "tools/list",
-            "id": int(time.time() * 1000),
+            "id": 1
         }
-
-        with requests.post(
-            mcp_url,
-            json=tools_payload,
-            headers=headers,
-            timeout=(5, 30),
-            stream=True,
-        ) as res:
-            res.raise_for_status()
-            result = _parse_mcp_jsonrpc_response(res)
-
-        tools = result.get("tools", []) if isinstance(result, dict) else []
-
-        llm_tools = []
-        for tool in tools:
-            llm_tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.get("name", ""),
-                        "description": tool.get("description", ""),
-                        "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
-                    },
-                }
-            )
-        return llm_tools
-    except Exception as e:
-        # st.error 대신 로그로 남겨서 흐름 방해 최소화 (연결 안 된 경우 대비)
-        import logging
-        logging.error(f"Failed to fetch tools: {e}")
+        res = requests.post(mcp_url, json=tools_payload, headers=headers, timeout=5)
+        
+        if res.status_code == 200:
+            # SSE 스트림 파싱
+            for line in res.iter_lines():
+                if line:
+                    decoded = line.decode('utf-8')
+                    if decoded.startswith("data: "):
+                        data = json.loads(decoded[6:])
+                        if "result" in data and "tools" in data["result"]:
+                            # OpenAI 형식에 맞게 변환
+                            openai_tools = []
+                            for tool in data["result"]["tools"]:
+                                openai_tools.append({
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool["name"],
+                                        "description": tool["description"],
+                                        "parameters": tool["inputSchema"]
+                                    }
+                                })
+                            return openai_tools
         return []
-
+    except Exception as e:
+        st.error(f"Failed to fetch tools: {e}")
+        return []
 
 def call_mcp_tool(name, arguments):
     """MCP 서버의 도구를 실행합니다."""
     try:
-        headers = _initialize_mcp_session_headers()
-
-        # 도구 호출
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json"
+        }
+        
+        # 1. 초기화
+        init_payload = {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
+            }
+        }
+        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
+        session_id = init_res.headers.get("mcp-session-id")
+        
+        if not session_id:
+            return {"error": "Failed to get session ID"}
+            
+        headers["mcp-session-id"] = session_id
+        
+        # 2. 초기화 완료 알림
+        requests.post(mcp_url, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=headers, timeout=2)
+            
+        # 3. 도구 호출
         payload = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments},
-            "id": int(time.time() * 1000),
+            "id": int(time.time())
         }
-
-        with requests.post(
-            mcp_url,
-            json=payload,
-            headers=headers,
-            timeout=(5, 60),
-            stream=True,
-        ) as response:
-            response.raise_for_status()
-            return _parse_mcp_jsonrpc_response(response)
+        
+        response = requests.post(mcp_url, json=payload, headers=headers, timeout=30, stream=True)
+        
+        if response.status_code == 200:
+            for line in response.iter_lines():
+                if line:
+                    decoded = line.decode('utf-8')
+                    if decoded.startswith("data: "):
+                        res_json = json.loads(decoded[6:])
+                        if "result" in res_json:
+                            return res_json["result"]
+        return {"error": f"Status {response.status_code}"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -241,74 +193,30 @@ if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
             # 모든 도구 가져오기
             tools = get_mcp_tools()
             
-            # LLM 호출 (스트리밍 방식 활성화)
-            response_stream = client.chat.completions.create(
+            # LLM 호출 (비-스트리밍 방식)
+            chat_completion = client.chat.completions.create(
                 messages=st.session_state.messages,
                 model=model_name,
                 tools=tools if tools else None,
                 tool_choice="auto" if tools else None,
                 temperature=0.1,
-                stream=True  # SSE 활성화
+                stream=False
             )
             
-            # 스트리밍 응답 처리 루프
-            full_content = ""
-            tool_calls_buffer = {}  # index별로 툴 호출 정보 저장
+            response_message = chat_completion.choices[0].message
+            tool_calls = response_message.tool_calls
             
-            for chunk in response_stream:
-                if not chunk.choices:
-                    continue
-                    
-                delta = chunk.choices[0].delta
-                
-                # 1. 텍스트 내용 처리
-                if delta.content:
-                    full_content += delta.content
-                    message_placeholder.markdown(full_content + "▌")
-                
-                # 2. 도구 호출 데이터 처리 (청크별로 조각나서 들어옴)
-                if delta.tool_calls:
-                    for tc_chunk in delta.tool_calls:
-                        index = tc_chunk.index
-                        if index not in tool_calls_buffer:
-                            tool_calls_buffer[index] = {
-                                "id": tc_chunk.id,
-                                "name": tc_chunk.function.name if tc_chunk.function else "",
-                                "arguments": tc_chunk.function.arguments if tc_chunk.function else ""
-                            }
-                        else:
-                            # 갱신되는 정보 추가 (주로 arguments가 조각나서 들어옴)
-                            if tc_chunk.id:
-                                tool_calls_buffer[index]["id"] = tc_chunk.id
-                            if tc_chunk.function:
-                                if tc_chunk.function.name:
-                                    tool_calls_buffer[index]["name"] += tc_chunk.function.name
-                                if tc_chunk.function.arguments:
-                                    tool_calls_buffer[index]["arguments"] += tc_chunk.function.arguments
+            if response_message.content:
+                full_response += response_message.content
+                message_placeholder.markdown(full_response)
             
-            # 스트리밍 종료 후 최종 표시 업데이트
-            message_placeholder.markdown(full_content)
-            
-            # 버퍼의 데이터를 리스트로 변환
-            final_tool_calls = []
-            for idx in sorted(tool_calls_buffer.keys()):
-                tc = tool_calls_buffer[idx]
-                # OpenAI/Groq 호환 객체 구조 생성
-                from types import SimpleNamespace
-                final_tool_calls.append(SimpleNamespace(
-                    id=tc["id"],
-                    function=SimpleNamespace(
-                        name=tc["name"],
-                        arguments=tc["arguments"]
-                    )
-                ))
-            
-            # 어시스턴트 메시지 구성
+            # 응답을 메시지 히스토리에 추가
+            # 도구 호출이 있는 경우 content가 None일 수 있으므로 처리
             msg_to_append = {
                 "role": "assistant",
-                "content": full_content if full_content else None
+                "content": response_message.content
             }
-            if final_tool_calls:
+            if tool_calls:
                 msg_to_append["tool_calls"] = [
                     {
                         "id": t.id,
@@ -317,16 +225,15 @@ if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
                             "name": t.function.name,
                             "arguments": t.function.arguments
                         }
-                    } for t in final_tool_calls
+                    } for t in tool_calls
                 ]
-            
             st.session_state.messages.append(msg_to_append)
             
-            if not final_tool_calls:
+            if not tool_calls:
                 break
                 
             # 도구 실행
-            for tool_call in final_tool_calls:
+            for tool_call in tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
                 
