@@ -2,11 +2,13 @@ import streamlit as st
 import requests
 import json
 import time
+import os
+from datetime import datetime
 from openai import OpenAI
 
 # 페이지 설정
 st.set_page_config(
-    page_title="Windows Automation with OpenProvider",
+    page_title="Windows Automation with Internal LLM",
     page_icon="🦾",
     layout="wide"
 )
@@ -24,12 +26,9 @@ if "messages" not in st.session_state:
 # 사이드바 설정
 st.sidebar.title("Configuration")
 mcp_url = st.sidebar.text_input("MCP Server URL", "http://localhost:8000/mcp")
-openprovider_base_url = st.sidebar.text_input(
-    "LLM Base URL (OpenAI-compatible)",
-    "https://api.openai.com/v1",
-)
-openprovider_api_key = st.sidebar.text_input("LLM API Key", type="password")
-model_name = st.sidebar.text_input("Model", "openai/gpt-4o-mini")
+api_base_url = st.sidebar.text_input("LLM API Base URL", "https://api.openai.com/v1")
+api_key = st.sidebar.text_input("API Key", type="password")
+model_name = st.sidebar.text_input("Model Name", "gpt-4o")
 
 if st.sidebar.button("Clear Chat"):
     st.session_state.messages = [
@@ -41,7 +40,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("""
 ### How to use
 1. MCP 서버를 실행하세요 (`python mcp_server.py`)
-2. OpenProvider(또는 OpenAI 호환) API Key/Base URL을 입력하세요.
+2. API 설정(URL, Key, Model)을 입력하세요.
 3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
 """)
 
@@ -140,9 +139,9 @@ def _initialize_mcp_session_headers():
 def get_mcp_tools():
     """MCP 서버에서 사용 가능한 도구 목록을 가져옵니다."""
     try:
+    try:
         headers = _initialize_mcp_session_headers()
 
-        # 도구 목록 요청
         tools_payload = {
             "jsonrpc": "2.0",
             "method": "tools/list",
@@ -161,7 +160,6 @@ def get_mcp_tools():
 
         tools = result.get("tools", []) if isinstance(result, dict) else []
 
-        # OpenAI 호환 tools 형식으로 변환
         llm_tools = []
         for tool in tools:
             llm_tools.append(
@@ -176,7 +174,9 @@ def get_mcp_tools():
             )
         return llm_tools
     except Exception as e:
-        st.error(f"Failed to fetch tools: {e}")
+        # st.error 대신 로그로 남겨서 흐름 방해 최소화 (연결 안 된 경우 대비)
+        import logging
+        logging.error(f"Failed to fetch tools: {e}")
         return []
 
 
@@ -205,8 +205,8 @@ def call_mcp_tool(name, arguments):
     except Exception as e:
         return {"error": str(e)}
 
-st.title("🦾 OpenProvider Windows Automation Chat")
-st.markdown("OpenAI 호환 LLM(OpenProvider 등)으로 Windows를 제어하세요.")
+st.title("🦾 Windows Automation Chat")
+st.markdown("사내 LLM 또는 OpenAI 모델을 사용하여 Windows를 제어하세요.")
 
 # 채팅 메시지 표시
 for message in st.session_state.messages:
@@ -217,22 +217,16 @@ for message in st.session_state.messages:
 
 # 사용자 입력 처리
 if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
-    if not openprovider_api_key:
-        st.error("LLM API Key가 필요합니다. 사이드바에 입력해주세요.")
-        st.stop()
-
-    if not openprovider_base_url:
-        st.error("LLM Base URL이 필요합니다. 사이드바에 입력해주세요.")
+    if not api_key:
+        st.error("API Key가 필요합니다. 사이드바에 입력해주세요.")
         st.stop()
         
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    client = OpenAI(
-        api_key=openprovider_api_key,
-        base_url=openprovider_base_url,
-    )
+    # OpenAI 클라이언트 초기화 (사용자 설정 URL 사용)
+    client = OpenAI(api_key=api_key, base_url=api_base_url)
     
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
@@ -247,29 +241,74 @@ if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
             # 모든 도구 가져오기
             tools = get_mcp_tools()
             
-            # OpenAI 호환 LLM 호출
-            chat_completion = client.chat.completions.create(
+            # LLM 호출 (스트리밍 방식 활성화)
+            response_stream = client.chat.completions.create(
                 messages=st.session_state.messages,
                 model=model_name,
-                tools=tools,
-                tool_choice="auto",
-                temperature=0.1
+                tools=tools if tools else None,
+                tool_choice="auto" if tools else None,
+                temperature=0.1,
+                stream=True  # SSE 활성화
             )
             
-            response_message = chat_completion.choices[0].message
-            tool_calls = response_message.tool_calls
+            # 스트리밍 응답 처리 루프
+            full_content = ""
+            tool_calls_buffer = {}  # index별로 툴 호출 정보 저장
             
-            if response_message.content:
-                full_response += response_message.content
-                message_placeholder.markdown(full_response)
+            for chunk in response_stream:
+                if not chunk.choices:
+                    continue
+                    
+                delta = chunk.choices[0].delta
+                
+                # 1. 텍스트 내용 처리
+                if delta.content:
+                    full_content += delta.content
+                    message_placeholder.markdown(full_content + "▌")
+                
+                # 2. 도구 호출 데이터 처리 (청크별로 조각나서 들어옴)
+                if delta.tool_calls:
+                    for tc_chunk in delta.tool_calls:
+                        index = tc_chunk.index
+                        if index not in tool_calls_buffer:
+                            tool_calls_buffer[index] = {
+                                "id": tc_chunk.id,
+                                "name": tc_chunk.function.name if tc_chunk.function else "",
+                                "arguments": tc_chunk.function.arguments if tc_chunk.function else ""
+                            }
+                        else:
+                            # 갱신되는 정보 추가 (주로 arguments가 조각나서 들어옴)
+                            if tc_chunk.id:
+                                tool_calls_buffer[index]["id"] = tc_chunk.id
+                            if tc_chunk.function:
+                                if tc_chunk.function.name:
+                                    tool_calls_buffer[index]["name"] += tc_chunk.function.name
+                                if tc_chunk.function.arguments:
+                                    tool_calls_buffer[index]["arguments"] += tc_chunk.function.arguments
             
-            # 응답을 메시지 히스토리에 추가
-            # 도구 호출이 있는 경우 content가 None일 수 있으므로 처리
+            # 스트리밍 종료 후 최종 표시 업데이트
+            message_placeholder.markdown(full_content)
+            
+            # 버퍼의 데이터를 리스트로 변환
+            final_tool_calls = []
+            for idx in sorted(tool_calls_buffer.keys()):
+                tc = tool_calls_buffer[idx]
+                # OpenAI/Groq 호환 객체 구조 생성
+                from types import SimpleNamespace
+                final_tool_calls.append(SimpleNamespace(
+                    id=tc["id"],
+                    function=SimpleNamespace(
+                        name=tc["name"],
+                        arguments=tc["arguments"]
+                    )
+                ))
+            
+            # 어시스턴트 메시지 구성
             msg_to_append = {
                 "role": "assistant",
-                "content": response_message.content
+                "content": full_content if full_content else None
             }
-            if tool_calls:
+            if final_tool_calls:
                 msg_to_append["tool_calls"] = [
                     {
                         "id": t.id,
@@ -278,15 +317,16 @@ if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
                             "name": t.function.name,
                             "arguments": t.function.arguments
                         }
-                    } for t in tool_calls
+                    } for t in final_tool_calls
                 ]
+            
             st.session_state.messages.append(msg_to_append)
             
-            if not tool_calls:
+            if not final_tool_calls:
                 break
                 
             # 도구 실행
-            for tool_call in tool_calls:
+            for tool_call in final_tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
                 

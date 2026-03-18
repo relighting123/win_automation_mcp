@@ -177,6 +177,9 @@ python -m mcp_server --log-level DEBUG
 
 # HTTP 전송 방식 (기본)
 python mcp_server.py --transport http --host 127.0.0.1 --port 8000 --path /mcp
+
+# SSE 전송 방식 (파일 변경 시 자동 재시작 포함)
+python mcp_server.py --transport sse --port 8000 --reload
 ```
 
 ## 사용 가능한 도구
@@ -311,7 +314,7 @@ window.child_window(**locator)
 MIT License
 
 
-streamlit run streamlit_app.py
+streamlit run LLM/streamlit_app.py
 python mcp_server.py
 python gemma_serving.py
 npx @modelcontextprotocol/inspector
