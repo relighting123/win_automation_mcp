@@ -173,14 +173,27 @@ class AppSession:
         return self._locators
     
     def get_timeout(self, timeout_type: str = "default_wait") -> float:
-        """타임아웃 설정 값 반환"""
+        """타임아웃 설정 값 반환 (비정상적인 값에 대한 기본값 처리 포함)"""
         timeouts = self._config.get("timeouts", {})
-        return float(timeouts.get(timeout_type, 10))
+        val = timeouts.get(timeout_type)
+        if val is None:
+            # YAML에서 값이 비어있을 경우 (None) 기본값 처리
+            defaults = {
+                "default_wait": 10.0,
+                "long_wait": 60.0,
+                "short_wait": 5.0,
+                "retry_interval": 0.5
+            }
+            return defaults.get(timeout_type, 10.0)
+        return float(val)
     
     def get_retry_attempts(self, retry_type: str = "default_attempts") -> int:
-        """재시도 횟수 설정 값 반환"""
+        """재시도 횟수 설정 값 반환 (비정상적인 값에 대한 기본값 처리 포함)"""
         retry = self._config.get("retry", {})
-        return int(retry.get(retry_type, 3))
+        val = retry.get(retry_type)
+        if val is None:
+            return 3
+        return int(val)
     
     def get_locator(self, window_name: str, element_name: str) -> Dict[str, Any]:
         """
@@ -242,7 +255,8 @@ class AppSession:
         Args:
             process: 프로세스 ID
             path: 실행 파일 경로
-            title: 윈도우 제목
+            title: 윈도우 제목 (전체 일치)
+            title_re: 윈도우 제목 정규식 (부분 일치 가능)
             **kwargs: pywinauto Application.connect() 추가 인자
         
         Returns:
@@ -271,15 +285,24 @@ class AppSession:
                 connect_args["path"] = path
             elif title:
                 connect_args["title"] = title
+            elif kwargs.get("title_re"):
+                connect_args["title_re"] = kwargs.pop("title_re")
             else:
-                # 설정에서 경로 가져오기
+                # 설정에서 정보 가져오기 (매개변수로 전달된 정보가 없으면 설정값 사용)
                 app_config = self._config.get("application", {})
-                exe_path = app_config.get("executable_path")
+                exe_path = path or app_config.get("executable_path")
+                conf_title_re = app_config.get("window_title_re")
+                conf_title = app_config.get("window_title")
+                
                 if exe_path:
                     connect_args["path"] = exe_path
+                elif conf_title_re:
+                    connect_args["title_re"] = conf_title_re
+                elif conf_title:
+                    connect_args["title"] = conf_title
                 else:
                     raise ConnectionError(
-                        message="연결 대상을 지정해주세요 (process, path, 또는 title)"
+                        message="연결 대상을 지정해주세요 (process, path, title 또는 title_re)"
                     )
             
             connect_args.update(kwargs)
@@ -288,15 +311,38 @@ class AppSession:
             self._state = SessionState.CONNECTED
             logger.info(f"애플리케이션 연결 성공: {connect_args}")
             
+            # 성공 시 윈도우를 맨 앞으로 가져오기 (사용자 요청 사항)
+            try:
+                top_win = self._app.top_window()
+                if top_win.exists():
+                    if top_win.is_minimized():
+                        top_win.restore()
+                    top_win.set_focus()
+                    logger.info("윈도우를 맨 앞으로 가져왔습니다.")
+            except Exception as fe:
+                logger.debug(f"연결 후 포커스 설정 실패 (무시): {fe}")
+            
             return self
             
         except Exception as e:
             self._state = SessionState.ERROR
             logger.error(f"애플리케이션 연결 실패: {e}")
+            
+            # 실패 시 현재 열려있는 윈도우 목록을 가져와서 힌트 제공
+            available_windows = []
+            try:
+                from pywinauto import Desktop
+                available_windows = [w.window_text() for w in Desktop(backend=self._backend).windows() if w.window_text()]
+            except Exception:
+                pass
+
             raise ConnectionError(
                 message="애플리케이션 연결 실패",
                 cause=e,
-                details={"connect_args": str(connect_args)}
+                details={
+                    "connect_args": str(connect_args),
+                    "available_windows_hints": available_windows[:20]  # 최대 20개까지만
+                }
             )
     
     def start(

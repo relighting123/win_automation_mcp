@@ -41,7 +41,9 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         """
         action = get_app_ui_action()
         # 0. 포커스 확보 (Atomic Action)
-        action.ensure_focus()
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return str(focus_result.to_dict())
 
         # 1. 위치 찾기 (Atomic Action)
         find_result = await action.find_text_position(
@@ -82,7 +84,9 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         """
         action = get_app_ui_action()
         # 0. 포커스 확보 (Atomic Action)
-        action.ensure_focus()
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return str(focus_result.to_dict())
 
         # 1. 텍스트 입력 (Atomic Action)
         result = action.type_text(
@@ -109,7 +113,9 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         """
         action = get_app_ui_action()
         # 0. 포커스 확보 (Atomic Action)
-        action.ensure_focus()
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return str(focus_result.to_dict())
 
         result = action.press_shortcut(shortcut)
         return str(result.to_dict())
@@ -134,7 +140,9 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         """
         action = get_app_ui_action()
         # 0. 포커스 확보 (Atomic Action)
-        action.ensure_focus()
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return str(focus_result.to_dict())
 
         # 1. 위치 찾기 (Atomic Action)
         find_result = action.find_rgb_position(
@@ -174,7 +182,9 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         """
         action = get_app_ui_action()
         # 0. 포커스 확보 (Atomic Action)
-        action.ensure_focus()
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return str(focus_result.to_dict())
 
         # 1. 위치 찾기 (Atomic Action)
         find_result = action.find_image_position(
@@ -364,7 +374,11 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         미리 정의된 아이콘 이미지/메타데이터를 사용해 아이콘 좌표(x,y)를 찾습니다.
         """
         action = get_app_ui_action()
-        action.ensure_focus()
+        # 0. 포커스 확보
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return {"result": "error", "message": focus_result.message, "is_success": False}
+        
         return action.find_icon_from_registry(
             icon_name=icon_name,
             keyword=keyword,
@@ -383,7 +397,11 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         미리 정의된 아이콘 메타데이터로 좌표를 찾은 후 해당 지점을 클릭합니다.
         """
         action = get_app_ui_action()
-        action.ensure_focus()
+        # 0. 포커스 확보
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return {"result": "error", "message": focus_result.message, "is_success": False}
+            
         found = action.find_icon_from_registry(
             icon_name=icon_name,
             keyword=keyword,
@@ -423,7 +441,10 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             default_timeout: 검색 동작의 기본 타임아웃
         """
         action = get_app_ui_action()
-        action.ensure_focus()
+        # 0. 포커스 확보
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return str({"is_success": False, "message": focus_result.message, "results": []})
         
         results = []
         import asyncio

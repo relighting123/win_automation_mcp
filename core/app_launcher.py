@@ -101,7 +101,8 @@ class AppLauncher:
         self,
         process_id: Optional[int] = None,
         title: Optional[str] = None,
-        path: Optional[str] = None
+        path: Optional[str] = None,
+        **kwargs
     ) -> AppSession:
         """
         이미 실행 중인 애플리케이션에 연결
@@ -110,6 +111,7 @@ class AppLauncher:
             process_id: 프로세스 ID
             title: 윈도우 제목
             path: 실행 파일 경로
+            **kwargs: 추가 인자 (예: title_re)
         
         Returns:
             연결된 AppSession
@@ -117,7 +119,8 @@ class AppLauncher:
         return self._session.connect(
             process=process_id,
             title=title,
-            path=path
+            path=path,
+            **kwargs
         )
     
     @retry_on_failure(max_attempts=3, retry_interval=2.0)

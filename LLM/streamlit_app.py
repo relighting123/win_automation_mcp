@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import requests
 import json
@@ -14,22 +15,55 @@ st.set_page_config(
     layout="wide"
 )
 
+def load_skills():
+    """skills/ 폴더의 모든 마크다운 파일을 읽어 스킬 설명을 반환합니다."""
+    # skills 폴더는 LLM 폴더와 같은 레벨에 있음
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    skills_dir = os.path.join(os.path.dirname(current_dir), "skills")
+    
+    if not os.path.exists(skills_dir):
+        return ""
+    
+    skills_content = "\n\n### [사용 가능한 추가 스킬(Skills)]\n"
+    has_skills = False
+    try:
+        for filename in os.listdir(skills_dir):
+            if filename.endswith(".md"):
+                with open(os.path.join(skills_dir, filename), "r", encoding="utf-8") as f:
+                    skills_content += f"\n#### Skill: {filename}\n"
+                    skills_content += f.read()
+                    skills_content += "\n"
+                    has_skills = True
+    except Exception as e:
+        st.error(f"Error loading skills: {e}")
+        return ""
+    
+    return skills_content if has_skills else ""
+# 기본 시스템 프롬프트 정의
+system_content = (
+    "당신은 Windows 자동화를 도와주는 유용한 비서입니다.\n"
+    "사용자의 요청을 수행하기 위해 필요한 도구들을 적절히 호출하세요.\n"
+    "여러 단계가 필요한 경우 한 번에 하나씩 도구를 호출하여 순차적으로 작업을 수행할 수 있습니다.\n"
+    "도구 실행 결과가 나오면 이를 바탕으로 다음 단계를 결정하세요.\n"
+    "모든 작업이 완료되면 사용자에게 한국어로 최종 결과를 요약해서 보고하세요."
+)
+
 # 세션 상태 초기화
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "system", "content": """당신은 Windows 자동화를 도와주는 유용한 비서입니다. 
-사용자의 요청을 수행하기 위해 필요한 도구들을 적절히 호출하세요.
-여러 단계가 필요한 경우 한 번에 하나씩 도구를 호출하여 순차적으로 작업을 수행할 수 있습니다.
-도구 실행 결과가 나오면 이를 바탕으로 다음 단계를 결정하세요. 
-모든 작업이 완료되면 사용자에게 한국어로 최종 결과를 요약해서 보고하세요."""}
+        {"role": "system", "content": system_content}
     ]
+else:
+    # 기존 세션이 있는 경우에도 시스템 프롬프트는 최신 버전으로 유지 (ASCII 오류 방지)
+    if st.session_state.messages and st.session_state.messages[0]["role"] == "system":
+        st.session_state.messages[0]["content"] = system_content
 
 # 사이드바 설정
 st.sidebar.title("Configuration")
 mcp_url = st.sidebar.text_input("MCP Server URL", "http://localhost:8000/mcp")
-api_base_url = st.sidebar.text_input("LLM API Base URL", "https://api.openai.com/v1")
+api_base_url = st.sidebar.text_input("LLM API Base URL", "https://api.groq.com/openai/v1")
 api_key = st.sidebar.text_input("API Key", type="password")
-model_name = st.sidebar.text_input("Model Name", "gpt-4o")
+model_name = st.sidebar.text_input("Model Name", "openai/gpt-oss-120b")
 
 if st.sidebar.button("Clear Chat"):
     st.session_state.messages = [
@@ -64,7 +98,7 @@ def get_mcp_tools():
                 "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
             }
         }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
+        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=15)
         session_id = init_res.headers.get("mcp-session-id")
         
         if not session_id:
@@ -78,7 +112,7 @@ def get_mcp_tools():
             "method": "tools/list",
             "id": 1
         }
-        res = requests.post(mcp_url, json=tools_payload, headers=headers, timeout=5)
+        res = requests.post(mcp_url, json=tools_payload, headers=headers, timeout=15)
         
         if res.status_code == 200:
             # SSE 스트림 파싱
@@ -124,7 +158,7 @@ def call_mcp_tool(name, arguments):
                 "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
             }
         }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=5)
+        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=15)
         session_id = init_res.headers.get("mcp-session-id")
         
         if not session_id:
@@ -143,7 +177,7 @@ def call_mcp_tool(name, arguments):
             "id": int(time.time())
         }
         
-        response = requests.post(mcp_url, json=payload, headers=headers, timeout=30, stream=True)
+        response = requests.post(mcp_url, json=payload, headers=headers, timeout=60, stream=True)
         
         if response.status_code == 200:
             for line in response.iter_lines():
@@ -198,7 +232,7 @@ if prompt := st.chat_input("Windows에게 시킬 일을 입력하세요..."):
                 messages=st.session_state.messages,
                 model=model_name,
                 tools=tools if tools else None,
-                tool_choice="auto" if tools else None,
+                tool_choice="auto" if tools else "none",
                 temperature=0.1,
                 stream=False
             )

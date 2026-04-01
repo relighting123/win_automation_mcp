@@ -61,6 +61,11 @@ def register_app_mgmt_tools(mcp: Any) -> None:
                 wait_for_ready=wait_for_window
             )
             
+            # 윈도우 포커스 확보 시도 (비전 액션 사용)
+            from actions.app_ui_action import get_app_ui_action
+            action = get_app_ui_action()
+            action.ensure_focus()
+            
             process_info = launcher.get_process_info()
             
             result = {
@@ -91,7 +96,9 @@ def register_app_mgmt_tools(mcp: Any) -> None:
     @mcp.tool()
     async def connect_to_application(
         process_id: Optional[int] = None,
-        window_title: Optional[str] = None
+        window_title: Optional[str] = None,
+        window_title_re: Optional[str] = None,
+        executable_path: Optional[str] = None
     ) -> dict:
         """
         이미 실행 중인 애플리케이션에 연결합니다.
@@ -100,8 +107,10 @@ def register_app_mgmt_tools(mcp: Any) -> None:
         새로 실행하지 않고 기존 인스턴스에 연결할 때 사용합니다.
         
         Args:
-            process_id: 연결할 프로세스 ID (선택사항)
-            window_title: 연결할 윈도우 제목 (선택사항)
+            process_id: 연결할 프로세스 ID (선택사항, 없으면 설정값 사용)
+            window_title: 연결할 윈도우 제목 (전체 일치, 선택사항, 없으면 설정값 사용)
+            window_title_re: 연결할 윈도우 제목 정규식 (부분 일치 가능, 선택사항, 없으면 설정값 사용)
+            executable_path: 실행 파일 경로 (선택사항, 없으면 설정값 사용)
         
         Returns:
             dict: 연결 결과
@@ -122,7 +131,9 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             launcher = get_launcher()
             session = launcher.connect_to_running(
                 process_id=process_id,
-                title=window_title
+                title=window_title,
+                title_re=window_title_re,
+                path=executable_path
             )
             
             process_info = launcher.get_process_info()

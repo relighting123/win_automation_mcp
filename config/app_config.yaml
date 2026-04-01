@@ -6,6 +6,8 @@ application:
   executable_path: "C:\\Program Files\\Notepad++\\notepad++.exe"
   # 애플리케이션 이름 (프로세스 실행 중인지 등을 판단하는 용도)
   process_name: "notepad++.exe"
+  # 윈도우 제목 정규식 (연결 시 사용)
+  window_title_re: ".*Notepad.*"
   # pywinauto backend 설정 (uia 권장)
   backend: "uia"
   # 애플리케이션 시작 후 초기화 대기 시간 (초)
@@ -19,8 +21,8 @@ timeouts:
   # 짧은 작업 대기 시간 (초)
   short_wait: 3
   # 재시도 간격 (초)
-  retry_interval: 0.5
-
+  retry_interval: 0.2
+  
 retry:
   # 기본 재시도 횟수
   default_attempts: 3

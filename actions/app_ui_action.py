@@ -89,7 +89,12 @@ class AppUIAction:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
         try:
             if not self._session.is_connected:
-                self._session.connect()
+                # 연결이 안되어 있으면 연결 시도
+                try:
+                    self._session.connect()
+                except Exception:
+                    # 연결 실패 시 실행이 안 된 것일 수 있으므로 중단
+                    return AppUIActionResult(result="error", message="애플리케이션이 실행 중이지 않거나 연결할 수 없습니다")
 
             wrapper = self._pick_target_window()
             if wrapper is None:
@@ -109,7 +114,11 @@ class AppUIAction:
                 time.sleep(0.5)
 
             # 윈도우를 최상단으로 가져오고 포커스 설정
-            wrapper.set_focus()
+            # pywinauto의 set_focus는 가끔 실패할 수 있으므로 강제성 부여
+            try:
+                wrapper.set_focus()
+            except Exception as e:
+                logger.warning(f"set_focus 실패 (무시하고 진행): {e}")
             
             # 윈도우 활성화 대기
             time.sleep(0.5)
@@ -227,6 +236,46 @@ class AppUIAction:
                 first_wrapper = self._safe_call(lambda: windows[0].wrapper_object(), None)
                 if first_wrapper:
                     return first_wrapper
+
+            # 3) fallback: 전체 데스크톱에서 프로세스 이름이 일치하는 윈도우 탐색
+            try:
+                from pywinauto import Desktop
+                import pywinauto
+                
+                app_config = self._session.config.get("application", {})
+                proc_name = app_config.get("process_name", "").lower()
+                
+                logger.debug(f"데스크톱 Fallback 탐색 시작 (backend={self._backend}, proc_name={proc_name})")
+                
+                desktop_windows = Desktop(backend=self._backend).windows()
+                for w in desktop_windows:
+                    wrapper = self._safe_call(lambda: w.wrapper_object(), None)
+                    if not wrapper:
+                        continue
+                        
+                    title = self._safe_call(wrapper.window_text, "")
+                    class_name = self._safe_call(wrapper.class_name, "")
+                    is_visible = self._safe_call(wrapper.is_visible, False)
+                    
+                    logger.debug(f"데스크톱 윈도우 확인: title='{title}', class='{class_name}', visible={is_visible}")
+                    
+                    # 메모장(Notepad) 특화 매칭 또는 가시적인 윈도우 체크
+                    if is_visible:
+                        # 타이틀이 비어있으면 클래스 이름 등으로 추정 시도
+                        if not title and "Notepad" in class_name:
+                            # 자식 요소에서 타이틀을 찾으려는 시도 (일부 앱 대응)
+                            children = self._safe_call(wrapper.children, []) or []
+                            for child in children:
+                                child_title = self._safe_call(child.window_text, "")
+                                if child_title:
+                                    title = child_title
+                                    break
+                        
+                        if title or "Notepad" in class_name:
+                            logger.info(f"Fallback으로 적합한 윈도우 발견: '{title}' ({class_name})")
+                            return wrapper
+            except Exception as e:
+                logger.debug(f"Fallback 탐색 중 오류: {e}")
 
             return None
         except Exception as e:
@@ -609,16 +658,30 @@ class AppUIAction:
         text: str,
         interval: float = 0.02,
     ) -> AppUIActionResult:
-        """텍스트 입력"""
-        pyautogui, error_result = self._get_pyautogui()
-        if error_result:
-            return error_result
-
+        """
+        텍스트 입력
+        
+        pyautogui.write 대신 Unicode를 지원하는 pywinauto.keyboard.send_keys를 사용합니다.
+        이는 한글 입력 문제를 해결하고 더 안정적인 입력을 제공합니다.
+        """
         try:
-            pyautogui.write(text, interval=max(0.0, interval))
+            from pywinauto.keyboard import send_keys
+            # with_spaces=True: 공백 유지
+            # with_tabs=True: 탭 유지
+            # with_newlines=True: 개행 유지
+            send_keys(text, with_spaces=True, with_tabs=True, with_newlines=True, pause=max(0.001, interval))
             return AppUIActionResult(result="success")
         except Exception as e:
-            logger.error("텍스트 입력 실패: %s", e)
+            logger.error(f"텍스트 입력 실패 (send_keys): {e}")
+            # Fallback to pyautogui if send_keys fails for some reason
+            pyautogui, error_result = self._get_pyautogui()
+            if not error_result:
+                try:
+                    pyautogui.write(text, interval=max(0.0, interval))
+                    return AppUIActionResult(result="success", message="pyautogui로 대체하여 입력됨")
+                except Exception as pe:
+                    logger.error(f"pyautogui 입력도 실패: {pe}")
+            
             return AppUIActionResult(result="error", message=f"텍스트 입력 실패: {e}")
 
     def find_rgb_position(
@@ -797,6 +860,119 @@ class AppUIAction:
                 return AppUIActionResult(result="not_found", message="이미지를 찾을 수 없습니다")
             if time.monotonic() - start > timeout:
                 return AppUIActionResult(result="timeout", message="이미지 탐색 시간 초과")
+
+
+    def _load_skills(self) -> list[dict]:
+        """skills/ 디렉토리의 마크다운 스킬들을 로드합니다."""
+        base_dir = Path(__file__).resolve().parent.parent
+        skills_dir = base_dir / "skills"
+        if not skills_dir.exists():
+            return []
+            
+        skills = []
+        for path in skills_dir.glob("*.md"):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    
+                # 간단한 마크다운 파싱 (Trigger와 Actions 섹션 추출)
+                skill = {"name": path.stem, "path": str(path)}
+                
+                # Trigger 섹션 추출
+                import re
+                trigger_match = re.search(r"## Trigger\n(.*?)(?=\n##|$)", content, re.DOTALL)
+                if trigger_match:
+                    trigger_text = trigger_match.group(1).strip()
+                    skill["trigger_desc"] = trigger_text
+                    # 간단한 패턴 매칭용 정보 추출 (예: Window Title: "XYZ")
+                    title_match = re.search(r"Window Title:.*?[\"'](.*?)[\"']", trigger_text)
+                    if title_match:
+                        skill["trigger_title"] = title_match.group(1)
+                
+                # Actions 섹션 추출
+                actions_match = re.search(r"## Actions\n(.*?)(?=\n##|$)", content, re.DOTALL)
+                if actions_match:
+                    action_lines = actions_match.group(1).strip().split('\n')
+                    skill["actions_desc"] = action_lines
+                    
+                skills.append(skill)
+            except Exception as e:
+                logger.warning(f"스킬 로드 실패 ({path.name}): {e}")
+                
+        return skills
+
+    async def match_skill(self, screen_context: dict, skills: list[dict]) -> Optional[dict]:
+        """현재 화면 컨텍스트와 가장 잘 맞는 스킬을 반환합니다."""
+        active_title = screen_context.get("active_window_title", "")
+        
+        for skill in skills:
+            trigger_title = skill.get("trigger_title")
+            if trigger_title and trigger_title.lower() in active_title.lower():
+                return skill
+                
+        # TODO: 더 정교한 매칭 (OCR 내용 기반 등) 추가 가능
+        return None
+
+    async def execute_skill(self, skill: dict) -> dict:
+        """마크다운에 정의된 스킬 동작을 실행합니다."""
+        name = skill.get("name", "unnamed")
+        actions = skill.get("actions_desc", [])
+        
+        logger.info(f"스킬 실행 시작: {name}")
+        executed_steps = []
+        
+        for line in actions:
+            line = line.strip()
+            if not line: continue
+            
+            # 간단한 동작 매핑
+            import re
+            
+            # Type 동작
+            type_match = re.search(r"[Tt]ype\s+[\"'](.*?)[\"']", line)
+            if type_match:
+                text = type_match.group(1)
+                self.type_text(text)
+                executed_steps.append(f"Typed: {text}")
+                
+            # Press 동작
+            press_match = re.search(r"[Pp]ress\s+[\"'](.*?)[\"']", line)
+            if press_match:
+                key = press_match.group(1).lower()
+                self.press_shortcut(key)
+                executed_steps.append(f"Pressed: {key}")
+                
+            # Click 동작
+            click_match = re.search(r"[Cc]lick\s+[\"'](.*?)[\"']", line)
+            if click_match:
+                text = click_match.group(1)
+                res = await self.find_text_position(text)
+                if res.is_success:
+                    self.click_position(res.x, res.y)
+                    executed_steps.append(f"Clicked: {text}")
+                else:
+                    executed_steps.append(f"Failed to click: {text}")
+            
+            time.sleep(0.5)
+            
+        return {"skill": name, "is_success": True, "steps": executed_steps}
+
+    async def run_ai_guidance(self) -> dict:
+        """AI 판단 하에 현재 화면에 맞는 가이드를 찾아 실행합니다."""
+        screen_state = self.get_screen_state_flags()
+        skills = self._load_skills()
+        
+        matched_skill = await self.match_skill(screen_state, skills)
+        
+        if matched_skill:
+            result = await self.execute_skill(matched_skill)
+            return {
+                "matched": True,
+                "skill": matched_skill["name"],
+                "execution": result
+            }
+        
+        return {"matched": False, "message": "현재 화면에 맞는 가이드를 찾지 못했습니다."}
 
 
 def get_app_ui_action(session: Optional[AppSession] = None) -> AppUIAction:
