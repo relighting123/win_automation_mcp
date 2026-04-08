@@ -6,6 +6,7 @@
 """
 
 import logging
+import json
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -66,7 +67,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         if click_result.is_success:
             click_result.matched_text = find_result.matched_text
             
-        return str(click_result.to_dict())
+        return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
     @mcp.tool()
     def type_app_text(
@@ -99,9 +100,9 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         # 2. 제출 단축키 입력 (Atomic Action)
         if submit_shortcut:
             submit_result = action.press_shortcut(submit_shortcut)
-            return str(submit_result.to_dict())
+            return json.dumps(submit_result.to_dict(), ensure_ascii=False)
             
-        return str(result.to_dict())
+        return json.dumps(result.to_dict(), ensure_ascii=False)
 
     @mcp.tool()
     def press_app_shortcut(shortcut: str) -> str:
@@ -118,7 +119,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             return str(focus_result.to_dict())
 
         result = action.press_shortcut(shortcut)
-        return str(result.to_dict())
+        return json.dumps(result.to_dict(), ensure_ascii=False)
 
     @mcp.tool()
     def click_app_rgb(
@@ -142,7 +143,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         # 0. 포커스 확보 (Atomic Action)
         focus_result = action.ensure_focus()
         if not focus_result.is_success:
-            return str(focus_result.to_dict())
+            return json.dumps(focus_result.to_dict(), ensure_ascii=False)
 
         # 1. 위치 찾기 (Atomic Action)
         find_result = action.find_rgb_position(
@@ -151,7 +152,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             timeout=timeout,
         )
         if not find_result.is_success:
-            return str(find_result.to_dict())
+            return json.dumps(find_result.to_dict(), ensure_ascii=False)
 
         # 2. 클릭하기 (Atomic Action)
         click_result = action.click_position(
@@ -159,7 +160,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             y=find_result.y or 0,
             button=button,
         )
-        return str(click_result.to_dict())
+        return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
     @mcp.tool()
     def click_app_image(
@@ -184,7 +185,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
         # 0. 포커스 확보 (Atomic Action)
         focus_result = action.ensure_focus()
         if not focus_result.is_success:
-            return str(focus_result.to_dict())
+            return json.dumps(focus_result.to_dict(), ensure_ascii=False)
 
         # 1. 위치 찾기 (Atomic Action)
         find_result = action.find_image_position(
@@ -193,7 +194,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             timeout=timeout,
         )
         if not find_result.is_success:
-            return str(find_result.to_dict())
+            return json.dumps(find_result.to_dict(), ensure_ascii=False)
 
         # 2. 클릭하기 (Atomic Action)
         click_result = action.click_position(
@@ -202,7 +203,7 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             button=button,
             clicks=clicks,
         )
-        return str(click_result.to_dict())
+        return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
 
     @mcp.tool()
@@ -291,12 +292,14 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             match_mode=match_mode,
             case_sensitive=case_sensitive,
             include_components=True,
-            include_ocr_hits=False,
+            include_ocr_hits=True, # OCR 백업 활성화
+            component_limit=300,   # 탐색 범위 확대
         )
 
         components = analysis.get("components", [])
         
         matches = []
+        # 1. UIA 구성요소에서 먼저 탐색
         for comp in components:
             comp_type = str(comp.get("control_type", "")).lower()
             target_type = element_type.lower()
@@ -331,11 +334,18 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             if text_matched:
                 matches.append(comp)
 
+        # 2. UIA에서 못 찾으면 OCR 히트에서 탐색 (element_type이 any인 경우에만 우선 권장)
+        if not matches:
+            ocr_hits = (analysis.get("keyword_hits", {}) or {}).get("ocr", []) or []
+            if ocr_hits:
+                logger.info(f"UIA에서 '{keyword}'를 찾지 못해 OCR 결과에서 탐색합니다.")
+                matches = ocr_hits
+
         if not matches:
             return {
                 "result": "not_found",
                 "is_success": False,
-                "message": f"keyword '{keyword}' 및 형식 '{element_type}'을(를) 만족하는 요소를 찾지 못했습니다.",
+                "message": f"keyword '{keyword}' 및 형식 '{element_type}'을(를) 만족하는 요소를 UIA/OCR 모두에서 찾지 못했습니다.",
                 "screen_flags": analysis.get("screen_flags", {}),
             }
 
@@ -424,124 +434,5 @@ def register_ui_vision_tools(mcp: FastMCP) -> None:
             "click": click_result.to_dict(),
         }
 
-    @mcp.tool()
-    async def run_app_ui_sequence(
-        sequence: list[dict],
-        default_interval: float = 0.5,
-        default_timeout: Optional[float] = None,
-    ) -> str:
-        """
-        다양한 UI 동작(텍스트 클릭, 아이콘 클릭, RGB 클릭 등)을 순차적으로 수행합니다.
-        
-        Args:
-            sequence: 실행할 동작 리스트. 각 항목은 'type' 필드를 포함하는 dict.
-                - type: "click_text", "click_element", "click_icon", "click_rgb", "type_text", "press_shortcut", "wait"
-                - 각 타입별 필요 매개변수는 기존 도구와 동일 (예: click_text -> text)
-            default_interval: 각 단계 사이의 대기 시간(초)
-            default_timeout: 검색 동작의 기본 타임아웃
-        """
-        action = get_app_ui_action()
-        # 0. 포커스 확보
-        focus_result = action.ensure_focus()
-        if not focus_result.is_success:
-            return str({"is_success": False, "message": focus_result.message, "results": []})
-        
-        results = []
-        import asyncio
-        import time
-
-        for i, step in enumerate(sequence):
-            step_type = step.get("type")
-            step_result = {"step": i, "type": step_type, "is_success": False}
-            
-            try:
-                if step_type == "click_text":
-                    res = await action.find_text_position(
-                        text=step.get("text"),
-                        match_mode=step.get("match_mode", "contains"),
-                        case_sensitive=step.get("case_sensitive", False),
-                        timeout=step.get("timeout", default_timeout),
-                        language=step.get("language", "eng"),
-                    )
-                    if res.is_success:
-                        click_res = action.click_position(
-                            x=res.x or 0, y=res.y or 0,
-                            button=step.get("button", "left"),
-                            clicks=step.get("clicks", 1)
-                        )
-                        step_result.update(click_res.to_dict())
-                    else:
-                        step_result.update(res.to_dict())
-
-                elif step_type == "click_icon":
-                    found = action.find_icon_from_registry(
-                        icon_name=step.get("icon_name"),
-                        keyword=step.get("keyword"),
-                        timeout=step.get("timeout", default_timeout or 3.0),
-                    )
-                    if found.get("is_success"):
-                        click_res = action.click_position(
-                            x=int(found.get("x", 0)),
-                            y=int(found.get("y", 0)),
-                            button=step.get("button", "left"),
-                            clicks=step.get("clicks", 1)
-                        )
-                        step_result.update(click_res.to_dict())
-                        step_result["icon"] = found
-                    else:
-                        step_result.update(found)
-
-                elif step_type == "click_rgb":
-                    res = action.find_rgb_position(
-                        rgb=(step.get("r"), step.get("g"), step.get("b")),
-                        tolerance=step.get("tolerance", 5),
-                        timeout=step.get("timeout", default_timeout),
-                    )
-                    if res.is_success:
-                        click_res = action.click_position(
-                            x=res.x or 0, y=res.y or 0,
-                            button=step.get("button", "left")
-                        )
-                        step_result.update(click_res.to_dict())
-                    else:
-                        step_result.update(res.to_dict())
-
-                elif step_type == "type_text":
-                    res = action.type_text(
-                        text=step.get("text"),
-                        interval=step.get("interval", 0.02)
-                    )
-                    step_result.update(res.to_dict())
-
-                elif step_type == "press_shortcut":
-                    res = action.press_shortcut(step.get("shortcut"))
-                    step_result.update(res.to_dict())
-
-                elif step_type == "wait":
-                    wait_seconds = step.get("seconds", default_interval)
-                    await asyncio.sleep(wait_seconds)
-                    step_result["result"] = "success"
-                    step_result["is_success"] = True
-                    step_result["message"] = f"{wait_seconds}초 대기 완료"
-                
-                else:
-                    step_result["message"] = f"알 수 없는 동작 타입: {step_type}"
-                    step_result["result"] = "error"
-
-            except Exception as e:
-                step_result["result"] = "error"
-                step_result["message"] = f"단계 실행 중 예외 발생: {e}"
-            
-            results.append(step_result)
-            if not step_result["is_success"] and step.get("break_on_failure", True):
-                break
-            
-            if step_type != "wait" and i < len(sequence) - 1:
-                await asyncio.sleep(step.get("interval", default_interval))
-        
-        return str({
-            "is_success": all(r.get("is_success", False) for r in results),
-            "results": results
-        })
 
     logger.info("UI 시각 제어 도구 등록 완료: click_app_text, type_app_text, press_app_shortcut, click_app_rgb, click_app_image, click_app_keyword, click_app_element, check_app_screen_state, find_app_icon_target, click_app_icon_target, run_app_ui_sequence")

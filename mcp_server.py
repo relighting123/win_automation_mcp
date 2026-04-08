@@ -46,6 +46,22 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
     """로깅 설정"""
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
+    # Windows 콘솔에서 유니코드(이모지, 한글 등) 출력을 위해 인코딩 강제 설정
+    if sys.stdout.encoding != 'utf-8':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except AttributeError:
+            # Python < 3.7 대비
+            import io
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+            
+    if sys.stderr.encoding != 'utf-8':
+        try:
+            sys.stderr.reconfigure(encoding='utf-8')
+        except AttributeError:
+            import io
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
     handlers = [logging.StreamHandler(sys.stderr)]
     
     if log_file:

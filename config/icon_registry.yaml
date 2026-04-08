@@ -1,9 +1,8 @@
 icons:
-  # 예시:
-  # login_submit:
-  #   image_path: "assets/icons/login_submit.png"
-  #   confidence: 0.82
-  #   grayscale: false
-  #   keywords: ["login", "signin", "로그인"]
-  #   description: "로그인 실행 아이콘"
+  save_icon:
+    image_path: "assets/icons/save_icon.png"
+    confidence: 0.8
+    grayscale: false
+    keywords: ["save", "storage", "floppy", "저장"]
+    description: "저장 버튼"
 

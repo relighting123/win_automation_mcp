@@ -5,6 +5,7 @@ LLM이 호출할 수 있는 애플리케이션 실행/종료 관련 도구들을
 """
 
 import logging
+import json
 import sys
 from typing import Optional, Any
 
@@ -68,30 +69,23 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             
             process_info = launcher.get_process_info()
             
-            result = {
-                "success": True,
-                "message": "애플리케이션이 실행되었습니다",
-                "process_info": process_info
-            }
-            logger.info(f"[Tool] launch_application 성공")
-            
-            return result
+            return json.dumps(result, ensure_ascii=False)
             
         except ConnectionError as e:
             logger.error(f"[Tool] launch_application 연결 오류: {e}")
-            return {
+            return json.dumps({
                 "success": False,
                 "message": str(e),
                 "error_type": "connection_error",
                 "error_detail": e.to_dict() if hasattr(e, "to_dict") else str(e)
-            }
+            }, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[Tool] launch_application 예외: {e}")
-            return {
+            return json.dumps({
                 "success": False,
                 "message": f"애플리케이션 실행 실패: {e}",
                 "error_detail": str(e)
-            }
+            }, ensure_ascii=False)
     
     @mcp.tool()
     async def connect_to_application(
@@ -138,30 +132,23 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             
             process_info = launcher.get_process_info()
             
-            result = {
-                "success": True,
-                "message": "애플리케이션에 연결되었습니다",
-                "process_info": process_info
-            }
-            logger.info(f"[Tool] connect_to_application 성공")
-            
-            return result
+            return json.dumps(result, ensure_ascii=False)
             
         except ConnectionError as e:
             logger.error(f"[Tool] connect_to_application 연결 오류: {e}")
-            return {
+            return json.dumps({
                 "success": False,
                 "message": str(e),
                 "error_type": "connection_error",
                 "error_detail": e.to_dict() if hasattr(e, "to_dict") else str(e)
-            }
+            }, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[Tool] connect_to_application 예외: {e}")
-            return {
+            return json.dumps({
                 "success": False,
                 "message": f"애플리케이션 연결 실패: {e}",
                 "error_detail": str(e)
-            }
+            }, ensure_ascii=False)
     
     @mcp.tool()
     async def close_application(force: bool = False) -> dict:
@@ -197,21 +184,15 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             else:
                 message = "애플리케이션 종료에 실패했습니다"
             
-            result = {
-                "success": success,
-                "message": message
-            }
-            logger.info(f"[Tool] close_application 결과: {result}")
-            
-            return result
+            return json.dumps(result, ensure_ascii=False)
             
         except Exception as e:
             logger.error(f"[Tool] close_application 예외: {e}")
-            return {
+            return json.dumps({
                 "success": False,
                 "message": f"애플리케이션 종료 실패: {e}",
                 "error_detail": str(e)
-            }
+            }, ensure_ascii=False)
     
     @mcp.tool()
     async def restart_application() -> dict:
@@ -239,22 +220,15 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             
             process_info = launcher.get_process_info()
             
-            result = {
-                "success": True,
-                "message": "애플리케이션이 재시작되었습니다",
-                "process_info": process_info
-            }
-            logger.info(f"[Tool] restart_application 성공")
-            
-            return result
+            return json.dumps(result, ensure_ascii=False)
             
         except Exception as e:
             logger.error(f"[Tool] restart_application 예외: {e}")
-            return {
+            return json.dumps({
                 "success": False,
                 "message": f"애플리케이션 재시작 실패: {e}",
                 "error_detail": str(e)
-            }
+            }, ensure_ascii=False)
     
     @mcp.tool()
     async def get_connection_status() -> dict:
@@ -287,25 +261,15 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             is_connected = session.is_connected
             state = session.state.value
             
-            result = {
-                "is_connected": is_connected,
-                "state": state
-            }
-            
-            if is_connected:
-                result["process_info"] = launcher.get_process_info()
-            
-            logger.info(f"[Tool] get_connection_status 결과: {result}")
-            
-            return result
+            return json.dumps(result, ensure_ascii=False)
             
         except Exception as e:
             logger.error(f"[Tool] get_connection_status 예외: {e}")
-            return {
+            return json.dumps({
                 "is_connected": False,
                 "state": "error",
                 "error": str(e)
-            }
+            }, ensure_ascii=False)
     
     @mcp.tool()
     async def generate_locators(window_type: Optional[str] = None) -> dict:

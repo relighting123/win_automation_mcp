@@ -307,8 +307,8 @@ class AppUIAction:
         keyword: Optional[str] = None,
         match_mode: str = "contains",
         case_sensitive: bool = False,
-        component_limit: int = 150,
-    ) -> tuple[list[dict], list[dict], dict]:
+        component_limit: int = 300,
+) -> tuple[list[dict], list[dict], dict]:
         """UIA 기반 구성요소를 수집하고, keyword 매칭된 좌표를 함께 반환합니다."""
         wrapper = self._pick_target_window()
         if wrapper is None:
@@ -515,6 +515,53 @@ class AppUIAction:
                 "keyword": keyword,
             }
 
+        # 1. UIA 정밀 탐색 (OpenCV 없이도 동작 가능)
+        # 텍스트뿐만 아니라 AutomationId, 가용 Name 등을 모두 확인합니다.
+        for candidate in candidates:
+            kws = candidate.get("keywords") or [candidate["icon_name"]]
+            for kw in kws:
+                logger.info(f"아이콘 '{candidate['icon_name']}'을 UIA 정밀 탐색 키워드 '{kw}'로 먼저 조사합니다.")
+                _, hits, _ = self._collect_uia_components(keyword=kw, match_mode="contains")
+                if hits:
+                    target = hits[0]
+                    return {
+                        "result": "success",
+                        "message": f"UIA 요소를 통해 '{kw}' 위치를 찾았습니다.",
+                        "is_success": True,
+                        "x": int(target.get("x", 0)),
+                        "y": int(target.get("y", 0)),
+                        "icon_name": candidate["icon_name"],
+                        "source": "uia"
+                    }
+
+        # 2. WinOCR 기반 텍스트 탐색
+        # 아이콘 이미지에 텍스트가 포함되어 있거나 근처에 텍스트가 있는 경우 유용합니다.
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        for candidate in candidates:
+            kws = candidate.get("keywords") or [candidate["icon_name"]]
+            for kw in kws:
+                logger.info(f"아이콘 '{candidate['icon_name']}'을 WinOCR 텍스트 '{kw}'로 탐색합니다.")
+                try:
+                    # find_text_position은 async이므로 동기 환경에서 실행
+                    res = loop.run_until_complete(self.find_text_position(kw, timeout=2.0))
+                    if res.is_success:
+                        return {
+                            "result": "success",
+                            "message": f"WinOCR을 통해 텍스트 '{kw}' 위치를 찾았습니다.",
+                            "is_success": True,
+                            "x": res.x,
+                            "y": res.y,
+                            "icon_name": candidate["icon_name"],
+                            "source": "ocr"
+                        }
+                except Exception as e:
+                    logger.warning(f"OCR 탐색 중 오류 발생: {e}")
+
+        # 3. 이미지 매칭 (마지막 수단)
+        # OpenCV가 있으면 Confidence 활용, 없으면 Exact Match
         for candidate in candidates:
             image_path = candidate["image_path"]
             result = self.find_image_position(
@@ -526,21 +573,18 @@ class AppUIAction:
             if result.is_success:
                 return {
                     "result": "success",
-                    "message": "아이콘 위치를 찾았습니다",
+                    "message": "아이콘 위치를 찾았습니다 (이미지 매칭)",
                     "is_success": True,
                     "x": result.x,
                     "y": result.y,
                     "icon_name": candidate["icon_name"],
                     "image_path": image_path,
-                    "metadata": {
-                        "keywords": candidate.get("keywords", []),
-                        "description": candidate.get("description"),
-                    },
+                    "source": "image"
                 }
 
         return {
             "result": "not_found",
-            "message": "등록된 아이콘 후보를 탐색했지만 화면에서 찾지 못했습니다",
+            "message": "UIA, OCR, 이미지 매칭을 모두 시도했으나 아이콘을 찾지 못했습니다. 아이콘 캡처를 다시 하거나 키워드를 확인해 주세요.",
             "is_success": False,
             "icon_name": icon_name,
             "keyword": keyword,
@@ -847,17 +891,32 @@ class AppUIAction:
             locate_kwargs = {"grayscale": grayscale}
             if search_region is not None:
                 locate_kwargs["region"] = search_region
+            
+            use_confidence = False
             if confidence is not None:
-                locate_kwargs["confidence"] = confidence
-
-            box = pyautogui.locateOnScreen(str(target), **locate_kwargs)
+                # confidence 파라미터는 OpenCV가 설치되어 있어야만 사용 가능
+                try:
+                    import cv2
+                    locate_kwargs["confidence"] = confidence
+                    use_confidence = True
+                except ImportError:
+                    logger.warning("OpenCV(cv2)가 설치되지 않아 confidence 파라미터를 사용할 수 없습니다. Exact Match(100% 일치) 모드로 동작합니다.")
+            
+            try:
+                box = pyautogui.locateOnScreen(str(target), **locate_kwargs)
+            except Exception as e:
+                logger.error(f"이미지 매칭 중 오류 발생: {e}")
+                return AppUIActionResult(result="error", message=f"이미지 매칭 실패: {e}")
 
             if box is not None:
                 center = pyautogui.center(box)
                 return AppUIActionResult(result="success", x=int(center.x), y=int(center.y))
 
             if timeout is None:
-                return AppUIActionResult(result="not_found", message="이미지를 찾을 수 없습니다")
+                msg = "이미지를 찾을 수 없습니다"
+                if confidence and not use_confidence:
+                    msg += " (OpenCV 미설치로 Exact Match 시도됨)"
+                return AppUIActionResult(result="not_found", message=msg)
             if time.monotonic() - start > timeout:
                 return AppUIActionResult(result="timeout", message="이미지 탐색 시간 초과")
 
