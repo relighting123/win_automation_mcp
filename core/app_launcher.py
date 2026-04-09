@@ -60,6 +60,7 @@ class AppLauncher:
         **kwargs
     ) -> AppSession:
         """
+        애플리케이션 실행 (설정 파일의 경로를 최우선으로 사용하도록 하드코딩됨)
         애플리케이션 실행
         
         Args:
@@ -75,9 +76,11 @@ class AppLauncher:
             logger.info("이미 연결된 세션이 있습니다")
             return self._session
         
-        exe_path = path or self._session.config.get(
+        exe_path = self._session.config.get(
             "application", {}
-        ).get("executable_path")
+        ).get("executable_path") or path
+        
+        logger.info(f"--- [DEBUG] launch exe_path 결정: config_path={self._session.config.get('application', {}).get('executable_path')}, argument_path={path}, 최종={exe_path} ---")
         
         if not exe_path:
             raise ConnectionError(

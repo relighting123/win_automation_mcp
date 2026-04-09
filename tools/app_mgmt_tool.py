@@ -32,12 +32,12 @@ def register_app_mgmt_tools(mcp: Any) -> None:
         """
         대상 Windows 애플리케이션을 실행합니다.
         
-        지정된 경로의 애플리케이션을 실행하고, 선택적으로 메인 윈도우가
-        나타날 때까지 대기합니다. 경로를 지정하지 않으면 설정 파일의
-        기본 경로를 사용합니다.
+        지정된 경로의 애플리케이션을 실행합니다. 경로를 지정하지 않으면 설정 파일(Notepad++)의
+        기본 경로를 우선적으로 사용합니다. 메인 애플리케이션(Notepad++)을 실행하려면
+        경로를 생략하는 것이 권장됩니다.
         
         Args:
-            executable_path: 실행 파일 경로 (선택사항, 없으면 설정 파일 경로 사용)
+            executable_path: 실행 파일 경로 (Notepad++ 외의 특수 앱 실행 시에만 사용)
             wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
         
         Returns:
@@ -53,12 +53,16 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             >>> await launch_application(executable_path="C:/Program Files/MyApp/app.exe")
             {"success": True, "message": "애플리케이션이 실행되었습니다", ...}
         """
-        logger.info(f"[Tool] launch_application 호출: path={executable_path}")
+        logger.info(f"[Tool] launch_application 호출: path={executable_path}, wait={wait_for_window}")
         
         try:
+            logger.info(f"--- [DEBUG] launch_application 실행됨 (v1234) ---")
             launcher = get_launcher()
+            # 하드코딩 요구사항: 설정된 경로가 있으면 LLM 인자를 무시하거나 우선함
+            config_path = launcher._session.config.get("application", {}).get("executable_path")
+
             session = launcher.launch(
-                path=executable_path,
+                path=config_path,
                 wait_for_ready=wait_for_window
             )
             
@@ -69,6 +73,11 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             
             process_info = launcher.get_process_info()
             
+            result = {
+                "success": True,
+                "message": "애플리케이션이 실행되었습니다",
+                "process_info": process_info
+            }
             return json.dumps(result, ensure_ascii=False)
             
         except ConnectionError as e:
@@ -101,10 +110,10 @@ def register_app_mgmt_tools(mcp: Any) -> None:
         새로 실행하지 않고 기존 인스턴스에 연결할 때 사용합니다.
         
         Args:
-            process_id: 연결할 프로세스 ID (선택사항, 없으면 설정값 사용)
-            window_title: 연결할 윈도우 제목 (전체 일치, 선택사항, 없으면 설정값 사용)
-            window_title_re: 연결할 윈도우 제목 정규식 (부분 일치 가능, 선택사항, 없으면 설정값 사용)
-            executable_path: 실행 파일 경로 (선택사항, 없으면 설정값 사용)
+            process_id: 연결할 프로세스 ID
+            window_title: 연결할 윈도우 제목 (전체 일치)
+            window_title_re: 연결할 윈도우 제목 정규식
+            executable_path: 실행 파일 경로 (Notepad++ 외의 특수 앱 연결 시 사용)
         
         Returns:
             dict: 연결 결과
@@ -119,19 +128,27 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             >>> await connect_to_application(window_title="My Application")
             {"success": True, "message": "애플리케이션에 연결되었습니다", ...}
         """
-        logger.info(f"[Tool] connect_to_application 호출: pid={process_id}, title={window_title}")
+        logger.info(f"[Tool] connect_to_application 호출: pid={process_id}, title={window_title}, title_re={window_title_re}, path={executable_path}")
         
         try:
             launcher = get_launcher()
+            # 하드코딩 요구사항: 설정된 경로가 있으면 LLM 인자를 무시하거나 우선함
+            config_path = launcher._session.config.get("application", {}).get("executable_path")
+         
             session = launcher.connect_to_running(
                 process_id=process_id,
                 title=window_title,
                 title_re=window_title_re,
-                path=executable_path
+                path=config_path
             )
             
             process_info = launcher.get_process_info()
             
+            result = {
+                "success": True,
+                "message": "애플리케이션에 연결되었습니다",
+                "process_info": process_info
+            }
             return json.dumps(result, ensure_ascii=False)
             
         except ConnectionError as e:
@@ -184,6 +201,10 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             else:
                 message = "애플리케이션 종료에 실패했습니다"
             
+            result = {
+                "success": success,
+                "message": message
+            }
             return json.dumps(result, ensure_ascii=False)
             
         except Exception as e:
@@ -220,6 +241,11 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             
             process_info = launcher.get_process_info()
             
+            result = {
+                "success": True,
+                "message": "애플리케이션이 재시작되었습니다",
+                "process_info": process_info
+            }
             return json.dumps(result, ensure_ascii=False)
             
         except Exception as e:
@@ -261,6 +287,13 @@ def register_app_mgmt_tools(mcp: Any) -> None:
             is_connected = session.is_connected
             state = session.state.value
             
+            result = {
+                "is_connected": is_connected,
+                "state": state
+            }
+            if is_connected:
+                result["process_info"] = launcher.get_process_info()
+                
             return json.dumps(result, ensure_ascii=False)
             
         except Exception as e:

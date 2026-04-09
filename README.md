@@ -204,15 +204,16 @@ python mcp_server.py --transport sse --port 8000 --reload
 - `search`: 검색 수행
 - `get_application_status`: 애플리케이션 상태 조회
 
-### 공용 데스크톱 제어
-- `press_shortcut`: 단축키 입력
-- `find_rgb_position`: RGB 위치 탐색
-- `click_position`: 좌표 클릭
-- `click_by_rgb`: RGB 위치 탐색 후 클릭
-- `find_text_position`: Windows OCR 텍스트 위치 탐색
-- `click_by_text`: Windows OCR 텍스트 위치 탐색 후 클릭
-- `find_image_position`: 이미지(아이콘/그림) 위치 탐색 (PyAutoGUI 기본 기능)
-- `click_by_image`: 이미지(아이콘/그림) 탐색 후 클릭
+### UI 시각 제어 (ui_vision_tool)
+- `click_app_keyword`: 애플리케이션 화면에서 키워드(텍스트, 버튼 이름 등)를 찾아 해당 위치를 클릭합니다. (UIA 우선, OCR 폴백)
+- `type_app_text`: 애플리케이션에 텍스트를 입력합니다.
+- `press_app_shortcut`: 애플리케이션에 단축키를 입력합니다.
+- `click_app_rgb`: 특정 RGB 색상을 찾아 클릭합니다.
+- `click_app_image`: 특정 이미지를 찾아 클릭합니다.
+- `click_app_element`: UIA 요소를 직접 클릭합니다.
+- `check_app_screen_state`: 비주얼 가이드를 사용하여 현재 화면 상태를 확인합니다.
+- `find_app_icon_target`: 아이콘 레지스트리를 설정하여 대상을 찾습니다.
+- `click_app_icon_target`: 아이콘 레지스트리의 대상을 찾아 클릭합니다.
 
 ### 소스 오픈
 - `open_source_by_rule_search`: 단축키→아이콘 클릭→검색어 입력으로 소스 열기

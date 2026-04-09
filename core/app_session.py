@@ -79,6 +79,7 @@ class AppSession:
             self._load_default_config()
         
         self._load_locators()
+        self._apply_timings()
         self._initialized = True
     
     def _load_config(self, config_path: str) -> None:
@@ -162,6 +163,11 @@ class AppSession:
             )
         return self._app
     
+    @property
+    def backend(self) -> str:
+        """pywinauto backend"""
+        return self._backend
+
     @property
     def config(self) -> Dict[str, Any]:
         """설정 딕셔너리"""
@@ -278,52 +284,17 @@ class AppSession:
         try:
             self._app = Application(backend=self._backend)
             
-            connect_args = {}
-            if process:
-                connect_args["process"] = process
-            elif path:
-                connect_args["path"] = path
-            elif title:
-                connect_args["title"] = title
-            elif kwargs.get("title_re"):
-                connect_args["title_re"] = kwargs.pop("title_re")
-            else:
-                # 설정에서 정보 가져오기 (매개변수로 전달된 정보가 없으면 설정값 사용)
-                app_config = self._config.get("application", {})
-                exe_path = path or app_config.get("executable_path")
-                conf_title_re = app_config.get("window_title_re")
-                conf_title = app_config.get("window_title")
-                
-                if exe_path:
-                    connect_args["path"] = exe_path
-                elif conf_title_re:
-                    connect_args["title_re"] = conf_title_re
-                elif conf_title:
-                    connect_args["title"] = conf_title
+            # 연결 전략 시도
+            if self._try_connect(process, path, title, **kwargs):
+                # 연결 후 경로 검증 (엄격한 경로 제한)
+                if self._verify_connection_path():
+                    self._state = SessionState.CONNECTED
+                    self._bring_to_front()
+                    return self
                 else:
-                    raise ConnectionError(
-                        message="연결 대상을 지정해주세요 (process, path, title 또는 title_re)"
-                    )
-            
-            connect_args.update(kwargs)
-            self._app.connect(**connect_args)
-            
-            self._state = SessionState.CONNECTED
-            logger.info(f"애플리케이션 연결 성공: {connect_args}")
-            
-            # 성공 시 윈도우를 맨 앞으로 가져오기 (사용자 요청 사항)
-            try:
-                top_win = self._app.top_window()
-                if top_win.exists():
-                    if top_win.is_minimized():
-                        top_win.restore()
-                    top_win.set_focus()
-                    logger.info("윈도우를 맨 앞으로 가져왔습니다.")
-            except Exception as fe:
-                logger.debug(f"연결 후 포커스 설정 실패 (무시): {fe}")
-            
-            return self
-            
+                    self.disconnect()
+                    logger.warning("연결된 프로세스의 실행 파일 경로가 설정과 일치하지 않아 연결을 해제합니다.")
+                
         except Exception as e:
             self._state = SessionState.ERROR
             logger.error(f"애플리케이션 연결 실패: {e}")
@@ -340,8 +311,10 @@ class AppSession:
                 message="애플리케이션 연결 실패",
                 cause=e,
                 details={
-                    "connect_args": str(connect_args),
-                    "available_windows_hints": available_windows[:20]  # 최대 20개까지만
+                    "process": process,
+                    "path": path,
+                    "title": title,
+                    "available_windows_hints": available_windows[:20]
                 }
             )
     
@@ -470,6 +443,55 @@ class AppSession:
         locator = self.get_window_locator(window_name)
         return self.get_window(**locator)
     
+    def _try_connect(self, process=None, path=None, title=None, **kwargs) -> bool:
+        """다양한 전략으로 연결 시도"""
+        strategies = []
+        
+        # 1. 명시적 인자 전략
+        if process: strategies.append({"process": process})
+        if path: strategies.append({"path": path})
+        if title: strategies.append({"title": title})
+        if kwargs.get("title_re"): strategies.append({"title_re": kwargs.get("title_re")})
+        
+        # 2. 설정 기반 자동 전략 (명시적 인자가 부족할 때)
+        if not strategies:
+            app_config = self._config.get("application", {})
+            conf_path = app_config.get("executable_path")
+            
+            if conf_path:
+                # PID 기반 선행 검색 시도 (경로가 정확히 일치하는 프로세스 검색)
+                pid = self._find_pid_by_path(conf_path)
+                if pid:
+                    strategies.append({"process": pid})
+                else:
+                    # PID가 없으면 경로 기반 시도 (Fallback)
+                    strategies.append({"path": conf_path})
+            
+            # 보안 강화를 위해 타이틀 기반 폴백은 더 이상 사용하지 않습니다.
+
+        for args in strategies:
+            try:
+                logger.debug(f"연결 시도 중: {args}")
+                self._app.connect(**args, **kwargs)
+                logger.info(f"애플리케이션 연결 성공: {args}")
+                return True
+            except Exception as e:
+                logger.debug(f"연결 실패 ({args}): {e}")
+        
+        return False
+
+    def _bring_to_front(self) -> None:
+        """메인 윈도우를 최상단으로 가져오기"""
+        try:
+            top_win = self._app.top_window()
+            if top_win.exists():
+                if top_win.is_minimized():
+                    top_win.restore()
+                top_win.set_focus()
+                logger.info("윈도우를 맨 앞으로 가져왔습니다.")
+        except Exception as e:
+            logger.debug(f"포커스 설정 실패 (무시): {e}")
+
     @classmethod
     def get_instance(cls) -> "AppSession":
         """싱글톤 인스턴스 반환"""
@@ -485,3 +507,54 @@ class AppSession:
                 cls._instance.disconnect()
                 cls._instance._initialized = False
             cls._instance = None
+
+    def _apply_timings(self) -> None:
+        """pywinauto의 기본 동작 타이밍을 설정합니다."""
+        try:
+            from pywinauto.timings import Timings
+            speed = self._config.get("application", {}).get("automation_speed", "normal")
+            
+            if speed == "fast":
+                Timings.fast()
+                logger.info("pywinauto Timings: [FAST] 모드로 설정되었습니다.")
+            else:
+                Timings.defaults()
+                logger.info("pywinauto Timings: [NORMAL] 모드로 설정되었습니다.")
+        except Exception as e:
+            logger.warning(f"타이밍 설정 적용 실패: {e}")
+
+    def _find_pid_by_path(self, target_path: str) -> Optional[int]:
+        """실행 파일 경로를 기준으로 PID를 찾습니다."""
+        try:
+            import psutil
+            target_path = target_path.lower().replace('/', '\\')
+            for proc in psutil.process_iter(['pid', 'exe']):
+                try:
+                    exe = proc.info['exe']
+                    if exe and exe.lower().replace('/', '\\') == target_path:
+                        return proc.info['pid']
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception as e:
+            logger.debug(f"PID 검색 중 오류: {e}")
+        return None
+
+    def _verify_connection_path(self) -> bool:
+        """현재 연결된 앱의 프로세스 경로가 설정된 경로와 일치하는지 확인합니다."""
+        target_path = self._config.get("application", {}).get("executable_path")
+        if not target_path or self._app is None:
+            return True
+            
+        try:
+            import psutil
+            # pywinauto.Application 객체는 연결 후 .process 속성에 PID를 가집니다.
+            pid = getattr(self._app, 'process', None)
+            if pid is None:
+                return True
+                
+            proc = psutil.Process(pid)
+            actual_path = proc.exe().lower().replace('/', '\\')
+            target_path_norm = target_path.lower().replace('/', '\\')
+            return actual_path == target_path_norm
+        except Exception:
+            return False

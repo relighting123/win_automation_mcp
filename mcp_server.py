@@ -179,10 +179,9 @@ _server_state = ServerState()
 @mcp.resource("config://app")
 async def get_app_config() -> str:
     """
-    애플리케이션 설정을 반환합니다.
-    
     LLM이 현재 설정된 애플리케이션 정보를 확인할 때 사용합니다.
     """
+    logger.info("[Resource] get_app_config 호출")
     import yaml
     from core.app_session import AppSession
     
@@ -195,10 +194,9 @@ async def get_app_config() -> str:
 @mcp.resource("config://locators")
 async def get_locators_config() -> str:
     """
-    UI locator 설정을 반환합니다.
-    
     LLM이 사용 가능한 UI 요소 정보를 확인할 때 사용합니다.
     """
+    logger.info("[Resource] get_locators_config 호출")
     import yaml
     from core.app_session import AppSession
     

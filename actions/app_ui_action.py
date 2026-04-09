@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from core.app_session import AppSession
+from core.app_launcher import get_launcher
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class AppUIAction:
 
     def __init__(self, session: Optional[AppSession] = None):
         self._session = session or AppSession.get_instance()
+        self._launcher = get_launcher()
 
     def _get_app_window_region(self) -> Optional[Tuple[int, int, int, int]]:
         """
@@ -88,13 +91,14 @@ class AppUIAction:
     def ensure_focus(self) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
         try:
+            # 애플리케이션 실행 중인지 확인하고, 아니면 실행 (Auto-Launch)
+            self._launcher.ensure_running()
+            
             if not self._session.is_connected:
-                # 연결이 안되어 있으면 연결 시도
-                try:
-                    self._session.connect()
-                except Exception:
-                    # 연결 실패 시 실행이 안 된 것일 수 있으므로 중단
-                    return AppUIActionResult(result="error", message="애플리케이션이 실행 중이지 않거나 연결할 수 없습니다")
+                # 연결 시도
+                success, msg = self._session.connect()
+                if not success:
+                    return AppUIActionResult(result="error", message=f"애플리케이션 연결 실패: {msg}")
 
             wrapper = self._pick_target_window()
             if wrapper is None:
@@ -107,21 +111,38 @@ class AppUIAction:
             if wrapper is None:
                 return AppUIActionResult(result="error", message="포커스를 줄 수 있는 앱 윈도우를 찾지 못했습니다")
 
-            # 윈도우가 최소화되어 있으면 복구
-            if self._safe_call(wrapper.is_minimized, False):
+            # 윈도우 상태 확인 및 복구
+            is_minimized = self._safe_call(wrapper.is_minimized, False)
+            if is_minimized:
                 logger.info("윈도우가 최소화되어 있어 복구를 시도합니다.")
                 wrapper.restore()
-                time.sleep(0.5)
+                time.sleep(self._session.config.get("timeouts", {}).get("ui_delay", 0.5))
 
             # 윈도우를 최상단으로 가져오고 포커스 설정
-            # pywinauto의 set_focus는 가끔 실패할 수 있으므로 강제성 부여
             try:
+                # 1. 일반적인 포커스 시도
                 wrapper.set_focus()
+                
+                # 2. 추가적인 강제 활성화 (최소화되어 있지 않아도 뒤에 숨어있을 수 있음)
+                wrapper.draw_outline() # 시각적 확인용 (선택사항)
             except Exception as e:
-                logger.warning(f"set_focus 실패 (무시하고 진행): {e}")
+                logger.warning(f"set_focus 실패: {e}. 대안을 시도합니다.")
+                try:
+                    # win32 backend의 경우 더 강력한 활성화 시도
+                    wrapper.maximize()
+                    wrapper.restore()
+                except Exception:
+                    pass
             
             # 윈도우 활성화 대기
-            time.sleep(0.5)
+            time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.5))
+            
+            # 윈도우가 가시적인지 재확인
+            if not self._safe_call(wrapper.is_visible, False):
+                logger.warning("포커스 시도 후에도 윈도우가 가시적이지 않습니다.")
+                # 한 번 더 restore 시도
+                self._safe_call(wrapper.restore, None)
+
             return AppUIActionResult(
                 result="success",
                 message=f"애플리케이션 포커스 설정 완료: {self._safe_call(wrapper.window_text, '')}",
@@ -201,78 +222,92 @@ class AppUIAction:
             "center_y": int(self._safe_call(lambda: rect.top + (rect.height() / 2), 0) or 0),
         }
 
+    def _verify_process_path(self, wrapper: Any) -> bool:
+        """윈도우의 프로세스 경로가 설정된 실행 경로와 일치하는지 확인합니다."""
+        target_path = self._session.config.get("application", {}).get("executable_path")
+        if not target_path:
+            return True  # 경로가 설정되어 있지 않으면 검사 생략 (Loose matching)
+
+        try:
+            import psutil
+            pid = self._safe_call(lambda: wrapper.element_info.process_id, None)
+            if pid is None:
+                return False
+            
+            proc = psutil.Process(pid)
+            actual_path = self._safe_call(lambda: proc.exe(), "").lower().replace('/', '\\')
+            target_path_norm = target_path.lower().replace('/', '\\')
+            
+            match = (actual_path == target_path_norm)
+            if not match:
+                logger.debug(f"Process path MISMATCH: Actual='{actual_path}', Expected='{target_path_norm}'")
+            return match
+        except Exception as e:
+            logger.debug(f"프로세스 경로 검증 중 오류: {e}")
+            return False
+
     def _pick_target_window(self) -> Optional[Any]:
         """현재 앱에서 가장 가능성이 높은 대상 윈도우 wrapper를 반환합니다."""
         try:
             if not self._session.is_connected:
                 self._session.connect()
+            # 1) 세션에 연결된 앱의 윈도우들 중 가시적인 것 확인
             windows = self._session.app.windows()
-            if not windows:
-                return None
-
-            # 1) 가시적인 윈도우 또는 최소화된 윈도우 우선
-            # pywinauto의 is_visible()은 최소화된 경우 False를 반환할 수 있으므로
-            # is_minimized()도 함께 체크합니다.
-            candidates = []
-            for w in windows:
+            for i, w in enumerate(windows):
                 wrapper = self._safe_call(lambda: w.wrapper_object(), None)
                 if wrapper is None:
-                    continue
+                    # wrapper_object()가 None인 경우, WindowSpecification으로 직접 시도
+                    try:
+                        wrapper = w
+                    except Exception:
+                        continue
                 
+                # 경로 검증 (Strict Path Restriction)
+                is_valid_path = self._verify_process_path(wrapper)
+                logger.debug(f"윈도우 '{title}' 검사: path_valid={is_valid_path}")
+                if not is_valid_path:
+                    continue
+
                 is_visible = self._safe_call(wrapper.is_visible, False)
                 is_minimized = self._safe_call(wrapper.is_minimized, False)
-                title = self._safe_call(wrapper.window_text, "")
-                
-                logger.debug(f"윈도우 후보 확인: '{title}', visible={is_visible}, minimized={is_minimized}")
                 
                 if is_visible or is_minimized:
-                    candidates.append(wrapper)
+                    logger.debug(f"적합한 상위 윈도우 발견: '{title}' (visible={is_visible}, minimized={is_minimized})")
+                    return wrapper
             
-            if candidates:
-                return candidates[0]
+            # 2) 가시성은 없지만 핸들이 있는 첫 번째 유효한 윈도우
+            for w in windows:
+                wrapper = self._safe_call(lambda: w.wrapper_object(), None)
+                if wrapper and self._verify_process_path(wrapper):
+                    title = self._safe_call(wrapper.window_text, "unknown")
+                    logger.debug(f"가시성은 없지만 경로가 일치하는 윈도우 발견: '{title}'")
+                    return wrapper
 
-            # 2) 가시성은 없지만 핸들이 있는 첫 번째 윈도우
-            if windows:
-                first_wrapper = self._safe_call(lambda: windows[0].wrapper_object(), None)
-                if first_wrapper:
-                    return first_wrapper
-
-            # 3) fallback: 전체 데스크톱에서 프로세스 이름이 일치하는 윈도우 탐색
+            # 3) fallback: 전체 데스크톱에서 경로가 정확히 일치하는 윈도우 탐색
             try:
                 from pywinauto import Desktop
-                import pywinauto
+                logger.debug("데스크톱 Fallback 탐색 시작 (엄격한 경로 매칭)")
                 
-                app_config = self._session.config.get("application", {})
-                proc_name = app_config.get("process_name", "").lower()
-                
-                logger.debug(f"데스크톱 Fallback 탐색 시작 (backend={self._backend}, proc_name={proc_name})")
-                
-                desktop_windows = Desktop(backend=self._backend).windows()
+                desktop_windows = Desktop(backend=self._session.backend).windows()
                 for w in desktop_windows:
                     wrapper = self._safe_call(lambda: w.wrapper_object(), None)
                     if not wrapper:
                         continue
-                        
-                    title = self._safe_call(wrapper.window_text, "")
-                    class_name = self._safe_call(wrapper.class_name, "")
-                    is_visible = self._safe_call(wrapper.is_visible, False)
                     
-                    logger.debug(f"데스크톱 윈도우 확인: title='{title}', class='{class_name}', visible={is_visible}")
-                    
-                    # 메모장(Notepad) 특화 매칭 또는 가시적인 윈도우 체크
-                    if is_visible:
-                        # 타이틀이 비어있으면 클래스 이름 등으로 추정 시도
-                        if not title and "Notepad" in class_name:
-                            # 자식 요소에서 타이틀을 찾으려는 시도 (일부 앱 대응)
-                            children = self._safe_call(wrapper.children, []) or []
-                            for child in children:
-                                child_title = self._safe_call(child.window_text, "")
-                                if child_title:
-                                    title = child_title
-                                    break
-                        
-                        if title or "Notepad" in class_name:
-                            logger.info(f"Fallback으로 적합한 윈도우 발견: '{title}' ({class_name})")
+                    # 윈도우의 프로세스 이름 확인
+                    try:
+                        import psutil
+                        pid = wrapper.element_info.process_id
+                        proc = psutil.Process(pid)
+                        proc_name = proc.name().lower()
+                    except Exception:
+                        proc_name = ""
+
+                    if proc_name == target_proc_name:
+                        is_visible = self._safe_call(wrapper.is_visible, False)
+                        if is_visible:
+                            title = self._safe_call(wrapper.window_text, "")
+                            logger.info(f"프로세스 매칭으로 윈도우 발견: '{title}' (PID: {pid})")
                             return wrapper
             except Exception as e:
                 logger.debug(f"Fallback 탐색 중 오류: {e}")
@@ -328,9 +363,9 @@ class AppUIAction:
             rect_dict = self._rect_to_dict(rect)
 
             title = self._safe_call(node.window_text, "") or ""
-            auto_id = self._safe_call(node.automation_id, "") or ""
-            control_type = self._safe_call(node.control_type, "") or ""
-            class_name = self._safe_call(node.class_name, "") or ""
+            auto_id = self._safe_call(lambda: node.element_info.automation_id, "") or ""
+            control_type = self._safe_call(lambda: node.element_info.control_type, "") or ""
+            class_name = self._safe_call(lambda: node.element_info.class_name, "") or ""
             visible = bool(self._safe_call(node.is_visible, False))
             enabled = bool(self._safe_call(node.is_enabled, False))
 
@@ -359,8 +394,8 @@ class AppUIAction:
 
         target_window = {
             "title": self._safe_call(wrapper.window_text, "") or "",
-            "control_type": self._safe_call(wrapper.control_type, "") or "",
-            "auto_id": self._safe_call(wrapper.automation_id, "") or "",
+            "control_type": self._safe_call(lambda: wrapper.element_info.control_type, "") or "",
+            "auto_id": self._safe_call(lambda: wrapper.element_info.automation_id, "") or "",
             "rect": self._rect_to_dict(self._safe_call(wrapper.rectangle, None)),
         }
         return components, keyword_hits, target_window
@@ -745,6 +780,8 @@ class AppUIAction:
         start = time.monotonic()
 
         region = self._get_app_window_region()
+        if region is None:
+            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.")
 
         while True:
             screenshot = pyautogui.screenshot(region=region)
@@ -797,7 +834,10 @@ class AppUIAction:
         timeout: Optional[float] = None,
         language: str = "eng",
     ) -> AppUIActionResult:
-        """OCR로 애플리케이션 화면에서 텍스트 위치를 찾습니다."""
+        """
+        애플리케이션 화면에서 텍스트 위치를 찾습니다.
+        UIA(UI Automation)를 우선적으로 탐색하고, 발견되지 않으면 OCR을 사용합니다.
+        """
         pyautogui, error_result = self._get_pyautogui()
         if error_result:
             return error_result
@@ -810,6 +850,24 @@ class AppUIAction:
         if match_mode not in {"contains", "exact"}:
             return AppUIActionResult(result="error", message=f"지원하지 않는 match_mode: {match_mode}")
 
+        # 1. UIA 우선 탐색 (표준 UI 요소에 대해 빠르고 정확함)
+        # UIA는 즉각적인 결과를 제공하므로 별도 루프 이전에 먼저 확인합니다.
+        _, uia_hits, _ = self._collect_uia_components(
+            keyword=target_text,
+            match_mode=match_mode,
+            case_sensitive=case_sensitive
+        )
+        if uia_hits:
+            target = uia_hits[0]
+            logger.info(f"UIA를 통해 텍스트 '{target_text}' 위치를 찾았습니다: ({target.get('x')}, {target.get('y')})")
+            return AppUIActionResult(
+                result="success",
+                x=int(target.get("x", 0)),
+                y=int(target.get("y", 0)),
+                matched_text=target.get("title", ""),
+            )
+
+        # 2. OCR 탐색 (UIA로 찾지 못한 경우 시도)
         try:
             import winocr
         except Exception as e:
@@ -817,12 +875,19 @@ class AppUIAction:
 
         # 최적의 언어 선택
         lang = self._get_best_winocr_lang(language)
-        
         target_norm = self._normalize_text(target_text, case_sensitive=case_sensitive)
+        
+        # 타임아웃 기본값 설정 (None이면 2초 정도 대기)
+        actual_timeout = timeout if timeout is not None else 2.0
         start = time.monotonic()
 
         # 앱 윈도우 영역 획득
         region = self._get_app_window_region()
+        if region is None:
+            # 설정 상의 앱이 구동되지 않은 것으로 간주하고 중단 (전체 화면으로 탐색되는 것을 방지)
+            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 찾을 수 없습니다. (전체 화면 탐색 방지를 위해 중단됨)")
+        
+        logger.info(f"OCR을 통해 텍스트 '{target_text}' 탐색 시작 (region={region}, lang={lang}, timeout={actual_timeout})")
         
         while True:
             screenshot = pyautogui.screenshot(region=region)
@@ -852,6 +917,7 @@ class AppUIAction:
                         center_x = rel_x + (region[0] if region else 0)
                         center_y = rel_y + (region[1] if region else 0)
                         
+                        logger.info(f"OCR을 통해 텍스트 '{target_text}' 탐색 성공")
                         return AppUIActionResult(
                             result="success",
                             x=center_x,
@@ -859,10 +925,12 @@ class AppUIAction:
                             matched_text=raw_text,
                         )
 
-            if timeout is None:
-                return AppUIActionResult(result="not_found", message="텍스트를 찾을 수 없습니다")
-            if time.monotonic() - start > timeout:
-                return AppUIActionResult(result="timeout", message="텍스트 탐색 시간 초과")
+            # 타임아웃 체크
+            if time.monotonic() - start > actual_timeout:
+                return AppUIActionResult(result="timeout", message=f"텍스트 '{target_text}'를 찾을 수 없습니다 (OCR 탐색 시간 초과)")
+            
+            # 잠깐 대기 후 재시도
+            await asyncio.sleep(0.2)
 
     def find_image_position(
         self,
@@ -884,6 +952,8 @@ class AppUIAction:
 
         # 기본 region이 없으면 앱 윈도우 지원
         search_region = region or self._get_app_window_region()
+        if search_region is None:
+            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.(전체 화면 탐색 방지)")
 
         start = time.monotonic()
 
