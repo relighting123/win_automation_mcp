@@ -157,9 +157,8 @@ tests/     : 수동 검증 성격의 테스트 스크립트
   - 상태 분석: `describe_current_state()`, `get_screen_state_flags()`
   - UIA 컴포넌트 수집: `_collect_uia_components()`
   - OCR 탐색: `find_text_position()`, `_extract_ocr_hits()`
-  - 이미지/아이콘 탐색: `find_image_position()`, `find_icon_from_registry()`
+  - 이미지 탐색: `find_image_position()`
   - 픽셀/입력 제어: `find_rgb_position()`, `click_position()`, `type_text()`, `press_shortcut()`
-  - 레지스트리 로딩: `config/icon_registry.yaml` 기반 후보 탐색
 
 ### `actions/__init__.py`
 - 역할: `AppUIAction` export
@@ -178,19 +177,10 @@ tests/     : 수동 검증 성격의 테스트 스크립트
   - `get_connection_status`
   - `generate_locators` (script 연동)
 
-### `tools/ui_vision_tool.py`
-- 역할: 화면 인식/클릭/입력/시퀀스 Tool 등록
+### `tools/app_control_tool.py`
+- 역할: 화면 인식/클릭/입력 도구 등록
 - 핵심 내용:
-  - 텍스트/이미지/RGB 클릭 계열:
-    - `click_app_text`, `click_app_image`, `click_app_rgb`
-  - 입력/단축키:
-    - `type_app_text`, `press_app_shortcut`
-  - 분석+타깃 클릭:
-    - `click_app_keyword`, `click_app_element`
-  - 상태/아이콘:
-    - `check_app_screen_state`, `find_app_icon_target`, `click_app_icon_target`
-  - 복합 시퀀스:
-    - `run_app_ui_sequence`
+  - 도구들: `find_element_by_title_or_uid`, `find_element_by_ocr`, `find_element_by_auto_id`, `click_element_by_title`, `click_element_by_uid`, `type_app_text`, `press_app_shortcut`, `click_app_position`, `click_app_element`
 
 ### `tools/__init__.py`
 - 역할: tool registration 함수 재노출
@@ -227,11 +217,6 @@ tests/     : 수동 검증 성격의 테스트 스크립트
 - 핵심 내용:
   - `active_window.window` + `elements.*` 형태
 
-### `config/icon_registry.yaml`
-- 역할: 아이콘 이미지 메타데이터 레지스트리
-- 핵심 내용:
-  - `icons.<name>.image_path/confidence/grayscale/keywords/description`
-  - 현재는 템플릿 형태(실 데이터 확장 필요)
 
 ### `config/__init__.py`
 - 역할: 패키지 마커

@@ -1,8 +1,0 @@
-icons:
-  save_icon:
-    image_path: "assets/icons/save_icon.png"
-    confidence: 0.8
-    grayscale: false
-    keywords: ["save", "storage", "floppy", "저장"]
-    description: "저장 버튼"
-

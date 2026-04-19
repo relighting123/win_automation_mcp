@@ -54,8 +54,7 @@ win_mcp/
 │
 ├── config/
 │   ├── app_config.yaml     # 애플리케이션 설정 (경로, 타임아웃)
-│   ├── locator.yaml        # (옵션) UI 요소 locator
-│   └── icon_registry.yaml  # 아이콘 메타데이터/이미지 매핑
+│   └── locator.yaml        # (옵션) UI 요소 locator
 │
 ├── core/
 │   ├── app_launcher.py     # 애플리케이션 실행/종료 관리
@@ -150,17 +149,6 @@ active_window:
       control_type: "Button"
 ```
 
-### 3. 아이콘 레지스트리 설정 (config/icon_registry.yaml)
-
-```yaml
-icons:
-  login_submit:
-    image_path: "assets/icons/login_submit.png"
-    confidence: 0.82
-    grayscale: false
-    keywords: ["login", "signin", "로그인"]
-    description: "로그인 실행 아이콘"
-```
 
 ## 서버 실행
 
@@ -205,15 +193,9 @@ python mcp_server.py --transport sse --port 8000 --reload
 - `get_application_status`: 애플리케이션 상태 조회
 
 ### UI 시각 제어 (ui_vision_tool)
-- `click_app_keyword`: 애플리케이션 화면에서 키워드(텍스트, 버튼 이름 등)를 찾아 해당 위치를 클릭합니다. (UIA 우선, OCR 폴백)
-- `type_app_text`: 애플리케이션에 텍스트를 입력합니다.
-- `press_app_shortcut`: 애플리케이션에 단축키를 입력합니다.
-- `click_app_rgb`: 특정 RGB 색상을 찾아 클릭합니다.
-- `click_app_image`: 특정 이미지를 찾아 클릭합니다.
-- `click_app_element`: UIA 요소를 직접 클릭합니다.
-- `check_app_screen_state`: 비주얼 가이드를 사용하여 현재 화면 상태를 확인합니다.
-- `find_app_icon_target`: 아이콘 레지스트리를 설정하여 대상을 찾습니다.
-- `click_app_icon_target`: 아이콘 레지스트리의 대상을 찾아 클릭합니다.
+- `click_app_child_window`: `auto_id`, `control_type`, `title` 등의 속성을 사용하여 요소를 직접 찾아 클릭합니다. (`draw_outline` 옵션 지원)
+- `highlight_app_child_window`: 클릭 없이 특정 요소를 찾아 화면에 강조(outline) 표시합니다.
+- `click_app_element`: UIA 요소 또는 OCR 텍스트를 찾아 클릭합니다.
 
 ### 소스 오픈
 - `open_source_by_rule_search`: 단축키→아이콘 클릭→검색어 입력으로 소스 열기
@@ -299,8 +281,6 @@ window.child_window(**locator)
    - 실행 파일 경로 설정
    - 타임아웃 값 조정
 
-2. **config/icon_registry.yaml 수정**
-   - 아이콘 이미지 경로 및 키워드 메타 정의
 
 3. **actions/ 확장**
    - active window 기반 Action 클래스 추가

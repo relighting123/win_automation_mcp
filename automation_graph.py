@@ -10,95 +10,58 @@ import json
 # State 정의
 class AgentState(TypedDict):
     task: str
-    plan: List[str]
+    steps: List[Dict[str, Any]]  # [{"tool": "...", "args": {...}}, ...]
     current_step_index: int
-    history: List[BaseMessage]
+    history: List[Dict[str, Any]]
     status: str
-
-# 환경 변수 및 설정
-# 윗단 모델 (Planner) - API 기반 (OpenAI 예시)
-# os.environ["OPENAI_API_KEY"] = "your-api-key"
-planner_llm = ChatOpenAI(model="gpt-4o", temperature=0)
-
-# 아랫단 모델 (Executor) - 로컬 Gemma API (OpenAI 호환 포맷 가정)
-executor_llm = ChatOpenAI(
-    model="google/gemma-3-4b-it",
-    openai_api_base="http://localhost:8001/v1",
-    openai_api_key="local-token", # 더미 토큰
-    temperature=0.1
-)
 
 mcp_client = MCPClient()
 
-# Node 1: Planner - 상위 LLM
-async def planner_node(state: AgentState):
-    print("--- PLANNER ---")
-    prompt = f"""
-    당신은 Windows 프로그램을 제어하는 마스터 플래너입니다.
-    사용자의 요청을 수행하기 위해 단계별 계획을 수립하세요.
-    최대한 구체적으로 작성하세요.
-    요청: {state['task']}
-    
-    계획 형식: JSON list of strings
-    """
-    
-    response = await planner_llm.ainvoke([SystemMessage(content=prompt)])
-    
-    # 단순 파싱 (GPT-4가 JSON을 잘 준다고 가정)
-    try:
-        plan = json.loads(response.content)
-    except:
-        # JSON 형식이 아닐 경우 fallback (줄바꿈 기준)
-        plan = [s.strip() for s in response.content.split('\n') if s.strip()]
-        
-    return {
-        "plan": plan,
-        "current_step_index": 0,
-        "status": "planned"
-    }
-
-# Node 2: Executor - 로컬 Gemma를 통한 MCP Tool 호출
+# Node: Executor - MCP Tool 호출
 async def executor_node(state: AgentState):
-    print(f"--- EXECUTOR (Step {state['current_step_index'] + 1}) ---")
-    current_step = state['plan'][state['current_step_index']]
+    print(f"\n--- EXECUTOR (Step {state['current_step_index'] + 1}/{len(state['steps'])}) ---")
     
-    # MCP 도구 목록 가져오기 (Gemma에게 전달할 용도)
-    # 실제 구현에서는 client.list_tools() 결과를 Gemini/Gemma의 Tool 정의 형식으로 변환 필요
-    # 여기선 예시로 고정된 도구 정의를 사용하거나 단순 텍스트 프롬프트 전달
+    current_step = state['steps'][state['current_step_index']]
+    tool_name = current_step.get("tool")
+    tool_args = current_step.get("args", {})
     
-    prompt = f"""
-    당신은 Windows 자동화 도구 호출 전문가입니다.
-    현재 단계: {current_step}
-    전체 상황: {state['task']}
+    print(f"Calling tool: {tool_name} with args: {tool_args}")
     
-    가용한 MCP 도구들을 사용하여 이 단계를 수행하세요.
-    최종 결과만 'SUCCESS' 또는 'FAILURE'를 포함하여 보고하세요.
-    """
-    
-    response = await executor_llm.ainvoke([HumanMessage(content=prompt)])
-    
-    # Gemma가 도구 호출을 수행했다고 가정하고, 실제론 Tool Call 파싱 및 MCP 클라이언트 호출 로직이 들어감
-    # 여기서는 간단하게 응답을 이력에 추가
-    
-    return {
-        "history": state['history'] + [AIMessage(content=f"Step {state['current_step_index'] + 1} 완료: {response.content}")],
-        "current_step_index": state['current_step_index'] + 1
-    }
+    try:
+        # MCP 서버 연결 확인 및 도구 호출
+        # MCPClient.call_tool은 동기 함수인 경우를 대비해 asyncio 루프 확인 필요
+        # mcp_client.py 구현에 따라 다름. 여기서는 비동기 호출 가정.
+        result = await mcp_client.call_tool(tool_name, tool_args)
+        
+        status_msg = f"Step {state['current_step_index'] + 1} 성공: {result}"
+        print(status_msg)
+        
+        return {
+            "history": state['history'] + [{"step": state['current_step_index'] + 1, "tool": tool_name, "result": result}],
+            "current_step_index": state['current_step_index'] + 1,
+            "status": "in_progress"
+        }
+    except Exception as e:
+        error_msg = f"Step {state['current_step_index'] + 1} 실패 ({tool_name}): {e}"
+        print(error_msg)
+        return {
+            "history": state['history'] + [{"step": state['current_step_index'] + 1, "tool": tool_name, "error": str(e)}],
+            "current_step_index": len(state['steps']), # 에러 발생 시 종료
+            "status": "failed"
+        }
 
 # 조건부 엣지: 모든 단계 완료 여부 확인
 def should_continue(state: AgentState):
-    if state['current_step_index'] < len(state['plan']):
+    if state['current_step_index'] < len(state['steps']):
         return "continue"
     return "end"
 
 # Graph 구축
 workflow = StateGraph(AgentState)
 
-workflow.add_node("planner", planner_node)
 workflow.add_node("executor", executor_node)
 
-workflow.set_entry_point("planner")
-workflow.add_edge("planner", "executor")
+workflow.set_entry_point("executor")
 
 workflow.add_conditional_edges(
     "executor",
@@ -111,23 +74,47 @@ workflow.add_conditional_edges(
 
 app = workflow.compile()
 
-async def run_automation(task: str):
+async def run_automation(task: str, steps: List[Dict[str, Any]]):
     initial_state = {
         "task": task,
-        "plan": [],
+        "steps": steps,
         "current_step_index": 0,
         "history": [],
         "status": "start"
     }
     
+    print(f"Starting automation for task: {task}")
     async for event in app.astream(initial_state):
         for kind, values in event.items():
-            print(f"Node '{kind}' finished.")
-            if 'plan' in values:
-                print(f"Plan: {values['plan']}")
-            if 'current_step_index' in values:
-                print(f"Progress: {values['current_step_index']}/{len(values.get('plan', []))}")
+            if 'status' in values and values['status'] == 'failed':
+                print("Automation failed during execution.")
+                break
 
 if __name__ == "__main__":
-    task = "메모장을 열고 'Hello from Gemma and LangGraph'라고 입력한 뒤 저장해줘."
-    asyncio.run(run_automation(task))
+    # 고정된 도구 호출 시퀀스 정의 예시
+    my_task = "메모장을 열고 인사말 입력하기"
+    my_steps = [
+        {
+            "tool": "launch_application", 
+            "args": {"executable_path": "C:\\Windows\\System32\\notepad.exe"}
+        },
+        {
+            "tool": "type_app_text",
+            "args": {"text": "Hello from Deterministic LangGraph!\n"}
+        },
+        {
+            "tool": "click_app_child_window",
+            "args": {
+                "title": "도움말",
+                "auto_id": "buttonLogin",
+                "control_type": "MenuItem",
+                "draw_outline": True
+            }
+        },
+        {
+            "tool": "press_app_shortcut",
+            "args": {"shortcut": "ctrl+s"}
+        }
+    ]
+    
+    asyncio.run(run_automation(my_task, my_steps))

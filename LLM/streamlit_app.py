@@ -25,30 +25,6 @@ st.set_page_config(
     layout="wide"
 )
 
-def load_skills():
-    """skills/ 폴더의 모든 마크다운 파일을 읽어 스킬 설명을 반환합니다."""
-    # skills 폴더는 LLM 폴더와 같은 레벨에 있음
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    skills_dir = os.path.join(os.path.dirname(current_dir), "skills")
-    
-    if not os.path.exists(skills_dir):
-        return ""
-    
-    skills_content = "\n\n### [사용 가능한 추가 스킬(Skills)]\n"
-    has_skills = False
-    try:
-        for filename in os.listdir(skills_dir):
-            if filename.endswith(".md"):
-                with open(os.path.join(skills_dir, filename), "r", encoding="utf-8") as f:
-                    skills_content += f"\n#### Skill: {filename}\n"
-                    skills_content += f.read()
-                    skills_content += "\n"
-                    has_skills = True
-    except Exception as e:
-        st.error(f"Error loading skills: {e}")
-        return ""
-    
-    return skills_content if has_skills else ""
 # 기본 시스템 프롬프트 정의
 system_content = (
     "당신은 Windows 자동화를 도와주는 유용한 비서입니다.\n"

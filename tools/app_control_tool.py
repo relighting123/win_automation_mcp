@@ -315,6 +315,56 @@ async def click_app_element(
     return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
 
+def click_app_child_window(
+    auto_id: Optional[str] = None,
+    control_type: Optional[str] = None,
+    title: Optional[str] = None,
+    button: str = "left",
+    double: bool = False,
+    timeout: Optional[float] = None,
+    draw_outline: bool = False,
+    outline_colour: str = "red",
+) -> str:
+    """
+    pywinauto의 child_window 기능을 사용하여 요소를 직접 찾아 클릭합니다.
+    auto_id, control_type, title 중 하나 이상을 지정해야 합니다.
+    draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
+    """
+    action = get_app_ui_action()
+    result = action.click_child_window(
+        auto_id=auto_id,
+        control_type=control_type,
+        title=title,
+        button=button,
+        double=double,
+        timeout=timeout,
+        draw_outline=draw_outline,
+        outline_colour=outline_colour
+    )
+    return json.dumps(result.to_dict(), ensure_ascii=False)
+
+
+def highlight_app_child_window(
+    auto_id: Optional[str] = None,
+    control_type: Optional[str] = None,
+    title: Optional[str] = None,
+    timeout: Optional[float] = None,
+    outline_colour: str = "green",
+) -> str:
+    """
+    클릭 없이 특정 요소를 찾아 화면에 강조(outline) 표시합니다.
+    """
+    action = get_app_ui_action()
+    result = action.highlight_child_window(
+        auto_id=auto_id,
+        control_type=control_type,
+        title=title,
+        timeout=timeout,
+        outline_colour=outline_colour
+    )
+    return json.dumps(result.to_dict(), ensure_ascii=False)
+
+
 def register_app_control_tools(mcp: FastMCP) -> None:
     """애플리케이션 UI 제어 도구 등록"""
     mcp.tool()(find_element_by_title_or_uid)
@@ -326,5 +376,7 @@ def register_app_control_tools(mcp: FastMCP) -> None:
     mcp.tool()(press_app_shortcut)
     mcp.tool()(click_app_position)
     mcp.tool()(click_app_element)
+    mcp.tool()(click_app_child_window)
+    mcp.tool()(highlight_app_child_window)
 
     logger.info("애플리케이션 제어 도구 등록 완료")

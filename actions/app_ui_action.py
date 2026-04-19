@@ -470,162 +470,6 @@ class AppUIAction:
             if time.monotonic() - started > timeout:
                 return []
 
-    def _load_icon_registry(self) -> dict:
-        """아이콘 메타데이터 레지스트리를 로드합니다."""
-        base_dir = Path(__file__).resolve().parent.parent
-        candidate_paths = [
-            base_dir / "config" / "icon_registry.yaml",
-            Path("config/icon_registry.yaml"),
-        ]
-        for path in candidate_paths:
-            if not path.exists():
-                continue
-            try:
-                import yaml
-
-                with open(path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-                data["_registry_path"] = str(path)
-                return data
-            except Exception as e:
-                logger.warning("아이콘 레지스트리 로드 실패 (%s): %s", path, e)
-        return {"icons": {}}
-
-    def _resolve_icon_candidates(self, icon_name: Optional[str], keyword: Optional[str]) -> list[dict]:
-        registry = self._load_icon_registry()
-        icons = registry.get("icons", {}) or {}
-        candidates: list[dict] = []
-
-        normalized_keyword = (keyword or "").strip().lower()
-        normalized_name = (icon_name or "").strip().lower()
-
-        for name, meta in icons.items():
-            candidate_name = str(name).strip()
-            if not candidate_name:
-                continue
-            image_path = str((meta or {}).get("image_path", "")).strip()
-            if not image_path:
-                continue
-            keywords = [str(k).lower() for k in ((meta or {}).get("keywords") or [])]
-
-            is_target = False
-            if normalized_name and candidate_name.lower() == normalized_name:
-                is_target = True
-            if normalized_keyword and (
-                normalized_keyword in candidate_name.lower() or normalized_keyword in keywords
-            ):
-                is_target = True
-            if not normalized_name and not normalized_keyword:
-                is_target = True
-
-            if not is_target:
-                continue
-
-            candidates.append(
-                {
-                    "icon_name": candidate_name,
-                    "image_path": image_path,
-                    "confidence": float((meta or {}).get("confidence", 0.8)),
-                    "grayscale": bool((meta or {}).get("grayscale", False)),
-                    "description": (meta or {}).get("description"),
-                    "keywords": (meta or {}).get("keywords", []),
-                }
-            )
-        return candidates
-
-    def find_icon_from_registry(
-        self,
-        *,
-        icon_name: Optional[str] = None,
-        keyword: Optional[str] = None,
-        timeout: Optional[float] = 3.0,
-    ) -> dict:
-        """미리 정의된 아이콘 메타데이터를 기반으로 화면 좌표를 반환합니다."""
-        candidates = self._resolve_icon_candidates(icon_name=icon_name, keyword=keyword)
-        if not candidates:
-            return {
-                "result": "not_found",
-                "message": "조건에 맞는 아이콘 메타데이터를 찾지 못했습니다",
-                "is_success": False,
-                "icon_name": icon_name,
-                "keyword": keyword,
-            }
-
-        # 1. UIA 정밀 탐색 (OpenCV 없이도 동작 가능)
-        # 텍스트뿐만 아니라 AutomationId, 가용 Name 등을 모두 확인합니다.
-        for candidate in candidates:
-            kws = candidate.get("keywords") or [candidate["icon_name"]]
-            for kw in kws:
-                logger.info(f"아이콘 '{candidate['icon_name']}'을 UIA 정밀 탐색 키워드 '{kw}'로 먼저 조사합니다.")
-                _, hits, _ = self._collect_uia_components(keyword=kw, match_mode="contains")
-                if hits:
-                    target = hits[0]
-                    return {
-                        "result": "success",
-                        "message": f"UIA 요소를 통해 '{kw}' 위치를 찾았습니다.",
-                        "is_success": True,
-                        "x": int(target.get("x", 0)),
-                        "y": int(target.get("y", 0)),
-                        "icon_name": candidate["icon_name"],
-                        "source": "uia"
-                    }
-
-        # 2. WinOCR 기반 텍스트 탐색
-        # 아이콘 이미지에 텍스트가 포함되어 있거나 근처에 텍스트가 있는 경우 유용합니다.
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        for candidate in candidates:
-            kws = candidate.get("keywords") or [candidate["icon_name"]]
-            for kw in kws:
-                logger.info(f"아이콘 '{candidate['icon_name']}'을 WinOCR 텍스트 '{kw}'로 탐색합니다.")
-                try:
-                    # find_text_position은 async이므로 동기 환경에서 실행
-                    res = loop.run_until_complete(self.find_text_position(kw, timeout=2.0))
-                    if res.is_success:
-                        return {
-                            "result": "success",
-                            "message": f"WinOCR을 통해 텍스트 '{kw}' 위치를 찾았습니다.",
-                            "is_success": True,
-                            "x": res.x,
-                            "y": res.y,
-                            "icon_name": candidate["icon_name"],
-                            "source": "ocr"
-                        }
-                except Exception as e:
-                    logger.warning(f"OCR 탐색 중 오류 발생: {e}")
-
-        # 3. 이미지 매칭 (마지막 수단)
-        # OpenCV가 있으면 Confidence 활용, 없으면 Exact Match
-        for candidate in candidates:
-            image_path = candidate["image_path"]
-            result = self.find_image_position(
-                image_path=image_path,
-                confidence=candidate["confidence"],
-                grayscale=candidate["grayscale"],
-                timeout=timeout,
-            )
-            if result.is_success:
-                return {
-                    "result": "success",
-                    "message": "아이콘 위치를 찾았습니다 (이미지 매칭)",
-                    "is_success": True,
-                    "x": result.x,
-                    "y": result.y,
-                    "icon_name": candidate["icon_name"],
-                    "image_path": image_path,
-                    "source": "image"
-                }
-
-        return {
-            "result": "not_found",
-            "message": "UIA, OCR, 이미지 매칭을 모두 시도했으나 아이콘을 찾지 못했습니다. 아이콘 캡처를 다시 하거나 키워드를 확인해 주세요.",
-            "is_success": False,
-            "icon_name": icon_name,
-            "keyword": keyword,
-            "searched_candidates": [c["icon_name"] for c in candidates],
-        }
 
     def get_screen_state_flags(self) -> dict:
         """현재 active window 기준 화면 상태 플래그를 반환합니다."""
@@ -991,118 +835,100 @@ class AppUIAction:
             if time.monotonic() - start > timeout:
                 return AppUIActionResult(result="timeout", message="이미지 탐색 시간 초과")
 
+    def click_child_window(
+        self,
+        auto_id: Optional[str] = None,
+        control_type: Optional[str] = None,
+        title: Optional[str] = None,
+        button: str = "left",
+        double: bool = False,
+        timeout: Optional[float] = None,
+        draw_outline: bool = False,
+        outline_colour: str = "red",
+    ) -> AppUIActionResult:
+        """
+        pywinauto의 child_window를 사용하여 특정 요소를 찾아 클릭합니다.
+        auto_id, control_type, title 중 하나 이상을 입력받아 대상을 식별합니다.
+        """
+        self.ensure_focus()
+        top_window = self.session.get_top_window()
+        if top_window is None:
+            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 확보할 수 없습니다.")
 
-    def _load_skills(self) -> list[dict]:
-        """skills/ 디렉토리의 마크다운 스킬들을 로드합니다."""
-        base_dir = Path(__file__).resolve().parent.parent
-        skills_dir = base_dir / "skills"
-        if not skills_dir.exists():
-            return []
-            
-        skills = []
-        for path in skills_dir.glob("*.md"):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    
-                # 간단한 마크다운 파싱 (Trigger와 Actions 섹션 추출)
-                skill = {"name": path.stem, "path": str(path)}
-                
-                # Trigger 섹션 추출
-                import re
-                trigger_match = re.search(r"## Trigger\n(.*?)(?=\n##|$)", content, re.DOTALL)
-                if trigger_match:
-                    trigger_text = trigger_match.group(1).strip()
-                    skill["trigger_desc"] = trigger_text
-                    # 간단한 패턴 매칭용 정보 추출 (예: Window Title: "XYZ")
-                    title_match = re.search(r"Window Title:.*?[\"'](.*?)[\"']", trigger_text)
-                    if title_match:
-                        skill["trigger_title"] = title_match.group(1)
-                
-                # Actions 섹션 추출
-                actions_match = re.search(r"## Actions\n(.*?)(?=\n##|$)", content, re.DOTALL)
-                if actions_match:
-                    action_lines = actions_match.group(1).strip().split('\n')
-                    skill["actions_desc"] = action_lines
-                    
-                skills.append(skill)
-            except Exception as e:
-                logger.warning(f"스킬 로드 실패 ({path.name}): {e}")
-                
-        return skills
+        # 검색 조건 구성
+        criteria = {}
+        if auto_id: criteria["auto_id"] = auto_id
+        if control_type: criteria["control_type"] = control_type
+        if title: criteria["title"] = title
 
-    async def match_skill(self, screen_context: dict, skills: list[dict]) -> Optional[dict]:
-        """현재 화면 컨텍스트와 가장 잘 맞는 스킬을 반환합니다."""
-        active_title = screen_context.get("active_window_title", "")
-        
-        for skill in skills:
-            trigger_title = skill.get("trigger_title")
-            if trigger_title and trigger_title.lower() in active_title.lower():
-                return skill
-                
-        # TODO: 더 정교한 매칭 (OCR 내용 기반 등) 추가 가능
-        return None
+        if not criteria:
+            return AppUIActionResult(result="error", message="검색 조건(auto_id, control_type, title)이 하나 이상 필요합니다.")
 
-    async def execute_skill(self, skill: dict) -> dict:
-        """마크다운에 정의된 스킬 동작을 실행합니다."""
-        name = skill.get("name", "unnamed")
-        actions = skill.get("actions_desc", [])
-        
-        logger.info(f"스킬 실행 시작: {name}")
-        executed_steps = []
-        
-        for line in actions:
-            line = line.strip()
-            if not line: continue
+        try:
+            # child_window 객체 생성
+            target = top_window.child_window(**criteria)
             
-            # 간단한 동작 매핑
-            import re
+            # 요소 유효성 확인 및 대기
+            from pywinauto import timings
+            actual_timeout = timeout if timeout is not None else timings.Timings.slow_timeout
             
-            # Type 동작
-            type_match = re.search(r"[Tt]ype\s+[\"'](.*?)[\"']", line)
-            if type_match:
-                text = type_match.group(1)
-                self.type_text(text)
-                executed_steps.append(f"Typed: {text}")
-                
-            # Press 동작
-            press_match = re.search(r"[Pp]ress\s+[\"'](.*?)[\"']", line)
-            if press_match:
-                key = press_match.group(1).lower()
-                self.press_shortcut(key)
-                executed_steps.append(f"Pressed: {key}")
-                
-            # Click 동작
-            click_match = re.search(r"[Cc]lick\s+[\"'](.*?)[\"']", line)
-            if click_match:
-                text = click_match.group(1)
-                res = await self.find_text_position(text)
-                if res.is_success:
-                    self.click_position(res.x, res.y)
-                    executed_steps.append(f"Clicked: {text}")
-                else:
-                    executed_steps.append(f"Failed to click: {text}")
+            target.wait("exists", timeout=actual_timeout)
             
-            time.sleep(0.5)
+            # 하이라이트 표시
+            if draw_outline:
+                try:
+                    target.draw_outline(colour=outline_colour)
+                except Exception as e:
+                    logger.warning(f"테두리 그리기 실패: {e}")
             
-        return {"skill": name, "is_success": True, "steps": executed_steps}
+            # 클릭 실행
+            if double:
+                target.double_click_input(button=button)
+            else:
+                target.click_input(button=button)
+            
+            return AppUIActionResult(result="success", message=f"요소 클릭 성공: {criteria}")
+        except Exception as e:
+            logger.error(f"child_window 클릭 실패: {e}")
+            return AppUIActionResult(result="error", message=f"요소 클릭 실패: {e}")
 
-    async def run_ai_guidance(self) -> dict:
-        """AI 판단 하에 현재 화면에 맞는 가이드를 찾아 실행합니다."""
-        screen_state = self.get_screen_state_flags()
-        skills = self._load_skills()
-        
-        matched_skill = await self.match_skill(screen_state, skills)
-        
-        if matched_skill:
-            result = await self.execute_skill(matched_skill)
-            return {
-                "matched": True,
-                "skill": matched_skill["name"],
-                "execution": result
-            }
-        
-        return {"matched": False, "message": "현재 화면에 맞는 가이드를 찾지 못했습니다."}
+    def highlight_child_window(
+        self,
+        auto_id: Optional[str] = None,
+        control_type: Optional[str] = None,
+        title: Optional[str] = None,
+        timeout: Optional[float] = None,
+        outline_colour: str = "green",
+    ) -> AppUIActionResult:
+        """
+        클릭 없이 특정 요소를 찾아 화면에 강조(outline) 표시합니다.
+        """
+        self.ensure_focus()
+        top_window = self.session.get_top_window()
+        if top_window is None:
+            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 확보할 수 없습니다.")
+
+        criteria = {}
+        if auto_id: criteria["auto_id"] = auto_id
+        if control_type: criteria["control_type"] = control_type
+        if title: criteria["title"] = title
+
+        if not criteria:
+            return AppUIActionResult(result="error", message="검색 조건이 필요합니다.")
+
+        try:
+            target = top_window.child_window(**criteria)
+            from pywinauto import timings
+            actual_timeout = timeout if timeout is not None else timings.Timings.slow_timeout
+            
+            target.wait("exists", timeout=actual_timeout)
+            target.draw_outline(colour=outline_colour)
+            
+            return AppUIActionResult(result="success", message=f"요소 강조 표시 성공: {criteria}")
+        except Exception as e:
+            return AppUIActionResult(result="error", message=f"요소 강조 표시 실패: {e}")
+
+
 
 
 def get_app_ui_action(session: Optional[AppSession] = None) -> AppUIAction:

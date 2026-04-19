@@ -97,8 +97,7 @@ LLM은 제공되는 도구들을 통해 다음 작업을 수행할 수 있습니
 - 키워드/아이콘 기반 좌표 탐색 및 클릭
 - 단축키/텍스트 입력 등 데스크톱 액션
 
-사용 전 애플리케이션 설정(config/app_config.yaml)과
-아이콘 레지스트리(config/icon_registry.yaml)를 확인하세요.
+사용 전 애플리케이션 설정(config/app_config.yaml)을 확인하세요.
 """
 )
 
