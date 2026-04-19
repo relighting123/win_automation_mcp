@@ -96,9 +96,10 @@ class AppUIAction:
             
             if not self._session.is_connected:
                 # 연결 시도
-                success, msg = self._session.connect()
-                if not success:
-                    return AppUIActionResult(result="error", message=f"애플리케이션 연결 실패: {msg}")
+                try:
+                    self._session.connect()
+                except Exception as e:
+                    return AppUIActionResult(result="error", message=f"애플리케이션 연결 실패: {e}")
 
             wrapper = self._pick_target_window()
             if wrapper is None:
