@@ -103,7 +103,7 @@ if __name__ == "__main__":
             "args": {"text": "Hello from Deterministic LangGraph!\n"}
         },
         {
-            "tool": "click_app_child_window",
+            "tool": "click_app_by_attr",
             "args": {
                 "title": "도움말",
                 "auto_id": "buttonLogin",

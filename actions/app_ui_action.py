@@ -835,7 +835,7 @@ class AppUIAction:
             if time.monotonic() - start > timeout:
                 return AppUIActionResult(result="timeout", message="이미지 탐색 시간 초과")
 
-    def click_child_window(
+    def click_element_by_attr(
         self,
         auto_id: Optional[str] = None,
         control_type: Optional[str] = None,
@@ -851,7 +851,7 @@ class AppUIAction:
         auto_id, control_type, title 중 하나 이상을 입력받아 대상을 식별합니다.
         """
         self.ensure_focus()
-        top_window = self.session.get_top_window()
+        top_window = self._session.get_top_window()
         if top_window is None:
             return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 확보할 수 없습니다.")
 
@@ -869,8 +869,7 @@ class AppUIAction:
             target = top_window.child_window(**criteria)
             
             # 요소 유효성 확인 및 대기
-            from pywinauto import timings
-            actual_timeout = timeout if timeout is not None else timings.Timings.slow_timeout
+            actual_timeout = timeout if timeout is not None else 5.0
             
             target.wait("exists", timeout=actual_timeout)
             
@@ -892,7 +891,7 @@ class AppUIAction:
             logger.error(f"child_window 클릭 실패: {e}")
             return AppUIActionResult(result="error", message=f"요소 클릭 실패: {e}")
 
-    def highlight_child_window(
+    def highlight_element_by_attr(
         self,
         auto_id: Optional[str] = None,
         control_type: Optional[str] = None,
@@ -904,7 +903,7 @@ class AppUIAction:
         클릭 없이 특정 요소를 찾아 화면에 강조(outline) 표시합니다.
         """
         self.ensure_focus()
-        top_window = self.session.get_top_window()
+        top_window = self._session.get_top_window()
         if top_window is None:
             return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 확보할 수 없습니다.")
 
@@ -918,8 +917,7 @@ class AppUIAction:
 
         try:
             target = top_window.child_window(**criteria)
-            from pywinauto import timings
-            actual_timeout = timeout if timeout is not None else timings.Timings.slow_timeout
+            actual_timeout = timeout if timeout is not None else 5.0
             
             target.wait("exists", timeout=actual_timeout)
             target.draw_outline(colour=outline_colour)
@@ -927,6 +925,48 @@ class AppUIAction:
             return AppUIActionResult(result="success", message=f"요소 강조 표시 성공: {criteria}")
         except Exception as e:
             return AppUIActionResult(result="error", message=f"요소 강조 표시 실패: {e}")
+
+    def get_element_coords_by_attr(
+        self,
+        auto_id: Optional[str] = None,
+        control_type: Optional[str] = None,
+        title: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> AppUIActionResult:
+        """
+        특정 요소를 찾아 그 중심 좌표를 반환합니다.
+        """
+        self.ensure_focus()
+        top_window = self._session.get_top_window()
+        if top_window is None:
+            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 확보할 수 없습니다.")
+
+        criteria = {}
+        if auto_id: criteria["auto_id"] = auto_id
+        if control_type: criteria["control_type"] = control_type
+        if title: criteria["title"] = title
+
+        if not criteria:
+            return AppUIActionResult(result="error", message="검색 조건이 필요합니다.")
+
+        try:
+            target = top_window.child_window(**criteria)
+            actual_timeout = timeout if timeout is not None else 5.0
+            
+            target.wait("exists", timeout=actual_timeout)
+            
+            # 좌표 획득
+            rect = target.rectangle()
+            center = rect.mid_point()
+            
+            return AppUIActionResult(
+                result="success", 
+                message=f"요소 좌표 획득 성공: {criteria}",
+                x=int(center.x),
+                y=int(center.y)
+            )
+        except Exception as e:
+            return AppUIActionResult(result="error", message=f"요소 좌표 획득 실패: {e}")
 
 
 

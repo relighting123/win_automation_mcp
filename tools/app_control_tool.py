@@ -15,44 +15,9 @@ from actions.app_ui_action import get_app_ui_action
 logger = logging.getLogger(__name__)
 
 
-async def find_element_by_title_or_uid(
-    keyword: str,
-    match_mode: str = "contains",
-    case_sensitive: bool = False,
-    limit: int = 10
-) -> str:
-    """
-    UI 요소의 Title 또는 UID(Name 등)를 사용하여 요소를 찾습니다.
-    
-    Args:
-        keyword: 찾을 텍스트 (Title, Name 등)
-        match_mode: 일치 모드 ("exact" 또는 "contains")
-        case_sensitive: 대소문자 구분 여부
-        limit: 결과 개수 제한
-    """
-    logger.info(f"[Tool] find_element_by_title_or_uid 호출: keyword='{keyword}', match_mode={match_mode}")
-    action = get_app_ui_action()
-    analysis = await action.describe_current_state(
-        keyword=keyword,
-        match_mode=match_mode,
-        case_sensitive=case_sensitive,
-        include_components=True,
-        include_ocr_hits=False,
-        component_limit=300
-    )
-    
-    hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
-    result = hits[:limit]
-    
-    return json.dumps({
-        "success": len(result) > 0,
-        "count": len(result),
-        "elements": result,
-        "message": f"{len(result)}개의 요소를 찾았습니다." if result else "요소를 찾지 못했습니다."
-    }, ensure_ascii=False)
 
 
-async def find_element_by_ocr(
+async def find_app_by_ocr(
     keyword: str,
     language: str = "kor+eng",
     timeout: float = 2.0,
@@ -67,7 +32,7 @@ async def find_element_by_ocr(
         timeout: 최대 대기 시간
         match_mode: 일치 모드 ("exact" 또는 "contains")
     """
-    logger.info(f"[Tool] find_element_by_ocr 호출: keyword='{keyword}', language={language}")
+    logger.info(f"[Tool] find_app_by_ocr 호출: keyword='{keyword}', language={language}")
     action = get_app_ui_action()
     analysis = await action.describe_current_state(
         keyword=keyword,
@@ -88,36 +53,9 @@ async def find_element_by_ocr(
     }, ensure_ascii=False)
 
 
-async def find_element_by_auto_id(
-    auto_id: str
-) -> str:
-    """
-    UIA AutomationID를 사용하여 요소를 정확하게 찾습니다.
-    
-    Args:
-        auto_id: 찾을 AutomationID
-    """
-    logger.info(f"[Tool] find_element_by_auto_id 호출: auto_id='{auto_id}'")
-    action = get_app_ui_action()
-    analysis = await action.describe_current_state(
-        keyword=auto_id,
-        match_mode="exact",
-        include_components=True,
-        include_ocr_hits=False
-    )
-    
-    all_uia_hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
-    exact_hits = [h for h in all_uia_hits if h.get("auto_id") == auto_id]
-    
-    return json.dumps({
-        "success": len(exact_hits) > 0,
-        "count": len(exact_hits),
-        "elements": exact_hits,
-        "message": f"AutomationID '{auto_id}'를 가진 요소를 찾았습니다." if exact_hits else "해당 AutomationID를 가진 요소를 찾지 못했습니다."
-    }, ensure_ascii=False)
 
 
-async def click_element_by_title(
+async def click_app_by_text(
     keyword: str,
     match_mode: str = "contains",
     case_sensitive: bool = False,
@@ -134,7 +72,7 @@ async def click_element_by_title(
         button: 마우스 버튼 ("left", "right", "middle")
         clicks: 클릭 횟수
     """
-    logger.info(f"[Tool] click_element_by_title 호출: keyword='{keyword}', match_mode={match_mode}")
+    logger.info(f"[Tool] click_app_by_text 호출: keyword='{keyword}', match_mode={match_mode}")
     action = get_app_ui_action()
     analysis = await action.describe_current_state(
         keyword=keyword,
@@ -174,42 +112,6 @@ async def click_element_by_title(
     return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
 
-async def click_element_by_uid(
-    uid: str,
-    button: str = "left",
-    clicks: int = 1,
-) -> str:
-    """
-    UIA AutomationID(uid)를 사용하여 요소를 찾아 클릭합니다.
-    
-    Args:
-        uid: 찾을 AutomationID
-        button: 마우스 버튼 ("left", "right", "middle")
-        clicks: 클릭 횟수
-    """
-    logger.info(f"[Tool] click_element_by_uid 호출: uid='{uid}'")
-    action = get_app_ui_action()
-    analysis = await action.describe_current_state(
-        keyword=uid,
-        match_mode="exact",
-        include_components=True,
-        include_ocr_hits=False
-    )
-    
-    hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
-    exact_hits = [h for h in hits if h.get("auto_id") == uid]
-    
-    if not exact_hits:
-        return json.dumps({"success": False, "message": f"AutomationID '{uid}'를 가진 요소를 찾지 못했습니다."}, ensure_ascii=False)
-        
-    target = exact_hits[0]
-    click_result = action.click_position(
-        x=int(target.get("x", 0)),
-        y=int(target.get("y", 0)),
-        button=button,
-        clicks=clicks
-    )
-    return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
 
 def type_app_text(
@@ -267,7 +169,7 @@ def click_app_position(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
-async def click_app_element(
+async def click_app_by_keyword(
     keyword: str,
     element_type: str = "any",
     match_mode: str = "contains",
@@ -276,7 +178,7 @@ async def click_app_element(
     clicks: int = 1,
 ) -> str:
     """
-    텍스트(keyword)와 UI 형식(element_type)을 함께 만족하는 요소를 찾아 클릭합니다.
+    키워드와 UI 형식(element_type)을 함께 만족하는 요소를 찾아 클릭합니다.
     """
     action = get_app_ui_action()
     analysis = await action.describe_current_state(
@@ -315,7 +217,7 @@ async def click_app_element(
     return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
 
-def click_app_child_window(
+def click_app_by_attr(
     auto_id: Optional[str] = None,
     control_type: Optional[str] = None,
     title: Optional[str] = None,
@@ -331,7 +233,7 @@ def click_app_child_window(
     draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
     """
     action = get_app_ui_action()
-    result = action.click_child_window(
+    result = action.click_element_by_attr(
         auto_id=auto_id,
         control_type=control_type,
         title=title,
@@ -344,7 +246,7 @@ def click_app_child_window(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
-def highlight_app_child_window(
+def highlight_app_by_attr(
     auto_id: Optional[str] = None,
     control_type: Optional[str] = None,
     title: Optional[str] = None,
@@ -355,7 +257,7 @@ def highlight_app_child_window(
     클릭 없이 특정 요소를 찾아 화면에 강조(outline) 표시합니다.
     """
     action = get_app_ui_action()
-    result = action.highlight_child_window(
+    result = action.highlight_element_by_attr(
         auto_id=auto_id,
         control_type=control_type,
         title=title,
@@ -365,18 +267,35 @@ def highlight_app_child_window(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
+def get_app_coords_by_attr(
+    auto_id: Optional[str] = None,
+    control_type: Optional[str] = None,
+    title: Optional[str] = None,
+    timeout: Optional[float] = None,
+) -> str:
+    """
+    특정 요소를 찾아 그 중심 좌표(x, y)를 반환합니다.
+    """
+    action = get_app_ui_action()
+    result = action.get_element_coords_by_attr(
+        auto_id=auto_id,
+        control_type=control_type,
+        title=title,
+        timeout=timeout
+    )
+    return json.dumps(result.to_dict(), ensure_ascii=False)
+
+
 def register_app_control_tools(mcp: FastMCP) -> None:
     """애플리케이션 UI 제어 도구 등록"""
-    mcp.tool()(find_element_by_title_or_uid)
-    mcp.tool()(find_element_by_ocr)
-    mcp.tool()(find_element_by_auto_id)
-    mcp.tool()(click_element_by_title)
-    mcp.tool()(click_element_by_uid)
+    mcp.tool()(find_app_by_ocr)
+    mcp.tool()(click_app_by_text)
     mcp.tool()(type_app_text)
     mcp.tool()(press_app_shortcut)
     mcp.tool()(click_app_position)
-    mcp.tool()(click_app_element)
-    mcp.tool()(click_app_child_window)
-    mcp.tool()(highlight_app_child_window)
+    mcp.tool()(click_app_by_keyword)
+    mcp.tool()(click_app_by_attr)
+    mcp.tool()(highlight_app_by_attr)
+    mcp.tool()(get_app_coords_by_attr)
 
     logger.info("애플리케이션 제어 도구 등록 완료")

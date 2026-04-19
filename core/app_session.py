@@ -558,3 +558,14 @@ class AppSession:
             return actual_path == target_path_norm
         except Exception:
             return False
+    def get_top_window(self) -> Any:
+        """
+        애플리케이션의 최상위 윈도우(Main Window)를 반환합니다.
+        """
+        try:
+            top_win = self.app.top_window()
+            if top_win.exists():
+                return top_win
+        except Exception as e:
+            logger.debug(f"최상위 윈도우 획득 실패: {e}")
+        return None
