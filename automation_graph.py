@@ -1,13 +1,14 @@
 """
 automation_graph.py
 ────────────────────────────────────────────────────────────────────
-비동기 결정론적 "병렬" 자동화 그래프 (Parameterizer → Builder → Executor)
+비동기 결정론적 "Fan-out/Fan-in" 자동화 그래프 (Smart Session Manager)
 
 Flow
 ────
-  [parameterizer] ──► [builder] ──► [executor] ──► (loop) ──► END
-       │ LLM 1회           │ 템플릿 치환        │ MCP 병렬/순차 실행
-       │ 파라미터 추출      └─► steps 완성       └─► asyncio.gather 사용
+      ┌──► [parameterizer] ──┐
+  START                      ├──► [builder] ──► [executor] ──► END
+      └──► [session_manager] ┘
+        (LLM 추출 & 세션 체크 병렬)   (결과 취합/분석)     (남은 단계 실행)
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import Any, Dict, Final, List, TypedDict, Union
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import AsyncChatOpenAI
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, StateGraph, START
 
 from mcp_client import MCPClient
 
@@ -39,10 +40,12 @@ class AutomationState(TypedDict):
     """LangGraph 노드 간에 공유되는 불변 상태 컨테이너."""
     user_input: str
     param_schema: Dict[str, str]
-    step_templates: List[Union[Dict[str, Any], List[Dict[str, Any]]]]  # 단일 또는 병렬 그룹
+    
+    immediate_steps: List[Dict[str, Any]]         # 초기 실행 도구 (주로 앱 런처)
+    parameterized_templates: List[Union[Dict[str, Any], List[Dict[str, Any]]]]
 
     params: Dict[str, Any]
-    steps: List[List[Dict[str, Any]]]     # 실행 시점에는 무조건 그룹(List) 단위로 관리
+    steps: List[List[Dict[str, Any]]]
     current_step: int
     history: List[Dict[str, Any]]
     status: str
@@ -74,14 +77,14 @@ def _fill_template(value: Any, params: Dict[str, Any]) -> Any:
 # ─────────────────────────────────────────────────────────────────
 def build_automation_graph(llm: AsyncChatOpenAI, mcp: MCPClient) -> Any:
 
-    # ── Node 1: Parameterizer ────────────────────────────────────
+    # ── Node 1: Parameterizer (LLM Extraction) ───────────────────
     async def parameterizer_node(state: AutomationState) -> Dict[str, Any]:
-        logger.info("[PARAMETERIZER] 파라미터 추출 중...")
+        logger.info("[PARAMETERIZER] LLM 파라미터 추출 시작...")
         schema_lines = "\n".join(f"  - {k}: {desc}" for k, desc in state["param_schema"].items())
         prompt = (
             f"[추출 스키마]\n{schema_lines}\n\n"
             f"[사용자 요청]\n{state['user_input']}\n\n"
-            "위 요청에서 파라미터를 추출하여 JSON으로만 응답하세요."
+            "위 요청에서 필요한 정보를 추출하여 JSON으로만 응답하세요."
         )
         response = await llm.ainvoke([HumanMessage(content=prompt)])
         try:
@@ -90,37 +93,65 @@ def build_automation_graph(llm: AsyncChatOpenAI, mcp: MCPClient) -> Any:
             params = {}
         
         logger.info("[PARAMETERIZER] 추출 완료: %s", params)
-        return {"params": params, "status": "parameterized"}
+        return {"params": params}
 
-    # ── Node 2: Builder ──────────────────────────────────────────
-    async def builder_node(state: AutomationState) -> Dict[str, Any]:
-        """템플릿을 구체적인 실행 단계(Group 리스트)로 변환합니다."""
-        logger.info("[BUILDER] 실행 계획 수립 중...")
+    # ── Node 2: Session Manager (Smart App Launcher) ──────────────
+    async def session_manager_node(state: AutomationState) -> Dict[str, Any]:
+        """앱 세션 상태를 체크하여 필요할 때만 실행합니다."""
+        logger.info("[SESSION_MANAGER] 세션 상태 체크 및 초기화 시작...")
         
+        # 1. 현재 연결 상태 확인
+        try:
+            status_raw = await mcp.call_tool("get_connection_status", {})
+            status = json.loads(status_raw) if isinstance(status_raw, str) else status_raw
+            is_active = status.get("is_connected", False)
+        except Exception:
+            is_active = False
+
+        results = []
+        for s in state["immediate_steps"]:
+            tool_name = s["tool"]
+            args = s.get("args", {})
+            
+            # 앱 런처 도구일 경우 스마트 체크
+            if tool_name == "launch_application" and is_active:
+                logger.info("[SESSION_MANAGER] 앱이 이미 실행 중입니다. 실행 단계를 건너뜁니다.")
+                results.append({"tool": tool_name, "result": "skipped (already active)", "status": "existing"})
+                continue
+            
+            # 실행이 필요하거나 다른 종류의 도구인 경우
+            try:
+                res = await mcp.call_tool(tool_name, args)
+                results.append({"tool": tool_name, "result": res, "status": "launched"})
+            except Exception as e:
+                results.append({"tool": tool_name, "error": str(e)})
+
+        logger.info("[SESSION_MANAGER] 세션 관리 완료")
+        return {"history": [{"group": "session_init", "results": results}]}
+
+    # ── Node 3: Builder (Join & Analysis) ────────────────────────
+    async def builder_node(state: AutomationState) -> Dict[str, Any]:
+        logger.info("[BUILDER] 취합 및 후속 계획 수립...")
+        
+        params = state.get("params", {})
         final_steps: List[List[Dict[str, Any]]] = []
-        for item in state["step_templates"]:
+        
+        for item in state["parameterized_templates"]:
             if isinstance(item, list):
-                # 명시적 병렬 그룹
-                group = [{"tool": s["tool"], "args": _fill_template(s.get("args", {}), state["params"])} for s in item]
+                group = [{"tool": s["tool"], "args": _fill_template(s.get("args", {}), params)} for s in item]
                 final_steps.append(group)
             else:
-                # 단일 단계를 단일 원소 그룹으로 변환
-                step = {"tool": item["tool"], "args": _fill_template(item.get("args", {}), state["params"])}
+                step = {"tool": item["tool"], "args": _fill_template(item.get("args", {}), params)}
                 final_steps.append([step])
 
-        logger.info("[BUILDER] 총 %d 개의 그룹 확정 (병렬 단계 포함)", len(final_steps))
-        return {"steps": final_steps, "current_step": 0, "history": [], "status": "built"}
+        return {"steps": final_steps, "current_step": 0, "status": "built"}
 
-    # ── Node 3: Executor ─────────────────────────────────────────
+    # ── Node 4: Executor (Remaining Steps) ───────────────────────
     async def executor_node(state: AutomationState) -> Dict[str, Any]:
-        """현재 그룹의 모든 도구를 asyncio.gather 로 병렬 실행합니다."""
         idx = state["current_step"]
         group = state["steps"][idx]
         
-        logger.info("[EXECUTOR] Group %d/%d 실행 (도구 %d개 병렬)", 
-                    idx + 1, len(state["steps"]), len(group))
-
-        async def _call(step_info: Dict[str, Any]) -> Dict[str, Any]:
+        async def _call(step_info: Dict[str, Any]):
             name, args = step_info["tool"], step_info.get("args", {})
             try:
                 res = await mcp.call_tool(name, args)
@@ -128,49 +159,54 @@ def build_automation_graph(llm: AsyncChatOpenAI, mcp: MCPClient) -> Any:
             except Exception as e:
                 return {"tool": name, "error": str(e)}
 
-        # 병렬 실행!
         results = await asyncio.gather(*[_call(s) for s in group])
-        
-        # 결과 분석 (하나라도 에러가 있으면 실패 처리)
-        has_error = any("error" in r for r in results)
         new_history = state["history"] + [{"group": idx + 1, "results": results}]
         
-        if has_error:
-            logger.error("[EXECUTOR] Group %d 작업 중 오류 발생", idx + 1)
+        if any("error" in r for r in results):
             return {"history": new_history, "current_step": len(state["steps"]), "status": "failed"}
         
         return {"history": new_history, "current_step": idx + 1, "status": "in_progress"}
 
-    # ── Graph Setup ──────────────────────────────────────────────
-    def _should_continue(state: AutomationState) -> str:
-        return "continue" if state["current_step"] < len(state["steps"]) else "end"
+    # ── Graph Building ──────────────────────────────────────────
+    workflow = StateGraph(AutomationState)
 
-    graph = StateGraph(AutomationState)
-    graph.add_node("parameterizer", parameterizer_node)
-    graph.add_node("builder",       builder_node)
-    graph.add_node("executor",      executor_node)
-    graph.set_entry_point("parameterizer")
-    graph.add_edge("parameterizer", "builder")
-    graph.add_edge("builder",       "executor")
-    graph.add_conditional_edges("executor", _should_continue, {"continue": "executor", "end": END})
+    workflow.add_node("parameterizer", parameterizer_node)
+    workflow.add_node("session_manager", session_manager_node)
+    workflow.add_node("builder", builder_node)
+    workflow.add_node("executor", executor_node)
+
+    # Fan-out
+    workflow.add_edge(START, "parameterizer")
+    workflow.add_edge(START, "session_manager")
+
+    # Fan-in
+    workflow.add_edge("parameterizer", "builder")
+    workflow.add_edge("session_manager", "builder")
+
+    workflow.add_edge("builder", "executor")
     
-    return graph.compile()
+    def _cont(state): return "continue" if state["current_step"] < len(state["steps"]) else "end"
+    workflow.add_conditional_edges("executor", _cont, {"continue": "executor", "end": END})
+    
+    return workflow.compile()
 
 
 # ─────────────────────────────────────────────────────────────────
-# Runner
+# Runner & Example
 # ─────────────────────────────────────────────────────────────────
 async def run_automation(
     *,
     user_input: str,
     param_schema: Dict[str, str],
-    step_templates: List[Union[Dict[str, Any], List[Dict[str, Any]]]],
+    immediate_steps: List[Dict[str, Any]],
+    parameterized_templates: List[Union[Dict[str, Any], List[Dict[str, Any]]]],
     llm: AsyncChatOpenAI,
     mcp: MCPClient,
 ) -> AutomationState:
     app = build_automation_graph(llm, mcp)
     initial: AutomationState = {
-        "user_input": user_input, "param_schema": param_schema, "step_templates": step_templates,
+        "user_input": user_input, "param_schema": param_schema,
+        "immediate_steps": immediate_steps, "parameterized_templates": parameterized_templates,
         "params": {}, "steps": [], "current_step": 0, "history": [], "status": "start",
     }
     
@@ -179,36 +215,25 @@ async def run_automation(
         for _, values in event.items():
             final = {**final, **values}
 
-    logger.info("■ 자동화 최종 상태: %s", final.get("status"))
     return final
 
 
-# ─────────────────────────────────────────────────────────────────
-# Example
-# ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import os
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     _llm = AsyncChatOpenAI(api_key=os.environ["OPENAI_API_KEY"], model="gpt-4o-mini")
     _mcp = MCPClient()
 
-    # 예시: 메모장과 계산기를 '동시'에 띄움 (병렬)
-    _schema = {"msg": "메모장에 적을 내용"}
-    _templates = [
-        # Group 1: 병렬 실행
-        [
-            {"tool": "launch_application", "args": {"executable_path": "notepad.exe"}},
-            {"tool": "launch_application", "args": {"executable_path": "calc.exe"}},
-        ],
-        # Group 2: 순차 실행 (앞의 그룹이 다 끝나야 실행됨)
-        {"tool": "type_app_text", "args": {"text": "{msg}"}},
-    ]
+    _schema = {"msg": "입력할 텍스트"}
+    _immediate = [{"tool": "launch_application", "args": {"executable_path": "notepad.exe"}}]
+    _templates = [{"tool": "type_app_text", "args": {"text": "{msg}"}}]
 
     asyncio.run(run_automation(
-        user_input="메모장이랑 계산기 켜고 메모장에 'Hello'라고 적어줘",
+        user_input="메모장에 '스마트 세션 테스트'라고 써줘",
         param_schema=_schema,
-        step_templates=_templates,
+        immediate_steps=_immediate,
+        parameterized_templates=_templates,
         llm=_llm,
         mcp=_mcp
     ))
