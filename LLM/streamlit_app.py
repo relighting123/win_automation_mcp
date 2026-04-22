@@ -18,6 +18,23 @@ if current_dir not in sys.path:
 from langgraph_agent import create_mcp_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
+# 사내 OpenAI 호환 API 환경변수 우선 사용
+DEFAULT_LLM_API_BASE_URL = (
+    os.getenv("INTERNAL_LLM_BASE_URL")
+    or os.getenv("OPENAI_BASE_URL")
+    or "https://api.groq.com/openai/v1"
+)
+DEFAULT_LLM_API_KEY = (
+    os.getenv("INTERNAL_LLM_API_KEY")
+    or os.getenv("OPENAI_API_KEY")
+    or ""
+)
+DEFAULT_LLM_MODEL_NAME = (
+    os.getenv("INTERNAL_LLM_MODEL")
+    or os.getenv("OPENAI_MODEL")
+    or "openai/gpt-oss-120b"
+)
+
 # 페이지 설정
 st.set_page_config(
     page_title="Windows Automation with Internal LLM",
@@ -47,10 +64,11 @@ else:
 # 사이드바 설정
 st.sidebar.title("Configuration")
 mcp_url = st.sidebar.text_input("MCP Server URL", "http://localhost:8000/mcp")
-api_base_url = st.sidebar.text_input("LLM API Base URL", "https://api.groq.com/openai/v1")
-api_key = st.sidebar.text_input("API Key", type="password")
-model_name = st.sidebar.text_input("Model Name", "openai/gpt-oss-120b")
+api_base_url = st.sidebar.text_input("LLM API Base URL", DEFAULT_LLM_API_BASE_URL)
+api_key = st.sidebar.text_input("API Key", value=DEFAULT_LLM_API_KEY, type="password")
+model_name = st.sidebar.text_input("Model Name", DEFAULT_LLM_MODEL_NAME)
 use_langgraph = st.sidebar.toggle("Use LangGraph Workflow", value=True, help="컴플렉스 워크플로우를 위해 LangGraph를 사용합니다.")
+st.sidebar.caption("사내 OpenAI 호환 URL/API Key/Model을 사용하려면 환경변수(INTERNAL_LLM_*) 또는 입력창 값을 설정하세요.")
 
 if st.sidebar.button("Clear Chat"):
     st.session_state.messages = [
@@ -62,7 +80,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("""
 ### How to use
 1. MCP 서버를 실행하세요 (`python mcp_server.py`)
-2. API 설정(URL, Key, Model)을 입력하세요.
+2. 사내 OpenAI 호환 API 설정(URL, Key, Model)을 입력하세요.
 3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
 """)
 
