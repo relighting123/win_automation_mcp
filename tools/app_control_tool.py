@@ -221,6 +221,7 @@ def click_app_by_attr(
     auto_id: Optional[str] = None,
     control_type: Optional[str] = None,
     title: Optional[str] = None,
+    title_match_mode: str = "exact",
     button: str = "left",
     double: bool = False,
     timeout: Optional[float] = None,
@@ -230,6 +231,9 @@ def click_app_by_attr(
     """
     pywinauto의 child_window 기능을 사용하여 요소를 직접 찾아 클릭합니다.
     auto_id, control_type, title 중 하나 이상을 지정해야 합니다.
+    title_match_mode:
+      - exact: title 완전 일치
+      - contains: title 포함 일치
     draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
     """
     action = get_app_ui_action()
@@ -237,6 +241,7 @@ def click_app_by_attr(
         auto_id=auto_id,
         control_type=control_type,
         title=title,
+        title_match_mode=title_match_mode,
         button=button,
         double=double,
         timeout=timeout,
