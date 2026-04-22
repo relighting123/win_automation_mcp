@@ -200,19 +200,31 @@ python mcp_server.py --transport sse --port 8000 --reload
 ### 소스 오픈
 - `open_source_by_rule_search`: 단축키→아이콘 클릭→검색어 입력으로 소스 열기
 
-## 지능형 자동화 (Two-Layer LLM)
+## 단순 자동화 실행 (Plan 파일 기반 LangGraph)
 
-이 프로젝트는 복잡한 시나리오 대응을 위해 2단계 LLM 아키텍처를 지원합니다.
+`automation_graph.py`는 복잡한 플래너 없이, **정의된 순서의 plan을 그대로 실행**합니다.
 
-### 1. 계층 개요
-- **Planner (상위 LLM)**: GPT-4o 등 API 기반 모델을 사용하여 대안 및 단계별 계획 수립
-- **Executor (하위 LLM)**: 로컬 Function-Gemma 모델을 사용하여 정밀한 도구 호출 및 파라미터 추출
-- **LangGraph**: 이 두 계층을 연결하여 상태 유지 및 흐름 제어
+### 1. Plan 파일 형식 (`.md`)
+`plans/sample_plan.md`처럼 JSON 배열을 markdown 코드블록에 넣어 작성합니다.
+
+```json
+[
+  {"tool": "launch_application", "args": {"executable_path": "notepad.exe"}},
+  {"tool": "type_app_text", "args": {"text": "안녕하세요"}}
+]
+```
 
 ### 2. 실행 방법
 1. **MCP 서버 시작**: `python mcp_server.py --transport http`
-2. **Gemma API 시작**: `python gemma_serving.py` (8001 포트)
-3. **자동화 그래프 실행**: `python automation_graph.py`
+2. **Plan 지정 후 실행**:
+   ```bash
+   export AUTOMATION_PLAN_MD="plans/sample_plan.md"
+   python automation_graph.py
+   ```
+
+기본값:
+- `MCP_BASE_URL`: `http://localhost:8000/mcp`
+- `AUTOMATION_PLAN_MD`: `plans/sample_plan.md`
 
 ## 파인튜닝 (Finetuning)
 
