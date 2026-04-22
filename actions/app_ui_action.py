@@ -840,6 +840,7 @@ class AppUIAction:
         auto_id: Optional[str] = None,
         control_type: Optional[str] = None,
         title: Optional[str] = None,
+        title_match_mode: str = "exact",
         button: str = "left",
         double: bool = False,
         timeout: Optional[float] = None,
@@ -855,11 +856,34 @@ class AppUIAction:
         if top_window is None:
             return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 확보할 수 없습니다.")
 
+        title_match_mode = (title_match_mode or "exact").strip().lower()
+        if title_match_mode not in {"exact", "contains"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 title_match_mode: {title_match_mode} (exact|contains)",
+            )
+
         # 검색 조건 구성
         criteria = {}
-        if auto_id: criteria["auto_id"] = auto_id
-        if control_type: criteria["control_type"] = control_type
-        if title: criteria["title"] = title
+        if auto_id:
+            criteria["auto_id"] = auto_id
+        if control_type:
+            criteria["control_type"] = control_type
+        if title:
+            if title_match_mode == "contains":
+                criteria["title_re"] = f".*{title}.*"
+            else:
+                criteria["title"] = title
+
+        # 동일 조건으로 여러 요소가 매칭되면 첫 번째 요소를 명시적으로 선택합니다.
+        # (요청사항: 다중 매칭 시 found_index=0)
+        try:
+            matched = top_window.descendants(**criteria)
+            if len(matched) > 1:
+                criteria["found_index"] = 0
+        except Exception:
+            # 사전 탐색 실패 시에는 기존 child_window + wait 흐름에 위임
+            pass
 
         if not criteria:
             return AppUIActionResult(result="error", message="검색 조건(auto_id, control_type, title)이 하나 이상 필요합니다.")

@@ -299,3 +299,20 @@ streamlit run LLM/streamlit_app.py
 python mcp_server.py
 python gemma_serving.py
 npx @modelcontextprotocol/inspector
+
+## 사내 LLM(OpenAI 호환) 연결 예시
+
+Streamlit UI에서 `LLM API Base URL`, `API Key`, `Model Name`을 입력해도 되고,
+아래 환경변수로 기본값을 미리 지정할 수도 있습니다.
+
+```bash
+export INTERNAL_LLM_BASE_URL="https://your-internal-llm.company.com/v1"
+export INTERNAL_LLM_API_KEY="your_api_key"
+export INTERNAL_LLM_MODEL="your-model-name"
+streamlit run LLM/streamlit_app.py
+```
+
+기본 fallback은 아래 순서로 동작합니다.
+- Base URL: `INTERNAL_LLM_BASE_URL` -> `OPENAI_BASE_URL` -> `https://api.groq.com/openai/v1`
+- API Key: `INTERNAL_LLM_API_KEY` -> `OPENAI_API_KEY` -> `""`
+- Model: `INTERNAL_LLM_MODEL` -> `OPENAI_MODEL` -> `openai/gpt-oss-120b`
