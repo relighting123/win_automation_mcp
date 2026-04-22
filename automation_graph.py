@@ -1,27 +1,17 @@
 """
 automation_graph.py
 ────────────────────────────────────────────────────────────────────
-비동기 결정론적 "Fan-out/Fan-in" 자동화 그래프 (Smart Session Manager)
-
-Flow
-────
-      ┌──► [parameterizer] ──┐
-  START                      ├──► [builder] ──► [executor] ──► END
-      └──► [session_manager] ┘
-        (LLM 추출 & 세션 체크 병렬)   (결과 취합/분석)     (남은 단계 실행)
+정의된 plan 순서대로 MCP tool을 호출하는 최소 LangGraph 실행기.
 """
-
-from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, Final, List, TypedDict, Union
+from pathlib import Path
+from typing import Any, Dict, Final, List, TypedDict
 
-from langchain_core.messages import HumanMessage
-from langchain_openai import AsyncChatOpenAI
-from langgraph.graph import END, StateGraph, START
+from langgraph.graph import END, StateGraph
 
 from mcp_client import MCPClient
 
@@ -37,18 +27,13 @@ _JSON_FENCE_RE: Final = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 # State
 # ─────────────────────────────────────────────────────────────────
 class AutomationState(TypedDict):
-    """LangGraph 노드 간에 공유되는 불변 상태 컨테이너."""
-    user_input: str
-    param_schema: Dict[str, str]
-    
-    immediate_steps: List[Dict[str, Any]]         # 초기 실행 도구 (주로 앱 런처)
-    parameterized_templates: List[Union[Dict[str, Any], List[Dict[str, Any]]]]
-
-    params: Dict[str, Any]
-    steps: List[List[Dict[str, Any]]]
+    """LangGraph 노드 간에 공유되는 순차 실행 상태."""
+    plan_source: str
+    plan_steps: List[Dict[str, Any]]
     current_step: int
     history: List[Dict[str, Any]]
     status: str
+    final_response: str
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -59,135 +44,155 @@ def _strip_fences(text: str) -> str:
     return m.group(1).strip() if m else text.strip()
 
 
-def _fill_template(value: Any, params: Dict[str, Any]) -> Any:
-    match value:
-        case str():
-            try: return value.format_map(params)
-            except KeyError: return value
-        case dict():
-            return {k: _fill_template(v, params) for k, v in value.items()}
-        case list():
-            return [_fill_template(v, params) for v in value]
-        case _:
-            return value
+def load_plan_steps_from_markdown(plan_path: str) -> List[Dict[str, Any]]:
+    """
+    Markdown plan 파일에서 JSON 배열 형식 step 리스트를 읽습니다.
+
+    기대 형식:
+    ```json
+    [
+      {"tool": "tool_name", "args": {...}},
+      ...
+    ]
+    ```
+    """
+    path = Path(plan_path)
+    text = path.read_text(encoding="utf-8")
+
+    # fenced block 우선 파싱
+    fenced = _strip_fences(text)
+    plan_candidate = fenced
+    if not fenced.startswith("["):
+        # fenced가 아니면 문서 전체에서 배열만 추출
+        match = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
+        if not match:
+            raise ValueError("plan markdown에서 JSON 배열을 찾지 못했습니다.")
+        plan_candidate = match.group(0)
+
+    try:
+        loaded = json.loads(plan_candidate)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"plan JSON 파싱 실패: {exc}") from exc
+
+    if not isinstance(loaded, list):
+        raise ValueError("plan은 JSON 리스트여야 합니다.")
+
+    normalized: List[Dict[str, Any]] = []
+    for idx, step in enumerate(loaded):
+        if not isinstance(step, dict):
+            raise ValueError(f"{idx + 1}번째 step은 object(dict)여야 합니다.")
+        tool = step.get("tool")
+        if not isinstance(tool, str) or not tool.strip():
+            raise ValueError(f"{idx + 1}번째 step의 tool 값이 유효하지 않습니다.")
+        args = step.get("args", {})
+        if args is None:
+            args = {}
+        if not isinstance(args, dict):
+            raise ValueError(f"{idx + 1}번째 step의 args는 dict여야 합니다.")
+        normalized.append({"tool": tool.strip(), "args": args})
+
+    return normalized
 
 
 # ─────────────────────────────────────────────────────────────────
 # Graph Factory
 # ─────────────────────────────────────────────────────────────────
-def build_automation_graph(llm: AsyncChatOpenAI, mcp: MCPClient) -> Any:
+def build_automation_graph(mcp: MCPClient) -> Any:
+    """plan_steps를 순서대로 실행하는 LangGraph."""
 
-    # ── Node 1: Parameterizer (LLM Extraction) ───────────────────
-    async def parameterizer_node(state: AutomationState) -> Dict[str, Any]:
-        logger.info("[PARAMETERIZER] LLM 파라미터 추출 시작...")
-        schema_lines = "\n".join(f"  - {k}: {desc}" for k, desc in state["param_schema"].items())
-        prompt = (
-            f"[추출 스키마]\n{schema_lines}\n\n"
-            f"[사용자 요청]\n{state['user_input']}\n\n"
-            "위 요청에서 필요한 정보를 추출하여 JSON으로만 응답하세요."
-        )
-        response = await llm.ainvoke([HumanMessage(content=prompt)])
-        try:
-            params = json.loads(_strip_fences(response.content))
-        except:
-            params = {}
-        
-        logger.info("[PARAMETERIZER] 추출 완료: %s", params)
-        return {"params": params}
+    def planner_node(state: AutomationState) -> Dict[str, Any]:
+        steps = state.get("plan_steps", []) or []
+        if not steps:
+            return {
+                "status": "invalid_plan",
+                "current_step": 0,
+                "history": [],
+                "final_response": "실행할 plan_steps가 없습니다.",
+            }
+        return {
+            "status": "ready",
+            "current_step": 0,
+            "history": [],
+        }
 
-    # ── Node 2: Session Manager (Smart App Launcher) ──────────────
-    async def session_manager_node(state: AutomationState) -> Dict[str, Any]:
-        """앱 세션 상태를 체크하여 필요할 때만 실행합니다."""
-        logger.info("[SESSION_MANAGER] 세션 상태 체크 및 초기화 시작...")
-        
-        # 1. 현재 연결 상태 확인
-        try:
-            status_raw = await mcp.call_tool("get_connection_status", {})
-            status = json.loads(status_raw) if isinstance(status_raw, str) else status_raw
-            is_active = status.get("is_connected", False)
-        except Exception:
-            is_active = False
-
-        results = []
-        for s in state["immediate_steps"]:
-            tool_name = s["tool"]
-            args = s.get("args", {})
-            
-            # 앱 런처 도구일 경우 스마트 체크
-            if tool_name == "launch_application" and is_active:
-                logger.info("[SESSION_MANAGER] 앱이 이미 실행 중입니다. 실행 단계를 건너뜁니다.")
-                results.append({"tool": tool_name, "result": "skipped (already active)", "status": "existing"})
-                continue
-            
-            # 실행이 필요하거나 다른 종류의 도구인 경우
-            try:
-                res = await mcp.call_tool(tool_name, args)
-                results.append({"tool": tool_name, "result": res, "status": "launched"})
-            except Exception as e:
-                results.append({"tool": tool_name, "error": str(e)})
-
-        logger.info("[SESSION_MANAGER] 세션 관리 완료")
-        return {"history": [{"group": "session_init", "results": results}]}
-
-    # ── Node 3: Builder (Join & Analysis) ────────────────────────
-    async def builder_node(state: AutomationState) -> Dict[str, Any]:
-        logger.info("[BUILDER] 취합 및 후속 계획 수립...")
-        
-        params = state.get("params", {})
-        final_steps: List[List[Dict[str, Any]]] = []
-        
-        for item in state["parameterized_templates"]:
-            if isinstance(item, list):
-                group = [{"tool": s["tool"], "args": _fill_template(s.get("args", {}), params)} for s in item]
-                final_steps.append(group)
-            else:
-                step = {"tool": item["tool"], "args": _fill_template(item.get("args", {}), params)}
-                final_steps.append([step])
-
-        return {"steps": final_steps, "current_step": 0, "status": "built"}
-
-    # ── Node 4: Executor (Remaining Steps) ───────────────────────
     async def executor_node(state: AutomationState) -> Dict[str, Any]:
         idx = state["current_step"]
-        group = state["steps"][idx]
-        
-        async def _call(step_info: Dict[str, Any]):
-            name, args = step_info["tool"], step_info.get("args", {})
-            try:
-                res = await mcp.call_tool(name, args)
-                return {"tool": name, "result": res}
-            except Exception as e:
-                return {"tool": name, "error": str(e)}
+        step = state["plan_steps"][idx]
+        name = step["tool"]
+        args = step.get("args", {})
 
-        results = await asyncio.gather(*[_call(s) for s in group])
-        new_history = state["history"] + [{"group": idx + 1, "results": results}]
-        
-        if any("error" in r for r in results):
-            return {"history": new_history, "current_step": len(state["steps"]), "status": "failed"}
-        
-        return {"history": new_history, "current_step": idx + 1, "status": "in_progress"}
+        try:
+            res = await mcp.call_tool(name, args)
+            entry = {
+                "step": idx + 1,
+                "tool": name,
+                "args": args,
+                "status": "ok",
+                "result": res,
+            }
+        except Exception as exc:
+            entry = {
+                "step": idx + 1,
+                "tool": name,
+                "args": args,
+                "status": "error",
+                "error": str(exc),
+            }
+
+        return {
+            "history": state["history"] + [entry],
+            "current_step": idx + 1,
+            "status": "running",
+        }
+
+    def finalizer_node(state: AutomationState) -> Dict[str, Any]:
+        if state.get("status") == "invalid_plan":
+            return {
+                "status": "invalid_plan",
+                "final_response": state.get("final_response", "유효한 plan_steps가 없습니다."),
+            }
+
+        history = state.get("history", [])
+        success_count = sum(1 for h in history if h.get("status") == "ok")
+        fail_count = len(history) - success_count
+        summary = {
+            "plan_source": state.get("plan_source", ""),
+            "requested_steps": len(state.get("plan_steps", [])),
+            "executed_steps": len(history),
+            "success": success_count,
+            "failed": fail_count,
+            "history": history,
+        }
+        return {
+            "status": "completed",
+            "final_response": json.dumps(summary, ensure_ascii=False, indent=2),
+        }
 
     # ── Graph Building ──────────────────────────────────────────
     workflow = StateGraph(AutomationState)
 
-    workflow.add_node("parameterizer", parameterizer_node)
-    workflow.add_node("session_manager", session_manager_node)
-    workflow.add_node("builder", builder_node)
+    workflow.add_node("planner", planner_node)
     workflow.add_node("executor", executor_node)
+    workflow.add_node("finalizer", finalizer_node)
 
-    # Fan-out
-    workflow.add_edge(START, "parameterizer")
-    workflow.add_edge(START, "session_manager")
+    workflow.set_entry_point("planner")
 
-    # Fan-in
-    workflow.add_edge("parameterizer", "builder")
-    workflow.add_edge("session_manager", "builder")
+    def _plan_ready(state: AutomationState) -> str:
+        if state.get("status") == "ready":
+            return "execute"
+        return "end"
 
-    workflow.add_edge("builder", "executor")
-    
-    def _cont(state): return "continue" if state["current_step"] < len(state["steps"]) else "end"
-    workflow.add_conditional_edges("executor", _cont, {"continue": "executor", "end": END})
-    
+    workflow.add_conditional_edges(
+        "planner",
+        _plan_ready,
+        {"execute": "executor", "end": "finalizer"},
+    )
+
+    def _cont(state: AutomationState) -> str:
+        return "continue" if state["current_step"] < len(state["plan_steps"]) else "end"
+
+    workflow.add_conditional_edges("executor", _cont, {"continue": "executor", "end": "finalizer"})
+    workflow.add_edge("finalizer", END)
     return workflow.compile()
 
 
@@ -196,21 +201,21 @@ def build_automation_graph(llm: AsyncChatOpenAI, mcp: MCPClient) -> Any:
 # ─────────────────────────────────────────────────────────────────
 async def run_automation(
     *,
-    user_input: str,
-    param_schema: Dict[str, str],
-    immediate_steps: List[Dict[str, Any]],
-    parameterized_templates: List[Union[Dict[str, Any], List[Dict[str, Any]]]],
-    llm: AsyncChatOpenAI,
+    plan_steps: List[Dict[str, Any]],
     mcp: MCPClient,
+    plan_source: str = "inline",
 ) -> AutomationState:
-    app = build_automation_graph(llm, mcp)
+    app = build_automation_graph(mcp)
     initial: AutomationState = {
-        "user_input": user_input, "param_schema": param_schema,
-        "immediate_steps": immediate_steps, "parameterized_templates": parameterized_templates,
-        "params": {}, "steps": [], "current_step": 0, "history": [], "status": "start",
+        "plan_source": plan_source,
+        "plan_steps": plan_steps,
+        "current_step": 0,
+        "history": [],
+        "status": "start",
+        "final_response": "",
     }
-    
-    final: AutomationState = {} # type: ignore
+
+    final: AutomationState = {}  # type: ignore
     async for event in app.astream(initial):
         for _, values in event.items():
             final = {**final, **values}
@@ -218,22 +223,26 @@ async def run_automation(
     return final
 
 
+async def run_automation_from_plan_markdown(
+    *,
+    plan_path: str,
+    mcp: MCPClient,
+) -> AutomationState:
+    """Markdown plan 파일을 읽어 순차 자동화를 실행합니다."""
+    steps = load_plan_steps_from_markdown(plan_path)
+    return await run_automation(
+        plan_steps=steps,
+        mcp=mcp,
+        plan_source=plan_path,
+    )
+
+
 if __name__ == "__main__":
     import os
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    _llm = AsyncChatOpenAI(api_key=os.environ["OPENAI_API_KEY"], model="gpt-4o-mini")
-    _mcp = MCPClient()
-
-    _schema = {"msg": "입력할 텍스트"}
-    _immediate = [{"tool": "launch_application", "args": {"executable_path": "notepad.exe"}}]
-    _templates = [{"tool": "type_app_text", "args": {"text": "{msg}"}}]
-
-    asyncio.run(run_automation(
-        user_input="메모장에 '스마트 세션 테스트'라고 써줘",
-        param_schema=_schema,
-        immediate_steps=_immediate,
-        parameterized_templates=_templates,
-        llm=_llm,
-        mcp=_mcp
-    ))
+    _mcp = MCPClient(base_url=os.getenv("MCP_BASE_URL", "http://localhost:8000/mcp"))
+    _plan_path = os.getenv("AUTOMATION_PLAN_MD", "plans/sample_plan.md")
+    result = asyncio.run(run_automation_from_plan_markdown(plan_path=_plan_path, mcp=_mcp))
+    print(result.get("final_response", ""))
