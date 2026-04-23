@@ -7,21 +7,14 @@ automation_graph.py
 import asyncio
 import json
 import logging
-import re
 from pathlib import Path
-from typing import Any, Dict, Final, List, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from mcp_client import MCPClient
 
 logger = logging.getLogger(__name__)
-
-# ─────────────────────────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────────────────────────
-_JSON_FENCE_RE: Final = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
-
 
 # ─────────────────────────────────────────────────────────────────
 # State
@@ -39,46 +32,12 @@ class AutomationState(TypedDict):
 # ─────────────────────────────────────────────────────────────────
 # Utility
 # ─────────────────────────────────────────────────────────────────
-def _strip_fences(text: str) -> str:
-    m = _JSON_FENCE_RE.search(text)
-    return m.group(1).strip() if m else text.strip()
-
-
-def load_plan_steps_from_markdown(plan_path: str) -> List[Dict[str, Any]]:
-    """
-    Markdown plan 파일에서 JSON 배열 형식 step 리스트를 읽습니다.
-
-    기대 형식:
-    ```json
-    [
-      {"tool": "tool_name", "args": {...}},
-      ...
-    ]
-    ```
-    """
-    path = Path(plan_path)
-    text = path.read_text(encoding="utf-8")
-
-    # fenced block 우선 파싱
-    fenced = _strip_fences(text)
-    plan_candidate = fenced
-    if not fenced.startswith("["):
-        # fenced가 아니면 문서 전체에서 배열만 추출
-        match = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
-        if not match:
-            raise ValueError("plan markdown에서 JSON 배열을 찾지 못했습니다.")
-        plan_candidate = match.group(0)
-
-    try:
-        loaded = json.loads(plan_candidate)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"plan JSON 파싱 실패: {exc}") from exc
-
-    if not isinstance(loaded, list):
+def _normalize_plan_steps(raw_steps: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw_steps, list):
         raise ValueError("plan은 JSON 리스트여야 합니다.")
 
     normalized: List[Dict[str, Any]] = []
-    for idx, step in enumerate(loaded):
+    for idx, step in enumerate(raw_steps):
         if not isinstance(step, dict):
             raise ValueError(f"{idx + 1}번째 step은 object(dict)여야 합니다.")
         tool = step.get("tool")
@@ -92,6 +51,28 @@ def load_plan_steps_from_markdown(plan_path: str) -> List[Dict[str, Any]]:
         normalized.append({"tool": tool.strip(), "args": args})
 
     return normalized
+
+
+def load_plan_steps_from_json(plan_path: str) -> List[Dict[str, Any]]:
+    """
+    JSON plan 파일에서 step 리스트를 읽습니다.
+
+    지원 형식:
+    1) 배열 루트
+       [
+         {"tool": "...", "args": {...}}
+       ]
+    2) 객체 루트
+       {"steps": [{"tool": "...", "args": {...}}]}
+    """
+    path = Path(plan_path)
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+
+    if isinstance(loaded, dict):
+        raw_steps = loaded.get("steps", [])
+    else:
+        raw_steps = loaded
+    return _normalize_plan_steps(raw_steps)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -223,13 +204,13 @@ async def run_automation(
     return final
 
 
-async def run_automation_from_plan_markdown(
+async def run_automation_from_plan_json(
     *,
     plan_path: str,
     mcp: MCPClient,
 ) -> AutomationState:
-    """Markdown plan 파일을 읽어 순차 자동화를 실행합니다."""
-    steps = load_plan_steps_from_markdown(plan_path)
+    """JSON plan 파일을 읽어 순차 자동화를 실행합니다."""
+    steps = load_plan_steps_from_json(plan_path)
     return await run_automation(
         plan_steps=steps,
         mcp=mcp,
@@ -243,6 +224,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     _mcp = MCPClient(base_url=os.getenv("MCP_BASE_URL", "http://localhost:8000/mcp"))
-    _plan_path = os.getenv("AUTOMATION_PLAN_MD", "plans/sample_plan.md")
-    result = asyncio.run(run_automation_from_plan_markdown(plan_path=_plan_path, mcp=_mcp))
+    _plan_path = os.getenv("AUTOMATION_PLAN_JSON", "plans/sample_plan.json")
+    result = asyncio.run(run_automation_from_plan_json(plan_path=_plan_path, mcp=_mcp))
     print(result.get("final_response", ""))

@@ -1,0 +1,14 @@
+[
+  {
+    "tool": "launch_application",
+    "args": {
+      "executable_path": "notepad.exe"
+    }
+  },
+  {
+    "tool": "type_app_text",
+    "args": {
+      "text": "plan json 기반 순차 실행 테스트"
+    }
+  }
+]

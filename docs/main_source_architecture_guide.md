@@ -93,9 +93,9 @@ tests/     : 수동 검증 성격의 테스트 스크립트
 - 역할: 정의된 plan 순서를 그대로 실행하는 최소 LangGraph 실행기
 - 핵심 내용:
   - `AutomationState` 정의
-  - `load_plan_steps_from_markdown()`: Markdown 내 JSON 배열 plan 파싱
+  - `load_plan_steps_from_json()`: JSON plan 파일 파싱
   - `planner_node`(plan 검증) -> `executor_node`(순차 tool 호출) -> `finalizer_node`(요약)
-  - `run_automation_from_plan_markdown()`으로 `plans/*.md` 실행 지원
+  - `run_automation_from_plan_json()`으로 `plans/*.json` 실행 지원
 
 ### `mcp_client.py`
 - 역할: HTTP 기반 MCP 호출 예시 클라이언트
