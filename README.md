@@ -204,8 +204,8 @@ python mcp_server.py --transport sse --port 8000 --reload
 
 `automation_graph.py`는 복잡한 플래너 없이, **정의된 순서의 plan을 그대로 실행**합니다.
 
-### 1. Plan 파일 형식 (`.md`)
-`plans/sample_plan.md`처럼 JSON 배열을 markdown 코드블록에 넣어 작성합니다.
+### 1. Plan 파일 형식 (`.json`)
+`plans/sample_plan.json`처럼 JSON 파일로 작성합니다.
 
 ```json
 [
@@ -218,13 +218,13 @@ python mcp_server.py --transport sse --port 8000 --reload
 1. **MCP 서버 시작**: `python mcp_server.py --transport http`
 2. **Plan 지정 후 실행**:
    ```bash
-   export AUTOMATION_PLAN_MD="plans/sample_plan.md"
+   export AUTOMATION_PLAN_JSON="plans/sample_plan.json"
    python automation_graph.py
    ```
 
 기본값:
 - `MCP_BASE_URL`: `http://localhost:8000/mcp`
-- `AUTOMATION_PLAN_MD`: `plans/sample_plan.md`
+- `AUTOMATION_PLAN_JSON`: `plans/sample_plan.json`
 
 ## 파인튜닝 (Finetuning)
 

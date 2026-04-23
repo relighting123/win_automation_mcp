@@ -5,8 +5,9 @@ from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional, Sequence, Tuple, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
-from openai import OpenAI
+from pydantic import BaseModel, Field
 
 class AgentState(TypedDict):
     """기본 순차 실행 에이전트 상태."""
@@ -20,15 +21,38 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     final_response: str
 
+
+class ExtractedMemory(BaseModel):
+    id: str = Field(default="")
+    datetime: str = Field(default="")
+
+
+class ErrorActionDecision(BaseModel):
+    action: str = Field(default="abort")
+    reason: str = Field(default="복구 가능한 방법을 찾지 못해 중단합니다.")
+    retry_args: Dict[str, Any] = Field(default_factory=dict)
+    recovery_tool: str = Field(default="")
+    recovery_args: Dict[str, Any] = Field(default_factory=dict)
+
+
 def create_mcp_agent(api_key: str, base_url: str, model_name: str, tools_metadata: List[Dict[str, Any]], call_tool_func):
     """
     가장 기본적인 LangGraph 순차 실행 에이전트를 생성합니다.
     - 입력 plan 형식: [{"tool": "도구명", "args": {...}}, ...]
     - plan 순서대로 도구를 1개씩 호출합니다.
     """
-    llm_client: Optional[OpenAI] = None
+    base_llm = None
+    memory_llm = None
+    decision_llm = None
     if api_key:
-        llm_client = OpenAI(api_key=api_key, base_url=base_url)
+        base_llm = ChatOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            model=model_name,
+            temperature=0,
+        )
+        memory_llm = base_llm.with_structured_output(ExtractedMemory)
+        decision_llm = base_llm.with_structured_output(ErrorActionDecision)
 
     available_tool_names = set()
     for item in tools_metadata:
@@ -36,18 +60,6 @@ def create_mcp_agent(api_key: str, base_url: str, model_name: str, tools_metadat
         tool_name = fn_meta.get("name")
         if isinstance(tool_name, str) and tool_name.strip():
             available_tool_names.add(tool_name.strip())
-
-    def _strip_fences(text: str) -> str:
-        raw = (text or "").strip()
-        if raw.startswith("```"):
-            raw = re.sub(r"^```(?:json)?", "", raw).strip()
-            raw = re.sub(r"```$", "", raw).strip()
-        return raw
-
-    def _safe_json_loads(raw: str) -> Dict[str, Any]:
-        candidate = _strip_fences(raw)
-        loaded = json.loads(candidate)
-        return loaded if isinstance(loaded, dict) else {}
 
     def _parse_datetime_parts(value: str) -> Tuple[str, str, str]:
         if not value:
@@ -79,29 +91,29 @@ def create_mcp_agent(api_key: str, base_url: str, model_name: str, tools_metadat
 
     def _extract_memory_with_llm(user_input: str) -> Dict[str, str]:
         default = {"id": "", "datetime": ""}
-        if not llm_client:
+        if memory_llm is None:
             return default
 
-        prompt = (
-            "아래 사용자 질의에서 id와 날짜시간(연-월-일 시:분)을 추출해 주세요.\n"
-            "반드시 JSON object만 응답하세요.\n"
-            "형식: {\"id\":\"...\", \"datetime\":\"...\"}\n"
-            "값이 없으면 빈 문자열로 채우세요."
-        )
         try:
-            response = llm_client.chat.completions.create(
-                model=model_name,
-                temperature=0,
-                messages=[
-                    {"role": "system", "content": "당신은 정보 추출기입니다. JSON만 출력하세요."},
-                    {"role": "user", "content": f"{prompt}\n\n[질의]\n{user_input}"},
-                ],
+            extracted = memory_llm.invoke(
+                [
+                    (
+                        "system",
+                        "당신은 사용자 질의에서 id와 날짜시간(연-월-일 시:분)을 추출하는 정보 추출기입니다.",
+                    ),
+                    (
+                        "human",
+                        (
+                            "아래 사용자 질의에서 id와 날짜시간을 추출하세요. "
+                            "없으면 빈 문자열로 두세요.\n\n"
+                            f"[질의]\n{user_input}"
+                        ),
+                    ),
+                ]
             )
-            text = response.choices[0].message.content if response.choices else "{}"
-            loaded = _safe_json_loads(text or "{}")
             return {
-                "id": str(loaded.get("id", "") or "").strip(),
-                "datetime": str(loaded.get("datetime", "") or "").strip(),
+                "id": extracted.id.strip(),
+                "datetime": extracted.datetime.strip(),
             }
         except Exception:
             return default
@@ -189,7 +201,7 @@ def create_mcp_agent(api_key: str, base_url: str, model_name: str, tools_metadat
             "recovery_tool": "",
             "recovery_args": {},
         }
-        if not llm_client:
+        if decision_llm is None:
             return default
 
         payload = {
@@ -212,41 +224,34 @@ def create_mcp_agent(api_key: str, base_url: str, model_name: str, tools_metadat
             },
         }
         try:
-            response = llm_client.chat.completions.create(
-                model=model_name,
-                temperature=0,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "당신은 자동화 실행기의 에러 복구 의사결정기입니다. "
-                            "반드시 JSON object만 출력하세요."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
+            decision = decision_llm.invoke(
+                [
+                    (
+                        "system",
+                        "당신은 자동화 실행기의 에러 복구 의사결정기입니다.",
+                    ),
+                    (
+                        "human",
+                        (
                             "아래 실행 상태를 보고 다음 행동을 결정하세요.\n"
                             "- action: abort | retry | tool_then_retry | skip\n"
                             "- tool_then_retry일 때 recovery_tool은 반드시 available_tools 중 하나여야 함\n"
                             "- 복구 가능성이 낮으면 abort\n\n"
                             f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
                         ),
-                    },
-                ],
+                    ),
+                ]
             )
-            text = response.choices[0].message.content if response.choices else "{}"
-            decision = _safe_json_loads(text or "{}")
-            action = str(decision.get("action", "")).strip()
+            action = decision.action.strip()
             if action not in {"abort", "retry", "tool_then_retry", "skip"}:
                 return default
 
-            recovery_tool = str(decision.get("recovery_tool", "") or "").strip()
+            recovery_tool = decision.recovery_tool.strip()
             if action == "tool_then_retry" and recovery_tool not in available_tool_names:
                 return default
 
-            retry_args = decision.get("retry_args")
-            recovery_args = decision.get("recovery_args")
+            retry_args = decision.retry_args
+            recovery_args = decision.recovery_args
             if not isinstance(retry_args, dict):
                 retry_args = {}
             if not isinstance(recovery_args, dict):
@@ -254,7 +259,7 @@ def create_mcp_agent(api_key: str, base_url: str, model_name: str, tools_metadat
 
             return {
                 "action": action,
-                "reason": str(decision.get("reason", "") or "").strip() or default["reason"],
+                "reason": decision.reason.strip() or default["reason"],
                 "retry_args": retry_args,
                 "recovery_tool": recovery_tool,
                 "recovery_args": recovery_args,
