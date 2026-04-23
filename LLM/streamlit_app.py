@@ -336,7 +336,11 @@ with tab1:
                             "input": prompt,
                             "current_step": 0,
                             "plan": manual_plan_to_use if is_workflow_trigger else [],
-                            "results": []
+                            "results": [],
+                            "memory": {},
+                            "aborted": False,
+                            "abort_reason": "",
+                            "final_response": "",
                         }
                         
                         final_msg = ""
@@ -492,7 +496,11 @@ with tab2:
                                 "plan": st.session_state.manual_plan,
                                 "current_step": 0,
                                 "messages": [],
-                                "results": []
+                                "results": [],
+                                "memory": {},
+                                "aborted": False,
+                                "abort_reason": "",
+                                "final_response": "",
                             }
                             
                             with st.status("Executing Manual Sequence...", expanded=True) as status:
