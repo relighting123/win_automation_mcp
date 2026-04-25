@@ -1,248 +1,93 @@
-"""
-automation_graph.py
-────────────────────────────────────────────────────────────────────
-정의된 plan 순서대로 MCP tool을 호출하는 최소 LangGraph 실행기.
-"""
+import json, logging
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field # 구조화된 출력을 위한 규격 정의
+from langchain_openai import ChatOpenAI # OpenAI 기반 모델 호출
+from langgraph.graph import StateGraph, END # 워크플로우 그래프 제어
+from mcp_client import MCPClient # MCP 서버 통신용 클라이언트
 
-import asyncio
-import json
-import logging
-import re
-from pathlib import Path
-from typing import Any, Dict, Final, List, TypedDict
+# 1. AI가 추출할 데이터 구조 정의 (Tool 명칭과 인자값의 쌍)
+class ToolCall(BaseModel):
+    tool: str = Field(description="실행할 도구의 이름")
+    args: Dict[str, Any] = Field(default_factory=dict, description="도구에 주입할 파라미터")
 
-from langgraph.graph import END, StateGraph
+# 2. 에이전트가 들고 다닐 메모리(상태) 정의
+class AgentState(BaseModel):
+    query: str; plan: List[str] # 사용자 질문과 정해진 실행 순서
+    enriched_plan: List[ToolCall] = [] # AI가 파라미터를 채운 결과물
+    history: List[Dict] = [] # 실행 결과 로그
+    report: str = "" # 최종 자연어 분석 결과
 
-from mcp_client import MCPClient
+class MiniHybridAgent:
+    def __init__(self, mcp, model, api_key, base_url):
+        self.mcp = mcp
+        # 3. LLM 설정: API Key, URL, 모델명을 동적으로 주입
+        self.llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=0)
+        self.graph = self._build()
 
-logger = logging.getLogger(__name__)
+    def _build(self):
+        # 4. 워크플로우 단계 정의 (추출 -> 실행 -> 요약)
+        builder = StateGraph(AgentState)
+        builder.add_node("extract", self._extract)
+        builder.add_node("run", self._run)
+        builder.add_node("report", self._report)
+        builder.set_entry_point("extract")
+        builder.add_edge("extract", "run")
+        builder.add_edge("run", "report")
+        builder.add_edge("report", END)
+        return builder.compile()
 
-# ─────────────────────────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────────────────────────
-_JSON_FENCE_RE: Final = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+    async def _extract(self, state: AgentState):
+        """with_structured_output을 사용하여 정규식 없이 깔끔하게 파라미터 추출"""
+        # 5. 모델이 List[ToolCall] 형태로 응답하도록 강제 (소스량 최소화 핵심)
+        structured_llm = self.llm.with_structured_output(List[ToolCall])
+        tools_info = str(await self.mcp.list_tools()) # 가용 도구 정보 조회
+        prompt = f"질의: {state.query}\n순서: {state.plan}\n도구정보: {tools_info}\n각 단계별 arg를 추출하세요."
+        return {"enriched_plan": await structured_llm.ainvoke(prompt)}
 
+    async def _run(self, state: AgentState):
+        """추출된 파라미터로 MCP 도구 순차 실행"""
+        results = []
+        for call in state.enriched_plan:
+            # 6. AI가 뽑은 tool 이름과 args를 그대로 MCP 서버에 전달
+            out = await self.mcp.call_tool(call.tool, call.args)
+            results.append({"tool": call.tool, "output": out})
+        return {"history": results}
 
-# ─────────────────────────────────────────────────────────────────
-# State
-# ─────────────────────────────────────────────────────────────────
-class AutomationState(TypedDict):
-    """LangGraph 노드 간에 공유되는 순차 실행 상태."""
-    plan_source: str
-    plan_steps: List[Dict[str, Any]]
-    current_step: int
-    history: List[Dict[str, Any]]
-    status: str
-    final_response: str
+    async def _report(self, state: AgentState):
+        """실행 이력을 바탕으로 최종 결과를 자연어로 해석"""
+        # 7. 실행 로그를 LLM에 전달하여 사용자가 이해하기 쉬운 보고서 생성
+        prompt = f"요청: {state.query}\n결과: {state.history}\n결과를 요약해서 보고하세요."
+        res = await self.llm.ainvoke(prompt)
+        return {"report": res.content}
 
-
-# ─────────────────────────────────────────────────────────────────
-# Utility
-# ─────────────────────────────────────────────────────────────────
-def _strip_fences(text: str) -> str:
-    m = _JSON_FENCE_RE.search(text)
-    return m.group(1).strip() if m else text.strip()
-
-
-def load_plan_steps_from_markdown(plan_path: str) -> List[Dict[str, Any]]:
-    """
-    Markdown plan 파일에서 JSON 배열 형식 step 리스트를 읽습니다.
-
-    기대 형식:
-    ```json
-    [
-      {"tool": "tool_name", "args": {...}},
-      ...
-    ]
-    ```
-    """
-    path = Path(plan_path)
-    text = path.read_text(encoding="utf-8")
-
-    # fenced block 우선 파싱
-    fenced = _strip_fences(text)
-    plan_candidate = fenced
-    if not fenced.startswith("["):
-        # fenced가 아니면 문서 전체에서 배열만 추출
-        match = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
-        if not match:
-            raise ValueError("plan markdown에서 JSON 배열을 찾지 못했습니다.")
-        plan_candidate = match.group(0)
-
-    try:
-        loaded = json.loads(plan_candidate)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"plan JSON 파싱 실패: {exc}") from exc
-
-    if not isinstance(loaded, list):
-        raise ValueError("plan은 JSON 리스트여야 합니다.")
-
-    normalized: List[Dict[str, Any]] = []
-    for idx, step in enumerate(loaded):
-        if not isinstance(step, dict):
-            raise ValueError(f"{idx + 1}번째 step은 object(dict)여야 합니다.")
-        tool = step.get("tool")
-        if not isinstance(tool, str) or not tool.strip():
-            raise ValueError(f"{idx + 1}번째 step의 tool 값이 유효하지 않습니다.")
-        args = step.get("args", {})
-        if args is None:
-            args = {}
-        if not isinstance(args, dict):
-            raise ValueError(f"{idx + 1}번째 step의 args는 dict여야 합니다.")
-        normalized.append({"tool": tool.strip(), "args": args})
-
-    return normalized
-
-
-# ─────────────────────────────────────────────────────────────────
-# Graph Factory
-# ─────────────────────────────────────────────────────────────────
-def build_automation_graph(mcp: MCPClient) -> Any:
-    """plan_steps를 순서대로 실행하는 LangGraph."""
-
-    def planner_node(state: AutomationState) -> Dict[str, Any]:
-        steps = state.get("plan_steps", []) or []
-        if not steps:
-            return {
-                "status": "invalid_plan",
-                "current_step": 0,
-                "history": [],
-                "final_response": "실행할 plan_steps가 없습니다.",
-            }
-        return {
-            "status": "ready",
-            "current_step": 0,
-            "history": [],
-        }
-
-    async def executor_node(state: AutomationState) -> Dict[str, Any]:
-        idx = state["current_step"]
-        step = state["plan_steps"][idx]
-        name = step["tool"]
-        args = step.get("args", {})
-
-        try:
-            res = await mcp.call_tool(name, args)
-            entry = {
-                "step": idx + 1,
-                "tool": name,
-                "args": args,
-                "status": "ok",
-                "result": res,
-            }
-        except Exception as exc:
-            entry = {
-                "step": idx + 1,
-                "tool": name,
-                "args": args,
-                "status": "error",
-                "error": str(exc),
-            }
-
-        return {
-            "history": state["history"] + [entry],
-            "current_step": idx + 1,
-            "status": "running",
-        }
-
-    def finalizer_node(state: AutomationState) -> Dict[str, Any]:
-        if state.get("status") == "invalid_plan":
-            return {
-                "status": "invalid_plan",
-                "final_response": state.get("final_response", "유효한 plan_steps가 없습니다."),
-            }
-
-        history = state.get("history", [])
-        success_count = sum(1 for h in history if h.get("status") == "ok")
-        fail_count = len(history) - success_count
-        summary = {
-            "plan_source": state.get("plan_source", ""),
-            "requested_steps": len(state.get("plan_steps", [])),
-            "executed_steps": len(history),
-            "success": success_count,
-            "failed": fail_count,
-            "history": history,
-        }
-        return {
-            "status": "completed",
-            "final_response": json.dumps(summary, ensure_ascii=False, indent=2),
-        }
-
-    # ── Graph Building ──────────────────────────────────────────
-    workflow = StateGraph(AutomationState)
-
-    workflow.add_node("planner", planner_node)
-    workflow.add_node("executor", executor_node)
-    workflow.add_node("finalizer", finalizer_node)
-
-    workflow.set_entry_point("planner")
-
-    def _plan_ready(state: AutomationState) -> str:
-        if state.get("status") == "ready":
-            return "execute"
-        return "end"
-
-    workflow.add_conditional_edges(
-        "planner",
-        _plan_ready,
-        {"execute": "executor", "end": "finalizer"},
-    )
-
-    def _cont(state: AutomationState) -> str:
-        return "continue" if state["current_step"] < len(state["plan_steps"]) else "end"
-
-    workflow.add_conditional_edges("executor", _cont, {"continue": "executor", "end": "finalizer"})
-    workflow.add_edge("finalizer", END)
-    return workflow.compile()
-
-
-# ─────────────────────────────────────────────────────────────────
-# Runner & Example
-# ─────────────────────────────────────────────────────────────────
-async def run_automation(
-    *,
-    plan_steps: List[Dict[str, Any]],
-    mcp: MCPClient,
-    plan_source: str = "inline",
-) -> AutomationState:
-    app = build_automation_graph(mcp)
-    initial: AutomationState = {
-        "plan_source": plan_source,
-        "plan_steps": plan_steps,
-        "current_step": 0,
-        "history": [],
-        "status": "start",
-        "final_response": "",
-    }
-
-    final: AutomationState = {}  # type: ignore
-    async for event in app.astream(initial):
-        for _, values in event.items():
-            final = {**final, **values}
-
-    return final
-
-
-async def run_automation_from_plan_markdown(
-    *,
-    plan_path: str,
-    mcp: MCPClient,
-) -> AutomationState:
-    """Markdown plan 파일을 읽어 순차 자동화를 실행합니다."""
-    steps = load_plan_steps_from_markdown(plan_path)
-    return await run_automation(
-        plan_steps=steps,
-        mcp=mcp,
-        plan_source=plan_path,
-    )
-
+async def run_automation(mcp, query, plan, model, api_key, base_url):
+    """외부에서 호출하기 위한 실행 함수"""
+    agent = MiniHybridAgent(mcp, model, api_key, base_url)
+    # 8. 그래프를 실행하고 최종 리포트 반환
+    final = await agent.graph.ainvoke({"query": query, "plan": plan})
+    return final["report"]
 
 if __name__ == "__main__":
-    import os
+    import asyncio, os
+    from dotenv import load_dotenv
+    
+    async def example():
+        load_dotenv() # .env 파일에서 환경변수 로드
+        # MCP 클라이언트 및 설정 준비
+        mcp_client = MCPClient(base_url="http://localhost:8000/mcp")
+        my_plan = ["login_to_app", "open_rule_screen", "set_loop_count"]
+        my_query = "운영자 계정으로 로그인해서 Rule 창 열고 루프 40번으로 설정해"
+        
+        # 워크플로우 실행
+        report = await run_automation(
+            mcp=mcp_client,
+            query=my_query,
+            plan=my_plan,
+            model="gpt-4o",
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=None
+        )
+        print(f"\n[AI 자동화 보고서]\n{report}")
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
-    _mcp = MCPClient(base_url=os.getenv("MCP_BASE_URL", "http://localhost:8000/mcp"))
-    _plan_path = os.getenv("AUTOMATION_PLAN_MD", "plans/sample_plan.md")
-    result = asyncio.run(run_automation_from_plan_markdown(plan_path=_plan_path, mcp=_mcp))
-    print(result.get("final_response", ""))
+    # 비동기 함수 실행
+    # asyncio.run(example())

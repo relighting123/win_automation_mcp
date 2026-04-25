@@ -874,16 +874,9 @@ class AppUIAction:
                 criteria["title_re"] = f".*{title}.*"
             else:
                 criteria["title"] = title
-
+        criteria["found_index"] = 0
         # 동일 조건으로 여러 요소가 매칭되면 첫 번째 요소를 명시적으로 선택합니다.
         # (요청사항: 다중 매칭 시 found_index=0)
-        try:
-            matched = top_window.descendants(**criteria)
-            if len(matched) > 1:
-                criteria["found_index"] = 0
-        except Exception:
-            # 사전 탐색 실패 시에는 기존 child_window + wait 흐름에 위임
-            pass
 
         if not criteria:
             return AppUIActionResult(result="error", message="검색 조건(auto_id, control_type, title)이 하나 이상 필요합니다.")
