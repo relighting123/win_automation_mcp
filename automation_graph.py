@@ -37,12 +37,37 @@ class MiniHybridAgent:
         return builder.compile()
 
     async def _extract(self, state: AgentState):
-        """with_structured_output을 사용하여 정규식 없이 깔끔하게 파라미터 추출"""
-        # 5. 모델이 List[ToolCall] 형태로 응답하도록 강제 (소스량 최소화 핵심)
+        """규칙(Rule)과 예시(Few-shot)를 포함하여 정교하게 파라미터 추출"""
+        from langchain_core.prompts import ChatPromptTemplate
+        
+        # 5. 추출 규칙 및 예시 정의 (프롬프트 엔지니어링)
+        system_msg = (
+            "당신은 Windows 자동화를 위한 고도의 파라미터 추출기입니다.\n\n"
+            "### 추출 규칙 ###\n"
+            "1. 질의에 명시되지 않은 값은 도구 명세의 기본값을 따르되, 없으면 가장 안전한 값을 넣으세요.\n"
+            "2. 숫자는 반드시 정수(Integer) 형식으로 추출하세요.\n"
+            "3. '마지막' 또는 '최신' 같은 단어는 컨텍스트에 따라 적절한 식별자로 변환하세요.\n\n"
+            "### 예시 (Few-shot) ###\n"
+            "- 질의: '어드민으로 로그인'\n  - 결과: [{\"tool\": \"login_to_app\", \"args\": {\"username\": \"admin\"}}]\n"
+            "- 질의: '루프 50번'\n  - 결과: [{\"tool\": \"set_loop_count\", \"args\": {\"count\": 50}}]"
+        )
+        
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", system_msg),
+            ("user", "질의: {query}\n현재 실행 순서: {plan}\n사용 가능한 도구 정보:\n{tools_info}")
+        ])
+
         structured_llm = self.llm.with_structured_output(List[ToolCall])
-        tools_info = str(await self.mcp.list_tools()) # 가용 도구 정보 조회
-        prompt = f"질의: {state.query}\n순서: {state.plan}\n도구정보: {tools_info}\n각 단계별 arg를 추출하세요."
-        return {"enriched_plan": await structured_llm.ainvoke(prompt)}
+        tools_info = str(await self.mcp.list_tools())
+        
+        # 인자값 매핑 로직 실행
+        chain = prompt_template | structured_llm
+        enriched = await chain.ainvoke({
+            "query": state.query,
+            "plan": state.plan,
+            "tools_info": tools_info
+        })
+        return {"enriched_plan": enriched}
 
     async def _run(self, state: AgentState):
         """추출된 파라미터로 MCP 도구 순차 실행"""

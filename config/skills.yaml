@@ -2,13 +2,13 @@ skills:
   feature_execution:
     description: "기능 실행 (오른쪽 4번, 아래 2번, 엔터)"
     steps:
-      - type: press
+      - type: press_shortcut
         key: "right"
         repeat: 4
-      - type: press
+      - type: press_shortcut
         key: "down"
         repeat: 2
-      - type: press
+      - type: press_shortcut
         key: "enter"
 
   login:
@@ -19,27 +19,27 @@ skills:
         keyword: "User"
       - type: type
         text: "{username}"
-      - type: press
+      - type: press_shortcut
         key: "tab"
       - type: type
         text: "{password}"
-      - type: press
+      - type: press_shortcut
         key: "enter"
 
   rule_open:
     description: "Rule 화면 열기"
     steps:
-      - type: press
+      - type: press_shortcut
         key: "alt+f"
       - type: wait
         seconds: 0.5
-      - type: press
+      - type: press_shortcut
         key: "r"
 
   trace_open:
     description: "Trace 화면 열기"
     steps:
-      - type: press
+      - type: press_shortcut
         key: "ctrl+t"
 
   loop_set:
@@ -47,23 +47,23 @@ skills:
     steps:
       - type: find_text
         keyword: "Loop"
-      - type: press
+      - type: press_shortcut
         key: "ctrl+a"
-      - type: press
+      - type: press_shortcut
         key: "backspace"
       - type: type
         text: "{count}"
-      - type: press
+      - type: press_shortcut
         key: "enter"
 
   partial_run:
     description: "부분 실행"
     steps:
-      - type: press
+      - type: press_shortcut
         key: "f6"
 
   trace_run:
     description: "Trace 모드 실행"
     steps:
-      - type: press
+      - type: press_shortcut
         key: "alt+f5"

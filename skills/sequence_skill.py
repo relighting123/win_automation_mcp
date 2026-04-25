@@ -38,7 +38,7 @@ class SequenceSkill(BaseSkill):
                 if step_type == "ensure_focus":
                     self.action.ensure_focus()
                     
-                elif step_type == "press":
+                elif step_type == "press" or step_type == "press_shortcut":
                     key = step.get("key")
                     repeat = step.get("repeat", 1)
                     for _ in range(repeat):
