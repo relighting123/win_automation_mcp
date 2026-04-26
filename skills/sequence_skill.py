@@ -35,30 +35,35 @@ class SequenceSkill(BaseSkill):
             for step in self.steps:
                 step_type = step.get("type")
                 
-                if step_type == "ensure_focus":
-                    self.action.ensure_focus()
-                    
-                elif step_type == "press" or step_type == "press_shortcut":
-                    key = step.get("key")
-                    repeat = step.get("repeat", 1)
-                    for _ in range(repeat):
-                        self.action.press_shortcut(key)
-                        await asyncio.sleep(0.1)
-                        
-                elif step_type == "type":
-                    text = step.get("text", "").format(**kwargs)
-                    self.action.type_text(text)
-                    
-                elif step_type == "find_text":
-                    keyword = step.get("keyword", "").format(**kwargs)
-                    await self.action.find_text_position(keyword)
-                    
-                elif step_type == "wait":
+                if step_type == "wait":
                     seconds = step.get("seconds", 0.5)
                     await asyncio.sleep(seconds)
-                
+                    
+                # AppUIAction(action) 내의 모든 public 메서드 동적 매핑
+                elif hasattr(self.action, step_type):
+                    func = getattr(self.action, step_type)
+                    if callable(func):
+                        func_kwargs = {}
+                        for k, v in step.items():
+                            if k == "type":
+                                continue
+                            if isinstance(v, str):
+                                try:
+                                    func_kwargs[k] = v.format(**kwargs)
+                                except KeyError:
+                                    func_kwargs[k] = v
+                            else:
+                                func_kwargs[k] = v
+                                
+                        import inspect
+                        if inspect.iscoroutinefunction(func):
+                            await func(**func_kwargs)
+                        else:
+                            func(**func_kwargs)
+                    else:
+                        logger.warning(f"속성 '{step_type}'은 호출할 수 없는 액션 멤버입니다.")
                 else:
-                    logger.warning(f"알 수 없는 step type: {step_type}")
+                    logger.warning(f"알 수 없는 step type 또는 액션 메서드: {step_type}")
                     
             return {"success": True, "skill": self.skill_name, "message": "성공적으로 수행되었습니다."}
             

@@ -17,3 +17,4 @@ class BaseSkill(ABC):
         Execute the skill.
         """
         pass
+

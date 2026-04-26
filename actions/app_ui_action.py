@@ -557,7 +557,7 @@ class AppUIAction:
             },
         }
 
-    def press_shortcut(self, shortcut: str, interval: float = 0.05) -> AppUIActionResult:
+    def press_shortcut(self, shortcut: str, interval: float = 0.05, repeat: int = 1) -> AppUIActionResult:
         """단축키 입력"""
         pyautogui, error_result = self._get_pyautogui()
         if error_result:
@@ -568,10 +568,13 @@ class AppUIAction:
             return AppUIActionResult(result="error", message="유효한 단축키를 입력해주세요")
 
         try:
-            if len(keys) == 1:
-                pyautogui.press(keys[0])
-            else:
-                pyautogui.hotkey(*keys, interval=max(0.0, interval))
+            for _ in range(max(1, repeat)):
+                if len(keys) == 1:
+                    pyautogui.press(keys[0])
+                else:
+                    pyautogui.hotkey(*keys, interval=max(0.0, interval))
+                if repeat > 1:
+                    time.sleep(interval)
             return AppUIActionResult(result="success", shortcut="+".join(keys))
         except Exception as e:
             logger.error("단축키 입력 실패: %s", e)
