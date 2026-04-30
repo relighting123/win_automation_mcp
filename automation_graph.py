@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field # 구조화된 출력을 위한 규격 정
 from langchain_openai import ChatOpenAI # OpenAI 기반 모델 호출
 from langgraph.graph import StateGraph, END # 워크플로우 그래프 제어
 from mcp_client import MCPClient # MCP 서버 통신용 클라이언트
-from core.llm_config import get_llm_settings
+from core.llm_config import get_llm_settings, get_mcp_settings
 
 # 1. AI가 추출할 데이터 구조 정의 (Tool 명칭과 인자값의 쌍)
 class ToolCall(BaseModel):
@@ -102,8 +102,9 @@ if __name__ == "__main__":
     
     async def example():
         llm_settings = get_llm_settings()
+        mcp_settings = get_mcp_settings()
         # MCP 클라이언트 및 설정 준비
-        mcp_client = MCPClient(base_url="http://localhost:8000/mcp")
+        mcp_client = MCPClient(base_url=mcp_settings["base_url"])
         my_plan = ["login_to_app", "open_rule_screen", "set_loop_count"]
         my_query = "운영자 계정으로 로그인해서 Rule 창 열고 루프 40번으로 설정해"
         

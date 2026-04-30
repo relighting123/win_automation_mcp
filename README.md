@@ -312,12 +312,15 @@ python mcp_server.py
 python gemma_serving.py
 npx @modelcontextprotocol/inspector
 
-## LLM 설정 통합 관리 (`config/app_config.yaml`)
+## LLM/MCP 설정 통합 관리 (`config/app_config.yaml`)
 
-LLM 연결 정보는 `config/app_config.yaml`의 `llm` 섹션에서 공통 관리합니다.
+LLM/MCP 연결 정보는 `config/app_config.yaml`에서 공통 관리합니다.
 `automation_graph.py`와 `LLM/streamlit_app.py`가 동일 설정을 기본값으로 사용합니다.
 
 ```yaml
+mcp:
+  base_url: "http://localhost:8000/mcp"
+
 llm:
   base_url: "https://api.groq.com/openai/v1"
   model: "openai/gpt-oss-120b"
@@ -327,7 +330,7 @@ llm:
 보안상 `api_key`는 비워두고 환경변수로 주입하는 것을 권장합니다.
 
 fallback 우선순위:
-- 1순위: `app_config.yaml`의 `llm` 값
-- 2순위: `INTERNAL_LLM_BASE_URL`, `INTERNAL_LLM_API_KEY`, `INTERNAL_LLM_MODEL`
-- 3순위: `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`
-- 4순위: 내장 기본값 (`https://api.groq.com/openai/v1`, `openai/gpt-oss-120b`, 빈 키)
+- MCP Base URL: `app_config.yaml.mcp.base_url` -> `MCP_BASE_URL` -> `http://localhost:8000/mcp`
+- LLM Base URL: `app_config.yaml.llm.base_url` -> `INTERNAL_LLM_BASE_URL` -> `OPENAI_BASE_URL` -> `https://api.groq.com/openai/v1`
+- LLM API Key: `app_config.yaml.llm.api_key` -> `INTERNAL_LLM_API_KEY` -> `OPENAI_API_KEY` -> `""`
+- LLM Model: `app_config.yaml.llm.model` -> `INTERNAL_LLM_MODEL` -> `OPENAI_MODEL` -> `openai/gpt-oss-120b`

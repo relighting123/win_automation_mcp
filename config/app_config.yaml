@@ -51,6 +51,10 @@ server:
   # 서버 버전
   version: "1.0.0"
 
+mcp:
+  # FastMCP 서버 HTTP endpoint
+  base_url: "http://localhost:8000/mcp"
+
 llm:
   # OpenAI 호환 LLM 엔드포인트
   base_url: "https://api.groq.com/openai/v1"

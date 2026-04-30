@@ -16,6 +16,7 @@ import yaml
 
 DEFAULT_LLM_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_LLM_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MCP_BASE_URL = "http://localhost:8000/mcp"
 
 
 def _resolve_config_path(config_path: Optional[str] = None) -> Optional[Path]:
@@ -84,4 +85,25 @@ def get_llm_settings(config_path: Optional[str] = None) -> Dict[str, str]:
         "api_key": str(api_key),
         "model": str(model),
     }
+
+
+def get_mcp_settings(config_path: Optional[str] = None) -> Dict[str, str]:
+    """
+    공통 MCP 설정을 반환합니다.
+
+    우선순위:
+      1) app_config.yaml -> mcp
+      2) MCP_BASE_URL 환경변수
+      3) 하드코딩 기본값
+    """
+    config = load_app_config(config_path)
+    mcp_config = config.get("mcp", {}) if isinstance(config, dict) else {}
+
+    base_url = (
+        mcp_config.get("base_url")
+        or os.getenv("MCP_BASE_URL")
+        or DEFAULT_MCP_BASE_URL
+    )
+
+    return {"base_url": str(base_url)}
 
