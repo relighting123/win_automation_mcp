@@ -8,10 +8,16 @@ from mcp_client import MCPClient # MCP 서버 통신용 클라이언트
 from core.llm_config import get_llm_settings, get_mcp_settings
 from skills.sequence_skill import SequenceSkill
 
+# 로깅 설정
+logger = logging.getLogger(__name__)
+
 # 1. AI가 추출할 데이터 구조 정의 (Tool 명칭과 인자값의 쌍)
 class ToolCall(BaseModel):
     tool: str = Field(description="실행할 도구의 이름")
     args: Dict[str, Any] = Field(default_factory=dict, description="도구에 주입할 파라미터")
+
+class ToolCalls(BaseModel):
+    calls: List[ToolCall] = Field(description="도구 호출 목록")
 
 # 2. 에이전트가 들고 다닐 메모리(상태) 정의
 class AgentState(BaseModel):
@@ -108,7 +114,7 @@ class MiniHybridAgent:
             ("user", "질의: {query}\n현재 상황: {check_status}\n현재 스킬({skill_id})의 도구 순서: {tool_sequence}\n사용 가능한 도구 정보:\n{tools_info}")
         ])
 
-        structured_llm = self.llm.with_structured_output(List[ToolCall])
+        structured_llm = self.llm.with_structured_output(ToolCalls, method="function_calling", strict=False)
         tools_info = str(await self.mcp.list_tools())
         
         # 인자값 매핑 로직 실행
@@ -120,7 +126,7 @@ class MiniHybridAgent:
             "tool_sequence": tool_sequence,
             "tools_info": tools_info
         })
-        return {"enriched_plan": enriched, "tool_sequence": tool_sequence}
+        return {"enriched_plan": enriched.calls, "tool_sequence": tool_sequence}
 
     async def _run(self, state: AgentState):
         """추출된 파라미터로 MCP 도구 순차 실행 (현재 스킬 분량)"""
@@ -164,6 +170,7 @@ async def run_automation(mcp, query, skill_ids, model=None, api_key=None, base_u
 
 if __name__ == "__main__":
     import asyncio
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
     async def example():
         llm_settings = get_llm_settings()
@@ -184,5 +191,4 @@ if __name__ == "__main__":
         )
         print(f"\n[AI 자동화 보고서]\n{report}")
 
-    # 비동기 함수 실행
-    # asyncio.run(example())
+    asyncio.run(example())

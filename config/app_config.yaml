@@ -61,4 +61,4 @@ llm:
   # 기본 모델명
   model: "openai/gpt-oss-120b"
   # API Key (보안상 빈 값 권장, 환경변수로 override 가능)
-  api_key: "GEcxIGixSvq9dAHQIrG475naevCHNXRBhPpX9MTx1sbHo2Vbq2RPQs6xvclW9mOLLnRE3Dnpoq7n26dk"
+  api_key: ""

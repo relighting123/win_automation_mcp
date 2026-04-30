@@ -292,8 +292,31 @@ def get_app_coords_by_attr(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
+async def describe_current_state(
+    keyword: Optional[str] = None,
+    match_mode: str = "contains",
+    case_sensitive: bool = False,
+    include_components: bool = True,
+    component_limit: int = 150,
+) -> str:
+    """
+    현재 애플리케이션의 화면 상태와 UI 구성요소 목록을 가져옵니다.
+    """
+    logger.info(f"[Tool] describe_current_state 호출: keyword={keyword}")
+    action = get_app_ui_action()
+    result = await action.describe_current_state(
+        keyword=keyword,
+        match_mode=match_mode,
+        case_sensitive=case_sensitive,
+        include_components=include_components,
+        component_limit=component_limit,
+    )
+    return json.dumps(result, ensure_ascii=False)
+
+
 def register_app_control_tools(mcp: "FastMCP") -> None:
     """애플리케이션 UI 제어 도구 등록"""
+    mcp.tool()(describe_current_state)
     mcp.tool()(find_app_by_ocr)
     mcp.tool()(click_app_by_text)
     mcp.tool()(type_app_text)
