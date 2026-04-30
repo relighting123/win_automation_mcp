@@ -1,87 +1,115 @@
 skills:
-  demo_system_actions:
-    description: "AppUIAction의 시스템 및 화면 상태 관련 메서드 예시"
-    steps:
-      # 1. 포커스 확보: 앱을 최상단으로 끌어올림
-      - type: ensure_focus
-      
-      # 2. 화면 강제 대기 (SequenceSkill 자체 내장 액션)
-      - type: wait
-        seconds: 1.5
+  demo_app_mgmt_tools:
+    description: "app_mgmt_tool 계열 도구 사용 예시"
+    tools:
+      - tool: launch_application
+        args:
+          wait_for_window: true
 
-      # 3. 화면 내 전체 정보 수집 (주로 툴/디버그 용도)
-      - type: describe_current_state
-        keyword: "Login"
-        match_mode: "contains"
-        include_components: true
-        include_ocr_hits: true
+      - tool: get_connection_status
 
-      # 4. 앱의 현재 화면 상태 플래그 획득 (디버그 용도)
-      - type: get_screen_state_flags
+      - tool: connect_to_application
+        args:
+          window_title_re: ".*Notepad\\+\\+.*"
 
-  demo_keyboard_mouse_actions:
-    description: "키보드 및 마우스 조작 기본 액션 예시"
-    steps:
-      # 5. 단축키 입력
-      - type: press_shortcut
-        shortcut: "ctrl+s"
-        interval: 0.1
-        repeat: 1
+      - tool: restart_application
 
-      # 6. 문자열 입력 (키보드 활용)
-      - type: type_text
-        text: "hello world! {username}"
-        interval: 0.05
+      - tool: generate_locators
+        args:
+          window_type: "active_window"
 
-      # 7. 주어진 절대 좌표 클릭
-      - type: click_position
-        x: 500
-        y: 400
-        button: "left"
-        clicks: 2
+      - tool: close_application
+        args:
+          force: false
 
-  demo_visual_search_actions:
-    description: "비전(OCR, 이미지, 픽셀) 기반 화면 탐색 예시"
-    steps:
-      # 8. 화면에서 텍스트(OCR + UIA)를 찾아 클릭 좌표 획득
-      - type: find_text_position
-        text: "Submit"
-        match_mode: "exact"
-        case_sensitive: false
-        timeout: 3.0
+  demo_app_control_tools:
+    description: "app_control_tool 계열 도구 사용 예시"
+    tools:
+      - tool: launch_application
 
-      # 9. 특징적인 픽셀 RGB 값을 찾아 좌표 획득 (List 형태로 변환 입력)
-      - type: find_rgb_position
-        rgb: [255, 0, 0]    # 빨간색 픽셀 찾기
-        tolerance: 10
-        timeout: 2.0
+      - tool: find_app_by_ocr
+        args:
+          keyword: "{keyword}"
+          language: "kor+eng"
+          timeout: 2.0
+          match_mode: "contains"
 
-      # 10. 템플릿 이미지를 통해 영역을 찾아 획득 (OpenCV 기반)
-      - type: find_image_position
-        image_path: "assets/login_button.png"
-        confidence: 0.8
-        timeout: 3.0
+      - tool: click_app_by_text
+        args:
+          keyword: "Save"
+          match_mode: "contains"
+          case_sensitive: false
+          button: "left"
+          clicks: 1
 
-  demo_uia_element_actions:
-    description: "Windows UIA 속성(Title, AutoID, ControlType) 기반 직접 제어 예시"
-    steps:
-      # 11. UIA 속성을 기반으로 요소를 찾아 직접 클릭
-      - type: click_element_by_attr
-        title: "Save"
-        control_type: "Button"
-        auto_id: "SaveBtn_1"
-        title_match_mode: "exact"
-        button: "left"
-        double: false
-        draw_outline: true     # 클릭 전 시각적 박스 표시
-        outline_colour: "red"
+      - tool: type_app_text
+        args:
+          text: "hello {username}"
+          interval: 0.03
 
-      # 12. 클릭하지 않고 UIA 요소 주변에 박스만 그려서 강조
-      - type: highlight_element_by_attr
-        title: "Cancel"
-        timeout: 2.0
-        outline_colour: "green"
+      - tool: press_app_shortcut
+        args:
+          shortcut: "ctrl+s"
 
-      # 13. UI 요소의 (x, y) 중심 좌표만 획득
-      - type: get_element_coords_by_attr
-        auto_id: "MainInputArea"
+      - tool: click_app_position
+        args:
+          x: 640
+          y: 360
+          button: "left"
+          clicks: 1
+
+      - tool: click_app_by_keyword
+        args:
+          keyword: "Submit"
+          element_type: "button"
+          match_mode: "contains"
+          case_sensitive: false
+          button: "left"
+          clicks: 1
+
+      - tool: click_app_by_attr
+        args:
+          auto_id: "SaveBtn_1"
+          control_type: "Button"
+          title: "Save"
+          title_match_mode: "exact"
+          button: "left"
+          double: false
+          timeout: 2.0
+          draw_outline: true
+          outline_colour: "red"
+
+      - tool: highlight_app_by_attr
+        args:
+          title: "Cancel"
+          control_type: "Button"
+          timeout: 2.0
+          outline_colour: "green"
+
+      - tool: get_app_coords_by_attr
+        args:
+          auto_id: "MainInputArea"
+          control_type: "Edit"
+          timeout: 2.0
+
+      - tool: wait
+        args:
+          seconds: 1.0
+
+  demo_full_flow_tools:
+    description: "launch -> 입력 -> 클릭 -> 종료까지 도구 조합 예시"
+    tools:
+      - tool: launch_application
+      - tool: type_app_text
+        args:
+          text: "Auto scenario for {username}"
+      - tool: press_app_shortcut
+        args:
+          shortcut: "ctrl+s"
+      - tool: click_app_by_keyword
+        args:
+          keyword: "{confirm_keyword}"
+          element_type: "any"
+      - tool: close_application
+        args:
+          force: false

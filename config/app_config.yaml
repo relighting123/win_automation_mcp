@@ -50,3 +50,15 @@ server:
   name: "Windows Automation MCP Server"
   # 서버 버전
   version: "1.0.0"
+
+mcp:
+  # FastMCP 서버 HTTP endpoint
+  base_url: "http://localhost:8000/mcp"
+
+llm:
+  # OpenAI 호환 LLM 엔드포인트
+  base_url: "https://api.groq.com/openai/v1"
+  # 기본 모델명
+  model: "openai/gpt-oss-120b"
+  # API Key (보안상 빈 값 권장, 환경변수로 override 가능)
+  api_key: ""

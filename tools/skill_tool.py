@@ -1,13 +1,17 @@
-import logging
 import json
-import yaml
+import logging
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
+from typing import TYPE_CHECKING
+
+import yaml
 from skills.sequence_skill import SequenceSkill
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
-def register_skill_tools(mcp: FastMCP, config_path: str = "config/skills.yaml") -> None:
+def register_skill_tools(mcp: "FastMCP", config_path: str = "config/skills.yaml") -> None:
     """YAML 설정을 읽어 모든 스킬을 MCP Tool로 동적 등록"""
     path = Path(config_path)
     if not path.exists():

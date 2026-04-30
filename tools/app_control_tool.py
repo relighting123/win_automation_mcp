@@ -6,11 +6,12 @@
 
 import logging
 import json
-from typing import Optional, List, Dict, Any
-
-from mcp.server.fastmcp import FastMCP
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 from actions.app_ui_action import get_app_ui_action
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +292,7 @@ def get_app_coords_by_attr(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
-def register_app_control_tools(mcp: FastMCP) -> None:
+def register_app_control_tools(mcp: "FastMCP") -> None:
     """애플리케이션 UI 제어 도구 등록"""
     mcp.tool()(find_app_by_ocr)
     mcp.tool()(click_app_by_text)
