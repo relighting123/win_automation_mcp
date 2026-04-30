@@ -17,23 +17,13 @@ if current_dir not in sys.path:
 
 from langgraph_agent import create_mcp_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from core.llm_config import get_llm_settings
 
-# 사내 OpenAI 호환 API 환경변수 우선 사용
-DEFAULT_LLM_API_BASE_URL = (
-    os.getenv("INTERNAL_LLM_BASE_URL")
-    or os.getenv("OPENAI_BASE_URL")
-    or "https://api.groq.com/openai/v1"
-)
-DEFAULT_LLM_API_KEY = (
-    os.getenv("INTERNAL_LLM_API_KEY")
-    or os.getenv("OPENAI_API_KEY")
-    or ""
-)
-DEFAULT_LLM_MODEL_NAME = (
-    os.getenv("INTERNAL_LLM_MODEL")
-    or os.getenv("OPENAI_MODEL")
-    or "openai/gpt-oss-120b"
-)
+# 공통 LLM 설정 로드 (config/app_config.yaml 우선)
+llm_settings = get_llm_settings()
+DEFAULT_LLM_API_BASE_URL = llm_settings["base_url"]
+DEFAULT_LLM_API_KEY = llm_settings["api_key"]
+DEFAULT_LLM_MODEL_NAME = llm_settings["model"]
 
 # 페이지 설정
 st.set_page_config(
@@ -68,7 +58,7 @@ api_base_url = st.sidebar.text_input("LLM API Base URL", DEFAULT_LLM_API_BASE_UR
 api_key = st.sidebar.text_input("API Key", value=DEFAULT_LLM_API_KEY, type="password")
 model_name = st.sidebar.text_input("Model Name", DEFAULT_LLM_MODEL_NAME)
 use_langgraph = st.sidebar.toggle("Use LangGraph Workflow", value=True, help="컴플렉스 워크플로우를 위해 LangGraph를 사용합니다.")
-st.sidebar.caption("사내 OpenAI 호환 URL/API Key/Model을 사용하려면 환경변수(INTERNAL_LLM_*) 또는 입력창 값을 설정하세요.")
+st.sidebar.caption("기본값은 config/app_config.yaml의 llm 설정을 사용하며, 필요 시 입력창에서 임시 override할 수 있습니다.")
 
 if st.sidebar.button("Clear Chat"):
     st.session_state.messages = [

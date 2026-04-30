@@ -312,19 +312,22 @@ python mcp_server.py
 python gemma_serving.py
 npx @modelcontextprotocol/inspector
 
-## 사내 LLM(OpenAI 호환) 연결 예시
+## LLM 설정 통합 관리 (`config/app_config.yaml`)
 
-Streamlit UI에서 `LLM API Base URL`, `API Key`, `Model Name`을 입력해도 되고,
-아래 환경변수로 기본값을 미리 지정할 수도 있습니다.
+LLM 연결 정보는 `config/app_config.yaml`의 `llm` 섹션에서 공통 관리합니다.
+`automation_graph.py`와 `LLM/streamlit_app.py`가 동일 설정을 기본값으로 사용합니다.
 
-```bash
-export INTERNAL_LLM_BASE_URL="https://your-internal-llm.company.com/v1"
-export INTERNAL_LLM_API_KEY="your_api_key"
-export INTERNAL_LLM_MODEL="your-model-name"
-streamlit run LLM/streamlit_app.py
+```yaml
+llm:
+  base_url: "https://api.groq.com/openai/v1"
+  model: "openai/gpt-oss-120b"
+  api_key: ""
 ```
 
-기본 fallback은 아래 순서로 동작합니다.
-- Base URL: `INTERNAL_LLM_BASE_URL` -> `OPENAI_BASE_URL` -> `https://api.groq.com/openai/v1`
-- API Key: `INTERNAL_LLM_API_KEY` -> `OPENAI_API_KEY` -> `""`
-- Model: `INTERNAL_LLM_MODEL` -> `OPENAI_MODEL` -> `openai/gpt-oss-120b`
+보안상 `api_key`는 비워두고 환경변수로 주입하는 것을 권장합니다.
+
+fallback 우선순위:
+- 1순위: `app_config.yaml`의 `llm` 값
+- 2순위: `INTERNAL_LLM_BASE_URL`, `INTERNAL_LLM_API_KEY`, `INTERNAL_LLM_MODEL`
+- 3순위: `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`
+- 4순위: 내장 기본값 (`https://api.groq.com/openai/v1`, `openai/gpt-oss-120b`, 빈 키)

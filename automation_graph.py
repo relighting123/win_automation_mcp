@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field # 구조화된 출력을 위한 규격 정
 from langchain_openai import ChatOpenAI # OpenAI 기반 모델 호출
 from langgraph.graph import StateGraph, END # 워크플로우 그래프 제어
 from mcp_client import MCPClient # MCP 서버 통신용 클라이언트
+from core.llm_config import get_llm_settings
 
 # 1. AI가 추출할 데이터 구조 정의 (Tool 명칭과 인자값의 쌍)
 class ToolCall(BaseModel):
@@ -85,19 +86,22 @@ class MiniHybridAgent:
         res = await self.llm.ainvoke(prompt)
         return {"report": res.content}
 
-async def run_automation(mcp, query, plan, model, api_key, base_url):
+async def run_automation(mcp, query, plan, model=None, api_key=None, base_url=None):
     """외부에서 호출하기 위한 실행 함수"""
-    agent = MiniHybridAgent(mcp, model, api_key, base_url)
+    settings = get_llm_settings()
+    resolved_model = model or settings["model"]
+    resolved_api_key = api_key or settings["api_key"]
+    resolved_base_url = base_url or settings["base_url"]
+    agent = MiniHybridAgent(mcp, resolved_model, resolved_api_key, resolved_base_url)
     # 8. 그래프를 실행하고 최종 리포트 반환
     final = await agent.graph.ainvoke({"query": query, "plan": plan})
     return final["report"]
 
 if __name__ == "__main__":
-    import asyncio, os
-    from dotenv import load_dotenv
+    import asyncio
     
     async def example():
-        load_dotenv() # .env 파일에서 환경변수 로드
+        llm_settings = get_llm_settings()
         # MCP 클라이언트 및 설정 준비
         mcp_client = MCPClient(base_url="http://localhost:8000/mcp")
         my_plan = ["login_to_app", "open_rule_screen", "set_loop_count"]
@@ -108,9 +112,9 @@ if __name__ == "__main__":
             mcp=mcp_client,
             query=my_query,
             plan=my_plan,
-            model="gpt-4o",
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=None
+            model=llm_settings["model"],
+            api_key=llm_settings["api_key"],
+            base_url=llm_settings["base_url"]
         )
         print(f"\n[AI 자동화 보고서]\n{report}")
 
