@@ -24,11 +24,9 @@ class AgentState(BaseModel):
     query: str
     skill_ids: List[str] # 시퀀스 실행할 스킬 리스트
     current_index: int = 0 # 현재 실행 중인 스킬 인덱스
-    tool_sequence: List[str] = [] # 현재 스킬의 도구 순서
-    enriched_plan: List[ToolCall] = [] # 현재 스킬의 파라미터가 채워진 결과
-    history: List[Dict] = [] # 전체 실행 결과 로그
-    check_status: str = "" # AI 상황 체크 결과 요약
-    report: str = "" # 최종 자연어 분석 결과
+    check_status: str = ""  # AI 상황 체크 결과 요약
+    extra_skill: str = ""  # 자동 삽입될 대체 스킬 ID (예: login_required)
+    report: str = ""  # 최종 자연어 분석 결과
 
 class MiniHybridAgent:
     def __init__(self, mcp, model, api_key, base_url):
@@ -78,7 +76,21 @@ class MiniHybridAgent:
         check_msg = res.content
         logger.info(f"상황 체크 결과: {check_msg}")
         
-        return {"check_status": check_msg}
+        # 3. 상황 카테고리 탐지 (간단 키워드 기반)
+        category = ""
+        lowered = state_info.lower()
+        if "login" in lowered or "sign in" in lowered:
+            category = "login_required"
+        elif "error" in lowered:
+            category = "error_state"
+        # 매핑된 대체 스킬 결정
+        fallback_skill = ""
+        if category == "login_required":
+            fallback_skill = "login_skill"
+        elif category == "error_state":
+            fallback_skill = "error_handling_skill"
+        
+        return {"check_status": check_msg, "extra_skill": fallback_skill}
 
     async def _extract(self, state: AgentState):
         """현재 인덱스의 Skill ID를 기반으로 도구 순서를 로드하고 파라미터 추출"""
