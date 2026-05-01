@@ -62,3 +62,7 @@ llm:
   model: "openai/gpt-oss-120b"
   # API Key (보안상 빈 값 권장, 환경변수로 override 가능)
   api_key: ""
+
+automation:
+  # 자동화 모드 설정 (auto: 자유 계획 및 개입, semi: 순차 실행 + 상황 개입, manual: 순차 실행 전용)
+  mode: "auto"

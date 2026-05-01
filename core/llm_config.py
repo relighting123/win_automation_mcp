@@ -107,3 +107,13 @@ def get_mcp_settings(config_path: Optional[str] = None) -> Dict[str, str]:
 
     return {"base_url": str(base_url)}
 
+
+def get_automation_settings(config_path: Optional[str] = None) -> Dict[str, str]:
+    """
+    자동화 모드 설정을 반환합니다.
+    """
+    config = load_app_config(config_path)
+    auto_config = config.get("automation", {}) if isinstance(config, dict) else {}
+    mode = auto_config.get("mode", "semi")
+    return {"mode": str(mode)}
+
