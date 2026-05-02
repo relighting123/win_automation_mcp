@@ -37,13 +37,59 @@ class SequenceSkill(BaseSkill):
         if isinstance(value, str):
             try:
                 return value.format(**runtime_kwargs)
-            except KeyError:
+            except (KeyError, IndexError, ValueError):
                 return value
         if isinstance(value, dict):
             return {k: self._render_template(v, runtime_kwargs) for k, v in value.items()}
         if isinstance(value, list):
             return [self._render_template(v, runtime_kwargs) for v in value]
         return value
+
+    def get_steps_with_metadata(self, runtime_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        각 스텝의 도구와 인자별 고정(fixed)/AI(ai) 여부 메타데이터를 반환
+        """
+        metadata_steps = []
+        for raw_step in self.steps:
+            tool_name = raw_step.get("tool") or raw_step.get("type") or raw_step.get("action")
+            if not tool_name:
+                continue
+
+            if "args" in raw_step:
+                raw_args = raw_step["args"]
+            else:
+                raw_args = {
+                    k: v
+                    for k, v in raw_step.items()
+                    if k not in {"tool", "type", "action"}
+                }
+
+            processed_args = {}
+            for k, v in raw_args.items():
+                if isinstance(v, dict) and "mode" in v:
+                    mode = v.get("mode", "fixed")
+                    if mode == "fixed":
+                        processed_args[k] = {
+                            "mode": "fixed",
+                            "value": self._render_template(v.get("value"), runtime_kwargs)
+                        }
+                    else:
+                        processed_args[k] = {
+                            "mode": mode,
+                            "value": self._render_template(v.get("value"), runtime_kwargs)
+                        }
+                else:
+                    # 기본값은 fixed로 간주
+                    processed_args[k] = {
+                        "mode": "fixed",
+                        "value": self._render_template(v, runtime_kwargs)
+                    }
+
+            metadata_steps.append({
+                "tool": tool_name,
+                "args": processed_args
+            })
+        return metadata_steps
 
     def _parse_step(self, step: Dict[str, Any], runtime_kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -66,9 +112,27 @@ class SequenceSkill(BaseSkill):
                 if k not in {"tool", "type", "action"}
             }
 
+        final_args = {}
+        for k, v in tool_args.items():
+            if isinstance(v, dict) and "mode" in v:
+                mode = v.get("mode", "fixed")
+                if mode == "fixed":
+                    final_args[k] = self._render_template(v.get("value"), runtime_kwargs)
+                elif mode == "ai":
+                    # AI 모드인 경우 runtime_kwargs에서 값을 우선적으로 찾음
+                    # (그래프 실행 시 LLM이 추출한 값이 runtime_kwargs에 포함됨)
+                    val = runtime_kwargs.get(k)
+                    if val is None:
+                        val = self._render_template(v.get("value"), runtime_kwargs)
+                    final_args[k] = val
+                else:
+                    final_args[k] = self._render_template(v.get("value"), runtime_kwargs)
+            else:
+                final_args[k] = self._render_template(v, runtime_kwargs)
+
         return {
             "tool": tool_name,
-            "args": self._render_template(tool_args, runtime_kwargs),
+            "args": final_args,
         }
 
     def _normalize_result(self, raw_result: Any) -> Dict[str, Any]:

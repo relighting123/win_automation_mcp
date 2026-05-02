@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from dotenv import load_dotenv
+
+# .env 파일이 있으면 환경 변수로 로드합니다.
+load_dotenv()
 
 
 DEFAULT_LLM_BASE_URL = "https://api.groq.com/openai/v1"

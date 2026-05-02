@@ -50,8 +50,8 @@ if __name__ == "__main__":
         auto_settings = get_automation_settings()
 
         mcp_client = MCPClient(base_url=mcp_settings["base_url"])
-        my_skills = ["demo_app_mgmt_tools", "demo_app_control_tools"]
-        my_query = "크롬 열어줘"
+        my_skills = ["demo_mixed_args"]
+        my_query = "메모장에 안녕써줘"
         
         report = await run_automation(
             mcp=mcp_client,

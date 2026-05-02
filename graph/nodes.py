@@ -85,20 +85,24 @@ class GraphNodes:
         """현재 인덱스의 Skill ID를 기반으로 도구 순서를 로드하고 파라미터 추출"""
         current_skill_id = state.skill_ids[state.current_index]
         
-        try:
-            skill = SequenceSkill(skill_name=current_skill_id)
-            tool_sequence = [step.get("tool") or step.get("type") or step.get("action") for step in skill.steps if step]
-            if not tool_sequence:
-                raise ValueError(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
-        except Exception as e:
-            logger.error(f"Skill 로드 실패: {e}")
-            raise e
+        skill = SequenceSkill(skill_name=current_skill_id)
+        steps_metadata = skill.get_steps_with_metadata(state.model_dump())
+        tool_sequence = [step["tool"] for step in steps_metadata]
+        
+        if not tool_sequence:
+            logger.error(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
+            raise ValueError(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
 
         mode_instruction = MODE_INSTRUCTIONS.get(state.mode, MODE_INSTRUCTIONS["semi"])
         
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", f"{EXTRACTOR_SYSTEM_PROMPT}\n\n{mode_instruction}"),
-            ("user", "질의: {query}\n현재 상황: {check_status}\n현재 스킬({skill_id})의 도구 순서: {tool_sequence}\n사용 가능한 도구 정보:\n{tools_info}")
+            ("user", (
+                "질의: {query}\n"
+                "현재 상황: {check_status}\n"
+                "현재 스킬({skill_id})의 도구 순서 및 인자 제약: {tool_constraints}\n"
+                "사용 가능한 도구 정보:\n{tools_info}"
+            ))
         ])
 
         structured_llm = self.llm.with_structured_output(ToolCalls, method="function_calling", strict=False)
@@ -112,12 +116,24 @@ class GraphNodes:
             "query": state.query,
             "check_status": state.check_status,
             "skill_id": current_skill_id,
-            "tool_sequence": tool_sequence,
+            "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
             "tools_info": tools_info
         })
         
-        # [Strict Fix] LLM이 생성한 도구 중 현재 스킬에 정의되지 않은 도구는 강제 제외
-        valid_calls = [call for call in enriched.calls if call.tool in tool_sequence]
+        # [Post-process] Fixed 값 강제 적용 및 AI 값 유지
+        final_calls = []
+        for i, call in enumerate(enriched.calls):
+            # 도구 순서에 맞춰 메타데이터 적용 (수동/준자동 모드 대응)
+            matching_step = next((s for s in steps_metadata if s["tool"] == call.tool), None)
+            if matching_step:
+                new_args = dict(call.args)
+                for arg_name, arg_meta in matching_step["args"].items():
+                    if arg_meta["mode"] == "fixed":
+                        new_args[arg_name] = arg_meta["value"]
+                call.args = new_args
+            final_calls.append(call)
+            
+        valid_calls = [call for call in final_calls if call.tool in tool_sequence]
         if len(valid_calls) < len(enriched.calls):
             removed = [call.tool for call in enriched.calls if call.tool not in tool_sequence]
             logger.warning(f"스킬 '{current_skill_id}'에 정의되지 않은 도구 호출이 제외되었습니다: {removed}")
