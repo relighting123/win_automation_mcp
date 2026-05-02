@@ -78,6 +78,16 @@ skills:
           timeout: 2.0
           draw_outline: true
           outline_colour: "red"
+        arg_policy:
+          auto_id: fixed
+          control_type: fixed
+          title: fixed
+          title_match_mode: fixed
+          button: fixed
+          double: fixed
+          timeout: fixed
+          draw_outline: fixed
+          outline_colour: fixed
 
       - tool: highlight_app_by_attr
         args:
