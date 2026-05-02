@@ -226,6 +226,28 @@ python mcp_server.py --transport sse --port 8000 --reload
 - `MCP_BASE_URL`: `http://localhost:8000/mcp`
 - `AUTOMATION_PLAN_MD`: `plans/sample_plan.md`
 
+## Skill 인자 고정/변경 정책 (`arg_policy`)
+
+`config/skills.yaml`의 각 step에서 인자별로 AI 변경 가능 여부를 지정할 수 있습니다.
+
+```yaml
+- tool: click_app_by_attr
+  args:
+    auto_id: "SaveBtn_1"
+    control_type: "Button"
+    title: "Save"
+    button: "left"
+  arg_policy:
+    auto_id: fixed
+    control_type: fixed
+    title: fixed
+    button: fixed
+```
+
+- `fixed`(또는 `false`)로 지정된 인자는 AI/런타임 추출값이 있어도 덮어쓰지 않습니다.
+- `mutable`(또는 `true`)로 지정된 인자는 AI가 값 추출/치환할 수 있습니다.
+- `arg_policy`에 없는 인자는 기본적으로 `mutable`로 동작합니다.
+
 ## 파인튜닝 (Finetuning)
 
 Gemma 모델의 도구 호출 능력 및 파라미터 추출 성능을 개선하기 위한 파이프라인을 제공합니다. `finetuning/` 디렉토리를 확인하세요.
