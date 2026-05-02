@@ -79,6 +79,12 @@ class SequenceSkill(BaseSkill):
             }
 
         arg_policy = self._normalize_arg_policy(step.get("arg_policy"))
+        unknown_policy_args = [arg_name for arg_name in arg_policy if arg_name not in tool_args]
+        if unknown_policy_args:
+            raise ValueError(
+                f"step.arg_policy에 args에 없는 키가 포함되어 있습니다: {unknown_policy_args}. "
+                f"(tool={tool_name})"
+            )
         return {"tool": tool_name, "args": tool_args, "arg_policy": arg_policy}
 
     def get_step_definitions(self) -> List[Dict[str, Any]]:
