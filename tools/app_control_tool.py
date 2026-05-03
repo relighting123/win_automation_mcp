@@ -314,6 +314,57 @@ async def describe_current_state(
     return json.dumps(result, ensure_ascii=False)
 
 
+def find_app_by_rgb(
+    r: int,
+    g: int,
+    b: int,
+    tolerance: int = 5,
+    timeout: Optional[float] = None,
+) -> str:
+    """
+    화면에서 특정 RGB 색상을 가진 픽셀의 좌표를 찾습니다.
+    
+    Args:
+        r: Red 값 (0-255)
+        g: Green 값 (0-255)
+        b: Blue 값 (0-255)
+        tolerance: 허용 오차
+        timeout: 최대 대기 시간
+    """
+    logger.info(f"[Tool] find_app_by_rgb 호출: rgb=({r}, {g}, {b}), tolerance={tolerance}")
+    action = get_app_ui_action()
+    result = action.find_rgb_position(rgb=(r, g, b), tolerance=tolerance, timeout=timeout)
+    return json.dumps(result.to_dict(), ensure_ascii=False)
+
+
+def click_app_by_rgb(
+    r: int,
+    g: int,
+    b: int,
+    tolerance: int = 5,
+    button: str = "left",
+    clicks: int = 1,
+    timeout: Optional[float] = None,
+) -> str:
+    """
+    화면에서 특정 RGB 색상을 가진 픽셀을 찾아 클릭합니다.
+    """
+    logger.info(f"[Tool] click_app_by_rgb 호출: rgb=({r}, {g}, {b}), tolerance={tolerance}")
+    action = get_app_ui_action()
+    find_result = action.find_rgb_position(rgb=(r, g, b), tolerance=tolerance, timeout=timeout)
+    
+    if not find_result.is_success:
+        return json.dumps(find_result.to_dict(), ensure_ascii=False)
+        
+    click_result = action.click_position(
+        x=find_result.x,
+        y=find_result.y,
+        button=button,
+        clicks=clicks
+    )
+    return json.dumps(click_result.to_dict(), ensure_ascii=False)
+
+
 def register_app_control_tools(mcp: "FastMCP") -> None:
     """애플리케이션 UI 제어 도구 등록"""
     mcp.tool()(describe_current_state)
@@ -326,5 +377,7 @@ def register_app_control_tools(mcp: "FastMCP") -> None:
     mcp.tool()(click_app_by_attr)
     mcp.tool()(highlight_app_by_attr)
     mcp.tool()(get_app_coords_by_attr)
+    mcp.tool()(find_app_by_rgb)
+    mcp.tool()(click_app_by_rgb)
 
     logger.info("애플리케이션 제어 도구 등록 완료")

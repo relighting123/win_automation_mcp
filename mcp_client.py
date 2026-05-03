@@ -11,6 +11,7 @@ class MCPClient:
         self.base_url = base_url
         self._session_id: Optional[str] = None
         self._request_id = 0
+        self._tools_cache: Optional[List[Dict[str, Any]]] = None
 
     def _next_request_id(self) -> int:
         self._request_id += 1
@@ -141,10 +142,13 @@ class MCPClient:
             return result
         return {"result": result}
 
-    async def list_tools(self) -> List[Dict[str, Any]]:
+    async def list_tools(self, refresh: bool = False) -> List[Dict[str, Any]]:
         """
-        사용 가능한 도구 목록 조회
+        사용 가능한 도구 목록 조회 (캐시 적용)
         """
+        if self._tools_cache and not refresh:
+            return self._tools_cache
+
         async with httpx.AsyncClient() as client:
             try:
                 result = await self._post_jsonrpc(client, method="tools/list")
@@ -152,8 +156,10 @@ class MCPClient:
                 # 세션 만료/서버 재기동 시 1회 재시도
                 self._session_id = None
                 result = await self._post_jsonrpc(client, method="tools/list")
+            
             tools = result.get("tools", [])
-            return tools if isinstance(tools, list) else []
+            self._tools_cache = tools if isinstance(tools, list) else []
+            return self._tools_cache
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
