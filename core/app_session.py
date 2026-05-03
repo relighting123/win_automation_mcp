@@ -71,6 +71,7 @@ class AppSession:
         self._backend = backend
         self._config: Dict[str, Any] = {}
         self._locators: Dict[str, Any] = {}
+        self._cached_window: Optional[Any] = None
         
         # 설정 로드
         if config_path:
@@ -177,6 +178,16 @@ class AppSession:
     def locators(self) -> Dict[str, Any]:
         """Locator 딕셔너리"""
         return self._locators
+
+    @property
+    def cached_window(self) -> Optional[Any]:
+        """캐시된 윈도우 객체"""
+        return self._cached_window
+
+    @cached_window.setter
+    def cached_window(self, value: Any) -> None:
+        """캐시된 윈도우 객체 설정"""
+        self._cached_window = value
     
     def get_timeout(self, timeout_type: str = "default_wait") -> float:
         """타임아웃 설정 값 반환 (비정상적인 값에 대한 기본값 처리 포함)"""
@@ -385,6 +396,7 @@ class AppSession:
         """애플리케이션 연결 해제"""
         if self._app is not None:
             self._app = None
+        self._cached_window = None
         self._state = SessionState.DISCONNECTED
         logger.info("애플리케이션 연결 해제")
     

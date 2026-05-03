@@ -249,23 +249,37 @@ class AppUIAction:
 
     def _pick_target_window(self) -> Optional[Any]:
         """현재 앱에서 가장 가능성이 높은 대상 윈도우 wrapper를 반환합니다."""
+        # 1. 캐시된 윈도우가 유효한지 먼저 확인 (성능 최적화)
+        cached = self._session.cached_window
+        if cached:
+            try:
+                if cached.exists() and (cached.is_visible() or cached.is_minimized()):
+                    return cached
+            except Exception:
+                self._session.cached_window = None
+
         try:
             if not self._session.is_connected:
                 self._session.connect()
+            
+            app_config = self._session.config.get("application", {})
+            target_proc_name = app_config.get("process_name", "").lower()
+            
             # 1) 세션에 연결된 앱의 윈도우들 중 가시적인 것 확인
             windows = self._session.app.windows()
             for i, w in enumerate(windows):
                 wrapper = self._safe_call(lambda: w.wrapper_object(), None)
                 if wrapper is None:
-                    # wrapper_object()가 None인 경우, WindowSpecification으로 직접 시도
                     try:
                         wrapper = w
                     except Exception:
                         continue
                 
-                # 경로 검증 (Strict Path Restriction)
+                # 경로 검증
                 is_valid_path = self._verify_process_path(wrapper)
+                title = self._safe_call(wrapper.window_text, "unknown")
                 logger.debug(f"윈도우 '{title}' 검사: path_valid={is_valid_path}")
+                
                 if not is_valid_path:
                     continue
 
@@ -274,6 +288,7 @@ class AppUIAction:
                 
                 if is_visible or is_minimized:
                     logger.debug(f"적합한 상위 윈도우 발견: '{title}' (visible={is_visible}, minimized={is_minimized})")
+                    self._session.cached_window = wrapper
                     return wrapper
             
             # 2) 가시성은 없지만 핸들이 있는 첫 번째 유효한 윈도우
@@ -282,36 +297,38 @@ class AppUIAction:
                 if wrapper and self._verify_process_path(wrapper):
                     title = self._safe_call(wrapper.window_text, "unknown")
                     logger.debug(f"가시성은 없지만 경로가 일치하는 윈도우 발견: '{title}'")
+                    self._session.cached_window = wrapper
                     return wrapper
 
             # 3) fallback: 전체 데스크톱에서 경로가 정확히 일치하는 윈도우 탐색
-            try:
-                from pywinauto import Desktop
-                logger.debug("데스크톱 Fallback 탐색 시작 (엄격한 경로 매칭)")
-                
-                desktop_windows = Desktop(backend=self._session.backend).windows()
-                for w in desktop_windows:
-                    wrapper = self._safe_call(lambda: w.wrapper_object(), None)
-                    if not wrapper:
-                        continue
+            if target_proc_name:
+                try:
+                    from pywinauto import Desktop
+                    logger.debug(f"데스크톱 Fallback 탐색 시작 (프로세스명: {target_proc_name})")
                     
-                    # 윈도우의 프로세스 이름 확인
-                    try:
-                        import psutil
-                        pid = wrapper.element_info.process_id
-                        proc = psutil.Process(pid)
-                        proc_name = proc.name().lower()
-                    except Exception:
-                        proc_name = ""
+                    desktop_windows = Desktop(backend=self._session.backend).windows()
+                    for w in desktop_windows:
+                        wrapper = self._safe_call(lambda: w.wrapper_object(), None)
+                        if not wrapper:
+                            continue
+                        
+                        try:
+                            import psutil
+                            pid = wrapper.element_info.process_id
+                            proc = psutil.Process(pid)
+                            proc_name = proc.name().lower()
+                        except Exception:
+                            proc_name = ""
 
-                    if proc_name == target_proc_name:
-                        is_visible = self._safe_call(wrapper.is_visible, False)
-                        if is_visible:
-                            title = self._safe_call(wrapper.window_text, "")
-                            logger.info(f"프로세스 매칭으로 윈도우 발견: '{title}' (PID: {pid})")
-                            return wrapper
-            except Exception as e:
-                logger.debug(f"Fallback 탐색 중 오류: {e}")
+                        if proc_name == target_proc_name:
+                            is_visible = self._safe_call(wrapper.is_visible, False)
+                            if is_visible:
+                                title = self._safe_call(wrapper.window_text, "")
+                                logger.info(f"프로세스 매칭으로 윈도우 발견: '{title}' (PID: {pid})")
+                                self._session.cached_window = wrapper
+                                return wrapper
+                except Exception as e:
+                    logger.debug(f"Fallback 탐색 중 오류: {e}")
 
             return None
         except Exception as e:
