@@ -11,6 +11,10 @@ class ToolCalls(BaseModel):
 class SituationAnalysis(BaseModel):
     category: str = Field(description="상황 카테고리: 'normal', 'login_required', 'error_state', 'other'")
     reason: str = Field(description="상황 판단 근거 (사용자에게 보고할 내용)")
+    next_action: str = Field(
+        default="proceed",
+        description="다음 동작: 'proceed'|'skip'|'insert_recovery'|'abort'",
+    )
     recovery_skill_id: Optional[str] = Field(None, description="필요 시 자동 실행할 복구 스킬 ID (예: 'login_skill')")
 
 class AgentState(BaseModel):
@@ -19,6 +23,7 @@ class AgentState(BaseModel):
     mode: str = "semi" # 실행 모드: auto, semi, manual
     current_index: int = 0 # 현재 실행 중인 스킬 인덱스
     check_status: str = ""  # AI 상황 체크 결과 요약
+    next_action: str = "proceed"  # 상황 체크 후 다음 동작
     extra_skill: str = ""  # 자동 삽입된 대체 스킬 ID (예: login_required)
     history: List[Dict[str, Any]] = Field(default_factory=list) # 실행 이력
     enriched_plan: List[ToolCall] = Field(default_factory=list) # 추출된 도구 호출 목록
