@@ -34,10 +34,10 @@ skills:
           timeout: 2.0
           match_mode: "contains"
 
-      - tool: click_app_by_text
+      - tool: click_app_by_attr
         args:
-          keyword: "Save"
-          match_mode: "contains"
+          title: "Save"
+          title_match_mode: "contains"
           case_sensitive: false
           button: "left"
           clicks: 1

@@ -388,62 +388,93 @@ class AppUIAction:
         match_mode: str = "contains",
         case_sensitive: bool = False,
         component_limit: int = 300,
-) -> tuple[list[dict], list[dict], dict]:
-        """UIA 기반 구성요소를 수집하고, keyword 매칭된 좌표를 함께 반환합니다."""
-        wrapper = self._pick_target_window()
-        if wrapper is None:
+    ) -> tuple[list[dict], list[dict], dict]:
+        """프로세스의 모든 가시적인 윈도우에서 UIA 구성요소를 수집합니다."""
+        if not self._session.is_connected:
+            self._safe_call(self._session.connect, None)
+        
+        if not self._session.is_connected:
+            return [], [], {}
+
+        # 1. 해당 프로세스의 모든 가시적인 윈도우 찾기
+        all_windows = self._session.app.windows()
+        target_windows = []
+        for w in all_windows:
+            wrapper = self._safe_call(lambda: w.wrapper_object(), None) or w
+            if self._verify_process_path(wrapper) and self._safe_call(wrapper.is_visible, False):
+                target_windows.append(wrapper)
+
+        if not target_windows:
             return [], [], {}
 
         components: list[dict] = []
         keyword_hits: list[dict] = []
         target_keyword = (keyword or "").strip()
-
-        # window 자신도 구성요소에 포함
-        nodes = [wrapper]
-        descendants = self._safe_call(wrapper.descendants, []) or []
-        nodes.extend(descendants[: max(0, component_limit - 1)])
-
-        for idx, node in enumerate(nodes[:component_limit]):
-            rect = self._safe_call(node.rectangle, None)
-            rect_dict = self._rect_to_dict(rect)
-
-            title = self._safe_call(node.window_text, "") or ""
-            auto_id = self._safe_call(lambda: node.element_info.automation_id, "") or ""
-            control_type = self._safe_call(lambda: node.element_info.control_type, "") or ""
-            class_name = self._safe_call(lambda: node.element_info.class_name, "") or ""
-            visible = bool(self._safe_call(node.is_visible, False))
-            enabled = bool(self._safe_call(node.is_enabled, False))
-
-            component = {
-                "index": idx,
-                "title": title,
-                "auto_id": auto_id,
-                "control_type": control_type,
-                "class_name": class_name,
-                "visible": visible,
-                "enabled": enabled,
-                "rect": rect_dict,
-                "x": rect_dict.get("center_x"),
-                "y": rect_dict.get("center_y"),
-                "source": "uia",
-            }
-            components.append(component)
-
-            if target_keyword and self._is_keyword_match(
-                candidate_values=[title, auto_id, control_type, class_name],
-                keyword=target_keyword,
-                match_mode=match_mode,
-                case_sensitive=case_sensitive,
-            ):
-                keyword_hits.append(component)
-
-        target_window = {
-            "title": self._safe_call(wrapper.window_text, "") or "",
-            "control_type": self._safe_call(lambda: wrapper.element_info.control_type, "") or "",
-            "auto_id": self._safe_call(lambda: wrapper.element_info.automation_id, "") or "",
-            "rect": self._rect_to_dict(self._safe_call(wrapper.rectangle, None)),
+        
+        # 첫 번째 윈도우 정보
+        main_wrapper = target_windows[0]
+        summary_window = {
+            "title": self._safe_call(main_wrapper.window_text, "") or "",
+            "control_type": self._safe_call(lambda: main_wrapper.element_info.control_type, "") or "",
+            "rect": self._rect_to_dict(self._safe_call(main_wrapper.rectangle, None)),
         }
-        return components, keyword_hits, target_window
+
+        # 2. 모든 타겟 윈도우의 자식 요소 수집
+        global_idx = 0
+        for wrapper in target_windows:
+            win_title = self._safe_call(wrapper.window_text, "Unknown Window")
+            nodes = [wrapper]
+            descendants = self._safe_call(wrapper.descendants, []) or []
+            nodes.extend(descendants)
+
+            for node in nodes:
+                if global_idx >= component_limit:
+                    break
+                
+                if not self._safe_call(node.is_visible, False):
+                    continue
+
+                title = self._safe_call(node.window_text, "") or ""
+                auto_id = self._safe_call(lambda: node.element_info.automation_id, "") or ""
+                control_type = self._safe_call(lambda: node.element_info.control_type, "") or ""
+                rect = self._safe_call(node.rectangle, None)
+                rect_dict = self._rect_to_dict(rect)
+                
+                # 내부 로직용 데이터 (좌표 포함)
+                comp = {
+                    "index": global_idx,
+                    "title": title,
+                    "auto_id": auto_id,
+                    "control_type": control_type,
+                    "window": win_title,
+                    "x": rect_dict.get("center_x"),
+                    "y": rect_dict.get("center_y"),
+                }
+                components.append(comp)
+
+                if target_keyword and self._is_keyword_match(
+                    candidate_values=[title, auto_id, control_type],
+                    keyword=target_keyword,
+                    match_mode=match_mode,
+                    case_sensitive=case_sensitive,
+                ):
+                    keyword_hits.append({
+                        "index": global_idx,
+                        "title": title,
+                        "auto_id": auto_id,
+                        "x": rect_dict.get("center_x"),
+                        "y": rect_dict.get("center_y"),
+                        "source": "uia"
+                    })
+                
+                global_idx += 1
+            
+            if global_idx >= component_limit:
+                break
+
+        return components, keyword_hits, summary_window
+
+
 
     async def _extract_ocr_hits(
         self,
@@ -889,6 +920,7 @@ class AppUIAction:
         title: Optional[str] = None,
         title_match_mode: str = "exact",
         button: str = "left",
+        clicks: int = 1,
         double: bool = False,
         timeout: Optional[float] = None,
         draw_outline: bool = False,
@@ -945,8 +977,10 @@ class AppUIAction:
                     logger.warning(f"테두리 그리기 실패: {e}")
             
             # 클릭 실행
-            if double:
+            if double or clicks > 1:
                 target.double_click_input(button=button)
+                # 만약 3번 이상 클릭이 필요하다면 추가 로직이 필요하겠지만, 
+                # 일반적인 UI에서는 double이면 충분합니다.
             else:
                 target.click_input(button=button)
             

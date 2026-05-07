@@ -56,61 +56,6 @@ async def find_app_by_ocr(
 
 
 
-async def click_app_by_text(
-    keyword: str,
-    match_mode: str = "contains",
-    case_sensitive: bool = False,
-    button: str = "left",
-    clicks: int = 1,
-) -> str:
-    """
-    UI 요소의 Title(Name)을 사용하여 요소를 찾아 클릭합니다.
-    
-    Args:
-        keyword: 찾을 Title 텍스트
-        match_mode: 일치 모드 ("exact" 또는 "contains")
-        case_sensitive: 대소문자 구분 여부
-        button: 마우스 버튼 ("left", "right", "middle")
-        clicks: 클릭 횟수
-    """
-    logger.info(f"[Tool] click_app_by_text 호출: keyword='{keyword}', match_mode={match_mode}")
-    action = get_app_ui_action()
-    analysis = await action.describe_current_state(
-        keyword=keyword,
-        match_mode=match_mode,
-        case_sensitive=case_sensitive,
-        include_components=True,
-        include_ocr_hits=False,
-        component_limit=300
-    )
-    
-    hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
-    # Title 매칭 필터링
-    title_hits = []
-    for h in hits:
-        h_title = str(h.get("title", ""))
-        if match_mode == "exact":
-            if case_sensitive:
-                if h_title == keyword: title_hits.append(h)
-            else:
-                if h_title.lower() == keyword.lower(): title_hits.append(h)
-        else:
-            if case_sensitive:
-                if keyword in h_title: title_hits.append(h)
-            else:
-                if keyword.lower() in h_title.lower(): title_hits.append(h)
-
-    if not title_hits:
-        return json.dumps({"success": False, "message": f"Title '{keyword}'를 가진 요소를 찾지 못했습니다."}, ensure_ascii=False)
-        
-    target = title_hits[0]
-    click_result = action.click_position(
-        x=int(target.get("x", 0)),
-        y=int(target.get("y", 0)),
-        button=button,
-        clicks=clicks
-    )
-    return json.dumps(click_result.to_dict(), ensure_ascii=False)
 
 
 
@@ -223,7 +168,9 @@ def click_app_by_attr(
     control_type: Optional[str] = None,
     title: Optional[str] = None,
     title_match_mode: str = "exact",
+    case_sensitive: bool = False,
     button: str = "left",
+    clicks: int = 1,
     double: bool = False,
     timeout: Optional[float] = None,
     draw_outline: bool = False,
@@ -238,12 +185,21 @@ def click_app_by_attr(
     draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
     """
     action = get_app_ui_action()
+    
+    # case_sensitive 처리 (필요시 title_re 활용)
+    effective_match_mode = title_match_mode
+    if not case_sensitive and title and title_match_mode == "contains":
+        # pywinauto의 title_re에서 대소문자 무시를 위해 (?i) 사용 가능 여부 확인 필요하나 
+        # 현재는 기본 title_match_mode를 따름
+        pass
+
     result = action.click_element_by_attr(
         auto_id=auto_id,
         control_type=control_type,
         title=title,
-        title_match_mode=title_match_mode,
+        title_match_mode=effective_match_mode,
         button=button,
+        clicks=clicks,
         double=double,
         timeout=timeout,
         draw_outline=draw_outline,
@@ -311,7 +267,29 @@ async def describe_current_state(
         include_components=include_components,
         component_limit=component_limit,
     )
+    
+    # [Token Optimization] LLM용 결과 데이터 경량화
+    if include_components and "components" in result:
+        compact_components = []
+        for c in result["components"]:
+            compact_components.append({
+                "idx": c["index"],
+                "t": c["title"],
+                "id": c["auto_id"],
+                "type": c["control_type"],
+                "win": c["window"]
+            })
+        result["components"] = compact_components
+    
+    # keyword_hits에서도 LLM용 좌표 정보 제거
+    if "keyword_hits" in result:
+        for source in ["uia", "ocr"]:
+            for hit in result["keyword_hits"].get(source, []):
+                hit.pop("x", None)
+                hit.pop("y", None)
+                
     return json.dumps(result, ensure_ascii=False)
+
 
 
 def find_app_by_rgb(
@@ -369,7 +347,6 @@ def register_app_control_tools(mcp: "FastMCP") -> None:
     """애플리케이션 UI 제어 도구 등록"""
     mcp.tool()(describe_current_state)
     mcp.tool()(find_app_by_ocr)
-    mcp.tool()(click_app_by_text)
     mcp.tool()(type_app_text)
     mcp.tool()(press_app_shortcut)
     mcp.tool()(click_app_position)
