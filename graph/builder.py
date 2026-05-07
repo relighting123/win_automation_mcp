@@ -20,7 +20,14 @@ def build_automation_graph(mcp, llm):
     # 기본 흐름 정의
     builder.set_entry_point("plan")
     builder.add_edge("plan", "check_situation")
-    builder.add_edge("check_situation", "extract")
+    builder.add_conditional_edges(
+        "check_situation",
+        lambda x: (
+            "extract"
+            if x.next_action in {"proceed", "insert_recovery"}
+            else ("next" if x.next_action == "skip" else "report")
+        ),
+    )
     builder.add_edge("extract", "run")
     builder.add_edge("run", "next")
     

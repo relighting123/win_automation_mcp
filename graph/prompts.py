@@ -12,7 +12,15 @@ ANALYST_SYSTEM_PROMPT = (
     "- login_required: 로그인이 필요함 (복구 스킬 필요)\n"
     "- error_state: 오류 메시지나 예기치 않은 상태\n"
     "- other: 기타 특이사항\n\n"
-    "만약 'login_required'라면 'login_skill'을 recovery_skill_id로 제안하세요."
+    "또한 next_action을 반드시 아래 중 하나로 반환하세요:\n"
+    "- proceed: 현재 스킬을 그대로 실행\n"
+    "- skip: 현재 스킬은 이미 완료된 상태이므로 건너뜀\n"
+    "- insert_recovery: 복구 스킬을 현재 스킬 앞에 삽입 후 진행\n"
+    "- abort: 치명적 문제로 전체 실행 중단\n\n"
+    "판단 규칙:\n"
+    "1) 이미 앱 실행/로그인/화면 진입이 완료되었다면 skip을 우선 고려하세요.\n"
+    "2) 'login_required'라면 next_action='insert_recovery'와 recovery_skill_id='login_skill'을 기본으로 제안하세요.\n"
+    "3) 현재 상태가 명확히 위험하거나 진행 불가하면 abort를 사용하세요."
 )
 
 # Extractor Prompts

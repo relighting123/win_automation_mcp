@@ -50,7 +50,7 @@ class GraphNodes:
         
         if state.mode == "manual":
             logger.info("[manual 모드] 상황 체크를 건너뛰고 진행합니다.")
-            return {"check_status": "manual_bypass"}
+            return {"check_status": "manual_bypass", "next_action": "proceed"}
 
         state_info = await self.mcp.call_tool("describe_current_state", {"include_components": False})
         
@@ -65,20 +65,62 @@ class GraphNodes:
             ("user", prompt)
         ])
         
-        logger.info(f"상황 분석 결과: {analysis.category} ({analysis.reason})")
+        logger.info(
+            "상황 분석 결과: category=%s, next_action=%s, reason=%s",
+            analysis.category,
+            analysis.next_action,
+            analysis.reason,
+        )
+        allowed_actions = {"proceed", "skip", "insert_recovery", "abort"}
+        next_action = analysis.next_action if analysis.next_action in allowed_actions else "proceed"
+        if next_action != analysis.next_action:
+            logger.warning("알 수 없는 next_action '%s' 감지, proceed로 대체", analysis.next_action)
         
         new_skill_ids = list(state.skill_ids)
         fallback_skill = ""
+        history = list(state.history)
         
-        if state.mode != "manual" and analysis.recovery_skill_id and analysis.recovery_skill_id != current_skill_id:
-            logger.info(f"복구 스킬 감지: {analysis.recovery_skill_id} 삽입")
-            new_skill_ids.insert(state.current_index, analysis.recovery_skill_id)
-            fallback_skill = analysis.recovery_skill_id
+        if next_action == "insert_recovery":
+            if analysis.recovery_skill_id and analysis.recovery_skill_id != current_skill_id:
+                logger.info(f"복구 스킬 감지: {analysis.recovery_skill_id} 삽입")
+                new_skill_ids.insert(state.current_index, analysis.recovery_skill_id)
+                fallback_skill = analysis.recovery_skill_id
+            else:
+                logger.warning("insert_recovery가 요청되었지만 recovery_skill_id가 유효하지 않아 proceed로 대체합니다.")
+                next_action = "proceed"
+
+        if next_action == "skip":
+            history.append(
+                {
+                    "skill": current_skill_id,
+                    "tool": "__skill_gate__",
+                    "output": {
+                        "success": True,
+                        "status": "skipped",
+                        "reason": analysis.reason,
+                    },
+                }
+            )
+
+        if next_action == "abort":
+            history.append(
+                {
+                    "skill": current_skill_id,
+                    "tool": "__skill_gate__",
+                    "output": {
+                        "success": False,
+                        "status": "aborted",
+                        "reason": analysis.reason,
+                    },
+                }
+            )
         
         return {
             "check_status": analysis.reason, 
+            "next_action": next_action,
             "extra_skill": fallback_skill,
-            "skill_ids": new_skill_ids
+            "skill_ids": new_skill_ids,
+            "history": history,
         }
 
     async def extract(self, state: AgentState):
