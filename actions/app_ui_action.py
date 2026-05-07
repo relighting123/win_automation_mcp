@@ -249,6 +249,32 @@ class AppUIAction:
 
     def _pick_target_window(self) -> Optional[Any]:
         """현재 앱에서 가장 가능성이 높은 대상 윈도우 wrapper를 반환합니다."""
+        # 0. [개선] 현재 시스템에서 포커스를 가진(Foreground) 윈도우가 우리 앱의 것이라면 최우선 선택
+        try:
+            import win32gui
+            import win32process
+            
+            fg_hwnd = win32gui.GetForegroundWindow()
+            if fg_hwnd:
+                _, fg_pid = win32process.GetWindowThreadProcessId(fg_hwnd)
+                
+                # 세션 연결 시도 (아직 안 되어 있다면)
+                if not self._session.is_connected:
+                    self._safe_call(self._session.connect, None)
+                
+                if self._session.is_connected:
+                    target_pid = getattr(self._session.app, 'process', None)
+                    if target_pid and fg_pid == target_pid:
+                        # 현재 포커스된 창이 우리 앱의 것이라면 해당 창을 그대로 사용
+                        from pywinauto.controls.hwndwrapper import HwndWrapper
+                        wrapper = HwndWrapper(fg_hwnd)
+                        if self._safe_call(wrapper.is_visible, False):
+                            logger.debug(f"현재 활성화된 윈도우를 타겟으로 선택: '{self._safe_call(wrapper.window_text, '')}'")
+                            self._session.cached_window = wrapper
+                            return wrapper
+        except Exception as e:
+            logger.debug(f"Foreground window 체크 중 오류 (무시): {e}")
+
         # 1. 캐시된 윈도우가 유효한지 먼저 확인 (성능 최적화)
         cached = self._session.cached_window
         if cached:
@@ -257,6 +283,7 @@ class AppUIAction:
                     return cached
             except Exception:
                 self._session.cached_window = None
+
 
         try:
             if not self._session.is_connected:
