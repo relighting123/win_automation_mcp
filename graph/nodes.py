@@ -1,8 +1,9 @@
 import json
 import logging
 import yaml
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
+import difflib
+from typing import List, Dict, Any, Optional, Literal, Union
+from pydantic import BaseModel, Field, create_model
 from langchain_core.prompts import ChatPromptTemplate
 from core.state import AgentState, ToolCall, ToolCalls, SituationAnalysis
 from graph.prompts import PLANNER_SYSTEM_PROMPT, ANALYST_SYSTEM_PROMPT, EXTRACTOR_SYSTEM_PROMPT, MODE_INSTRUCTIONS
@@ -14,6 +15,85 @@ class GraphNodes:
     def __init__(self, mcp, llm):
         self.mcp = mcp
         self.llm = llm
+        self._skills_cache: Optional[Dict[str, Any]] = None
+
+    def _get_skills_config(self) -> Dict[str, Any]:
+        """skills.yaml 설정을 로드합니다."""
+        try:
+            with open("config/skills.yaml", "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                self._skills_cache = config.get("skills", {})
+                return self._skills_cache
+        except Exception as e:
+            logger.error(f"스킬 설정 로드 실패: {e}")
+            return {}
+
+    async def _map_skill_id(self, skill_id: str, valid_skills: Dict[str, Any]) -> str:
+        """존재하지 않는 스킬 ID를 의미상 가장 가까운 유효한 ID로 매핑합니다."""
+        if not skill_id or skill_id in valid_skills:
+            return skill_id
+
+        valid_ids = list(valid_skills.keys())
+        if not valid_ids:
+            return skill_id
+
+        # 1. 문자열 유사도 기반 1차 매핑
+        matches = difflib.get_close_matches(skill_id, valid_ids, n=1, cutoff=0.7)
+        if matches:
+            logger.info(f"스킬 ID 유사도 매핑: '{skill_id}' -> '{matches[0]}'")
+            return matches[0]
+
+        # 2. LLM 기반 의미상 2차 매핑
+        logger.info(f"스킬 ID '{skill_id}'에 대한 의미적 매핑 시도 중...")
+        skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in valid_skills.items()])
+        
+        mapping_prompt = (
+            f"사용자가 요청하거나 시스템이 제안한 '{skill_id}'라는 스킬이 현재 등록된 목록에 없습니다.\n"
+            f"아래 등록된 스킬 목록 중 의미상 가장 적절한 스킬 ID 하나만 골라주세요.\n\n"
+            f"[등록된 스킬 목록]\n{skills_info}\n\n"
+            "답변은 반드시 스킬 ID만 출력하세요. 정말 적당한 것이 없다면 가장 첫 번째 스킬 ID를 출력하세요."
+        )
+        
+        try:
+            res = await self.llm.ainvoke(mapping_prompt)
+            match = res.content.strip()
+            # 따옴표나 마크다운 제거
+            match = match.replace("`", "").replace("'", "").replace("\"", "")
+            if match in valid_skills:
+                logger.info(f"스킬 ID 의미 매핑 성공: '{skill_id}' -> '{match}'")
+                return match
+        except Exception as e:
+            logger.warning(f"의미 매핑 중 오류 발생: {e}")
+
+        return valid_ids[0]
+
+    def _create_structured_plan_model(self, valid_ids: List[str]):
+        """유효한 스킬 ID만 선택하도록 강제하는 동적 Pydantic 모델 생성 (Latest LangGraph/LangChain Pattern)"""
+        if not valid_ids:
+            class DefaultSkillPlan(BaseModel):
+                skill_ids: List[str] = Field(description="실행할 스킬 ID 리스트")
+            return DefaultSkillPlan
+
+        # Literal을 사용하여 LLM이 선택할 수 있는 범위를 제한
+        SkillIdType = Literal[tuple(valid_ids)] # type: ignore
+        
+        return create_model(
+            "SkillPlan",
+            skill_ids=(List[SkillIdType], Field(description="실행할 스킬 ID 리스트 (반드시 제공된 목록 내에서만 선택)"))
+        )
+
+    def _create_structured_analysis_model(self, valid_ids: List[str]):
+        """복구 스킬 ID를 유효한 목록 내에서 선택하도록 강제하는 동적 분석 모델 생성"""
+        if not valid_ids:
+            return SituationAnalysis
+
+        SkillIdType = Optional[Literal[tuple(valid_ids)]] # type: ignore
+
+        return create_model(
+            "DynamicSituationAnalysis",
+            __base__=SituationAnalysis,
+            recovery_skill_id=(SkillIdType, Field(None, description="필요 시 자동 실행할 복구 스킬 ID (반드시 목록 내에서 선택)"))
+        )
 
     @staticmethod
     def _decode_tool_output(raw_output: Any) -> Any:
@@ -103,31 +183,46 @@ class GraphNodes:
 
     async def plan(self, state: AgentState):
         """[auto] 모드일 경우 전체 실행 계획(Skill Sequence)을 AI가 자율적으로 수립"""
+        skills_config = self._get_skills_config()
+        valid_ids = list(skills_config.keys())
+
         if state.mode != "auto":
-            logger.info(f"[{state.mode} 모드] 기존 스킬 리스트를 사용합니다.")
-            return {"skill_ids": state.skill_ids}
+            # [수정] semi/manual 모드에서도 입력된 skill_ids가 유효한지 검증 및 매핑
+            logger.info(f"[{state.mode} 모드] 기존 스킬 리스트 검증 및 매핑 시작")
+            mapped_ids = []
+            for sid in state.skill_ids:
+                mapped_ids.append(await self._map_skill_id(sid, skills_config))
+            return {"skill_ids": mapped_ids}
 
         logger.info("--- [auto 모드] AI 스킬 계획 시작 ---")
         
-        try:
-            with open("config/skills.yaml", "r", encoding="utf-8") as f:
-                skills_config = yaml.safe_load(f).get("skills", {})
-            skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in skills_config.items()])
-        except Exception as e:
-            logger.error(f"스킬 설정 로드 실패: {e}")
-            return {"skill_ids": state.skill_ids}
+        if not valid_ids:
+            logger.warning("사용 가능한 스킬이 정의되어 있지 않습니다.")
+            return {"skill_ids": []}
 
-        class SkillPlan(BaseModel):
-            skill_ids: List[str] = Field(description="실행할 스킬 ID 리스트 (순서대로)")
+        skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in skills_config.items()])
 
-        structured_llm = self.llm.with_structured_output(SkillPlan)
-        plan = await structured_llm.ainvoke([
-            ("system", PLANNER_SYSTEM_PROMPT),
-            ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
-        ])
+        # [최신 기법] Dynamic Literal을 사용한 Structured Output으로 Hallucination 방지
+        SkillPlanModel = self._create_structured_plan_model(valid_ids)
+        structured_llm = self.llm.with_structured_output(SkillPlanModel)
         
-        logger.info(f"AI 계획 결과: {plan.skill_ids}")
-        return {"skill_ids": plan.skill_ids}
+        try:
+            plan = await structured_llm.ainvoke([
+                ("system", PLANNER_SYSTEM_PROMPT),
+                ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
+            ])
+            
+            # Pydantic 모델이 리스트를 반환하므로 .skill_ids 접근
+            result_ids = getattr(plan, "skill_ids", [])
+            logger.info(f"AI 계획 결과: {result_ids}")
+            return {"skill_ids": result_ids}
+        except Exception as e:
+            logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
+            # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
+            raw_res = await self.llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
+            potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
+            mapped_ids = [await self._map_skill_id(pid, skills_config) for pid in potential_ids]
+            return {"skill_ids": mapped_ids}
 
     async def check_situation(self, state: AgentState):
         """현재 화면 상태를 분석하여 스킬 실행 가능 여부 체크"""
@@ -140,12 +235,19 @@ class GraphNodes:
 
         state_info = await self.mcp.call_tool("describe_current_state", {"include_components": False})
         
+        skills_config = self._get_skills_config()
+        valid_ids = list(skills_config.keys())
+        
         prompt = (
             f"현재 화면 상태: {state_info}\n"
             f"실행할 스킬 ID: {current_skill_id}\n"
+            f"사용 가능한 복구용 스킬 목록: {valid_ids}\n"
         )
         
-        structured_llm = self.llm.with_structured_output(SituationAnalysis)
+        # [최신 기법] 상황 분석에서도 유효한 스킬 ID만 제안하도록 동적 모델 적용
+        DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
+        structured_llm = self.llm.with_structured_output(DynamicAnalysisModel)
+        
         analysis = await structured_llm.ainvoke([
             ("system", ANALYST_SYSTEM_PROMPT),
             ("user", prompt)
