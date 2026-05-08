@@ -137,3 +137,13 @@ skills:
           delimiter: null
           header: true
           max_preview_rows: 20
+
+  open_guide_based_rule:
+    description: "사용자 요청에 따라 가이드 문서를 참조하여 적절한 .rul 파일을 선택하고 실행"
+    tools:
+      - tool: launch_application
+        args:
+          executable_path: { mode: "ai", value: "D:\\개발\\폴더\\default.rul" }
+      - tool: wait
+        args:
+          seconds: 2.0

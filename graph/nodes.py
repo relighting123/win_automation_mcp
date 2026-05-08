@@ -6,7 +6,13 @@ from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
 from langchain_core.prompts import ChatPromptTemplate
 from core.state import AgentState, ToolCall, ToolCalls, SituationAnalysis
-from graph.prompts import PLANNER_SYSTEM_PROMPT, ANALYST_SYSTEM_PROMPT, EXTRACTOR_SYSTEM_PROMPT, MODE_INSTRUCTIONS
+from graph.prompts import (
+    PLANNER_SYSTEM_PROMPT, 
+    ANALYST_SYSTEM_PROMPT, 
+    EXTRACTOR_SYSTEM_PROMPT, 
+    MODE_INSTRUCTIONS,
+    ALLOWED_PATHS
+)
 from skills.sequence_skill import SequenceSkill
 
 logger = logging.getLogger(__name__)
@@ -350,8 +356,9 @@ class GraphNodes:
             "tools_info": tools_info
         })
         
-        # [Post-process] Fixed 값 강제 적용 및 AI 값 유지
+        # [Post-process] Fixed 값 강제 적용 및 AI 값 검증
         final_calls = []
+
         for i, call in enumerate(enriched.calls):
             # 도구 순서에 맞춰 메타데이터 적용 (수동/준자동 모드 대응)
             matching_step = next((s for s in steps_metadata if s["tool"] == call.tool), None)
@@ -360,6 +367,15 @@ class GraphNodes:
                 for arg_name, arg_meta in matching_step["args"].items():
                     if arg_meta["mode"] == "fixed":
                         new_args[arg_name] = arg_meta["value"]
+                    elif arg_meta["mode"] == "ai":
+                        # [검증] 가이드에 정의된 경로가 있는 경우, AI가 추출한 값이 목록에 있는지 확인
+                        current_val = new_args.get(arg_name)
+                        # 경로 관련 인자이고 허용 목록이 있는 경우 강제 검증
+                        is_path_arg = any(k in arg_name.lower() for k in ["path", "file", "executable"])
+                        if is_path_arg and ALLOWED_PATHS:
+                            if current_val not in ALLOWED_PATHS:
+                                logger.warning(f"가이드에 없는 경로 감지: '{current_val}'. 기본값 '{arg_meta['value']}'로 대체합니다.")
+                                new_args[arg_name] = arg_meta["value"]
                 call.args = new_args
             final_calls.append(call)
             

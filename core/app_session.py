@@ -365,17 +365,34 @@ class AppSession:
         
         startup_timeout = self._config.get("application", {}).get("startup_timeout", 30)
         
-        logger.info(f"애플리케이션 실행: {exe_path}")
+        logger.info(f"애플리케이션 시작 시도: {exe_path}")
         
         try:
             self._app = Application(backend=self._backend)
-            self._app.start(exe_path, **kwargs)
             
+            # 실행 파일 여부 확인 (exe, bat, cmd 등)
+            is_executable = exe_path.lower().endswith(('.exe', '.bat', '.cmd', '.msi'))
+            
+            if is_executable:
+                self._app.start(exe_path, **kwargs)
+            else:
+                # [수정] .rul, .txt 등 데이터 파일인 경우 시스템 연결 앱으로 실행
+                import os
+                logger.info(f"파일 연동 실행 시도: {exe_path}")
+                os.startfile(exe_path)
+                
+                # 파일 실행 시에는 PID를 즉시 알 수 없으므로, 설정된 앱으로 연결(connect) 시도
+                wait_until(
+                    condition=lambda: self._try_connect(**kwargs),
+                    timeout=startup_timeout,
+                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({exe_path})"
+                )
+
             # 메인 윈도우 대기
             wait_until(
                 condition=lambda: len(self._app.windows()) > 0,
                 timeout=startup_timeout,
-                timeout_message=f"애플리케이션 시작 대기 ({exe_path})"
+                timeout_message=f"애플리케이션 윈도우 생성 대기 ({exe_path})"
             )
             
             self._state = SessionState.CONNECTED

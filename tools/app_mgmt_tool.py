@@ -23,31 +23,24 @@ async def launch_application(
     wait_for_window: bool = True,
 ) -> dict:
     """
-    대상 Windows 애플리케이션을 실행합니다.
+    대상 Windows 애플리케이션 또는 데이터 파일을 실행합니다.
 
-    지정된 경로의 애플리케이션을 실행합니다. 경로를 지정하지 않으면 설정 파일(Notepad++)의
-    기본 경로를 우선적으로 사용합니다. 메인 애플리케이션(Notepad++)을 실행하려면
-    경로를 생략하는 것이 권장됩니다.
+    지정된 경로의 애플리케이션(.exe)을 실행하거나, 데이터 파일(.rul, .txt 등)을 관련 프로그램으로 엽니다.
+    경로를 지정하지 않으면 설정 파일에 정의된 기본 애플리케이션 경로를 사용합니다.
 
     Args:
-        executable_path: 실행 파일 경로 (Notepad++ 외의 특수 앱 실행 시에만 사용)
+        executable_path: 실행할 파일 경로 (.exe 또는 연동된 데이터 파일)
         wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
-
-    Returns:
-        dict: 실행 결과
-            - success (bool): 실행 성공 여부
-            - message (str): 결과 메시지
-            - process_info (dict, optional): 프로세스 정보
     """
     logger.info(f"[Tool] launch_application 호출: path={executable_path}, wait={wait_for_window}")
 
     try:
         launcher = get_launcher()
-        # 하드코딩 요구사항: 설정된 경로가 있으면 LLM 인자를 무시하거나 우선함
-        config_path = launcher._session.config.get("application", {}).get("executable_path")
+        # 입력된 경로가 있으면 사용하고, 없으면 설정된 기본 경로 사용
+        target_path = executable_path or launcher._session.config.get("application", {}).get("executable_path")
 
         launcher.launch(
-            path=config_path,
+            path=target_path,
             wait_for_ready=wait_for_window,
         )
 
