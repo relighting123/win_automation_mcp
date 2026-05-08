@@ -168,6 +168,8 @@ def click_app_by_attr(
     control_type: Optional[str] = None,
     title: Optional[str] = None,
     title_match_mode: str = "exact",
+    legacy_value: Optional[str] = None,
+    legacy_match_mode: str = "exact",
     case_sensitive: bool = False,
     button: str = "left",
     clicks: int = 1,
@@ -177,27 +179,26 @@ def click_app_by_attr(
     outline_colour: str = "red",
 ) -> str:
     """
-    pywinauto의 child_window 기능을 사용하여 요소를 직접 찾아 클릭합니다.
-    auto_id, control_type, title 중 하나 이상을 지정해야 합니다.
+    pywinauto(UIA) 속성 기반으로 요소를 직접 찾아 클릭합니다.
+    auto_id, control_type, title, legacy_value 중 하나 이상을 지정해야 합니다.
     title_match_mode:
       - exact: title 완전 일치
       - contains: title 포함 일치
+    legacy_match_mode:
+      - exact: LegacyIAccessible value 완전 일치
+      - contains: LegacyIAccessible value 포함 일치
     draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
     """
     action = get_app_ui_action()
-    
-    # case_sensitive 처리 (필요시 title_re 활용)
-    effective_match_mode = title_match_mode
-    if not case_sensitive and title and title_match_mode == "contains":
-        # pywinauto의 title_re에서 대소문자 무시를 위해 (?i) 사용 가능 여부 확인 필요하나 
-        # 현재는 기본 title_match_mode를 따름
-        pass
 
     result = action.click_element_by_attr(
         auto_id=auto_id,
         control_type=control_type,
         title=title,
-        title_match_mode=effective_match_mode,
+        title_match_mode=title_match_mode,
+        legacy_value=legacy_value,
+        legacy_match_mode=legacy_match_mode,
+        case_sensitive=case_sensitive,
         button=button,
         clicks=clicks,
         double=double,
