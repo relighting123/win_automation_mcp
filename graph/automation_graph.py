@@ -1,6 +1,5 @@
 import logging
 import asyncio
-from typing import List, Optional
 from langchain_openai import ChatOpenAI
 from mcp_client import MCPClient
 from core.llm_config import get_llm_settings, get_mcp_settings, get_automation_settings
@@ -16,7 +15,16 @@ class MiniHybridAgent:
         # 분리된 빌더를 통해 그래프 생성
         self.graph = build_automation_graph(self.mcp, self.llm)
 
-async def run_automation(mcp, query, skill_ids, mode=None, model=None, api_key=None, base_url=None):
+async def run_automation(
+    mcp,
+    query,
+    skill_ids,
+    mode=None,
+    model=None,
+    api_key=None,
+    base_url=None,
+    include_details: bool = True,
+):
     """
     외부에서 자동화 워크플로우를 실행하기 위한 엔트리 포인트
     """
@@ -39,7 +47,12 @@ async def run_automation(mcp, query, skill_ids, mode=None, model=None, api_key=N
         "skill_ids": skill_ids, 
         "mode": resolved_mode
     })
-    return final["report"]
+    if include_details:
+        return {
+            "report": final.get("report", ""),
+            "report_details": final.get("report_details", {}),
+        }
+    return final.get("report", "")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -53,12 +66,13 @@ if __name__ == "__main__":
         my_skills = ["demo_mixed_args"]
         my_query = "메모장에 안녕써줘"
         
-        report = await run_automation(
+        report_payload = await run_automation(
             mcp=mcp_client,
             query=my_query,
             skill_ids=my_skills,
             mode=auto_settings["mode"]
         )
-        print(f"\n[AI 자동화 보고서]\n{report}")
+        print(f"\n[AI 자동화 보고서]\n{report_payload['report']}")
+        print(f"\n[구조화 상세]\n{report_payload['report_details']}")
 
     asyncio.run(example())

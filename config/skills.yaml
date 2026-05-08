@@ -125,3 +125,15 @@ skills:
         args:
           keyword: { mode: "ai" }
           element_type: "button" # 생략 시 fixed로 간주됨
+
+  analyze_copied_table:
+    description: "Ctrl+C로 복사된 데이터를 DataFrame으로 변환해 분석 리포트에 반영"
+    tools:
+      - tool: press_app_shortcut
+        args:
+          shortcut: "ctrl+c"
+      - tool: read_clipboard_as_dataframe
+        args:
+          delimiter: null
+          header: true
+          max_preview_rows: 20

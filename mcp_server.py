@@ -110,6 +110,7 @@ def register_all_tools() -> None:
     """모든 도구를 FastMCP 서버에 등록"""
     from tools.app_mgmt_tool import register_app_mgmt_tools
     from tools.app_control_tool import register_app_control_tools
+    from tools.data_analysis_tool import register_data_analysis_tools
     from tools.skill_tool import register_skill_tools
     
     # 애플리케이션 관리 도구
@@ -117,6 +118,9 @@ def register_all_tools() -> None:
     
     # 애플리케이션 UI 제어 도구 (Title/AutoID/OCR)
     register_app_control_tools(mcp)
+
+    # 클립보드/데이터프레임 분석 보조 도구
+    register_data_analysis_tools(mcp)
 
     # 고수준 Skill 기반 도구
     register_skill_tools(mcp)

@@ -15,6 +15,92 @@ class GraphNodes:
         self.mcp = mcp
         self.llm = llm
 
+    @staticmethod
+    def _decode_tool_output(raw_output: Any) -> Any:
+        """MCP tool 결과(dict/string)를 가능한 한 파싱 가능한 형태로 정규화합니다."""
+        normalized = raw_output
+        if isinstance(normalized, dict):
+            content_blocks = normalized.get("content")
+            if isinstance(content_blocks, list):
+                text_blocks = [
+                    block.get("text")
+                    for block in content_blocks
+                    if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+                ]
+                if text_blocks:
+                    normalized = text_blocks[0]
+
+        if isinstance(normalized, str):
+            stripped = normalized.strip()
+            if stripped and stripped[0] in {"{", "["}:
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    return normalized
+        return normalized
+
+    @staticmethod
+    def _is_failed_output(decoded_output: Any) -> bool:
+        """도구 실행 결과가 실패인지 판정합니다."""
+        if isinstance(decoded_output, dict):
+            if decoded_output.get("success") is False:
+                return True
+            if decoded_output.get("is_success") is False:
+                return True
+            status = str(decoded_output.get("status", "")).lower()
+            result = str(decoded_output.get("result", "")).lower()
+            if status in {"error", "failed", "aborted", "timeout"}:
+                return True
+            if result in {"error", "failed", "timeout"}:
+                return True
+        return False
+
+    def _collect_execution_summary(self, history: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """실행 이력에서 성공/실패/스킵 정보를 집계합니다."""
+        failed_steps: List[Dict[str, Any]] = []
+        skipped_steps = 0
+        executed_steps = 0
+
+        for entry in history:
+            tool_name = str(entry.get("tool", ""))
+            output = self._decode_tool_output(entry.get("output"))
+            if tool_name == "__skill_gate__":
+                if isinstance(output, dict) and str(output.get("status", "")).lower() == "skipped":
+                    skipped_steps += 1
+                if isinstance(output, dict) and str(output.get("status", "")).lower() == "aborted":
+                    failed_steps.append(
+                        {
+                            "skill": entry.get("skill", ""),
+                            "tool": tool_name,
+                            "reason": output.get("reason") or output.get("message") or "aborted",
+                        }
+                    )
+                continue
+
+            executed_steps += 1
+            if self._is_failed_output(output):
+                reason = ""
+                if isinstance(output, dict):
+                    reason = (
+                        str(output.get("message", "")).strip()
+                        or str(output.get("error", "")).strip()
+                        or str(output.get("reason", "")).strip()
+                    )
+                failed_steps.append(
+                    {
+                        "skill": entry.get("skill", ""),
+                        "tool": tool_name,
+                        "reason": reason or "tool execution failed",
+                    }
+                )
+
+        return {
+            "status": "failed" if failed_steps else "success",
+            "executed_steps": executed_steps,
+            "skipped_steps": skipped_steps,
+            "failed_steps": failed_steps,
+        }
+
     async def plan(self, state: AgentState):
         """[auto] 모드일 경우 전체 실행 계획(Skill Sequence)을 AI가 자율적으로 수립"""
         if state.mode != "auto":
@@ -202,7 +288,75 @@ class GraphNodes:
         return {"current_index": state.current_index + 1}
 
     async def report(self, state: AgentState):
-        """최종 결과를 자연어로 해석"""
-        prompt = f"요청: {state.query}\n결과: {state.history}\n결과를 요약해서 보고하세요."
+        """최종 결과를 자연어/구조화 형태로 보고"""
+        history = list(state.history)
+        execution_summary = self._collect_execution_summary(history)
+
+        query_lower = state.query.lower()
+        query_wants_clipboard = any(
+            token in query_lower
+            for token in ["ctrl+c", "ctrl c", "clipboard", "복사", "데이터프레임", "dataframe", "표"]
+        )
+        clipboard_entry = next((h for h in reversed(history) if h.get("tool") == "read_clipboard_as_dataframe"), None)
+
+        clipboard_data: Dict[str, Any] = {
+            "success": False,
+            "message": "클립보드 분석이 수행되지 않았습니다.",
+        }
+        if clipboard_entry is not None:
+            decoded_clipboard = self._decode_tool_output(clipboard_entry.get("output"))
+            if isinstance(decoded_clipboard, dict):
+                clipboard_data = decoded_clipboard
+            else:
+                clipboard_data = {
+                    "success": False,
+                    "message": "클립보드 도구 응답을 파싱하지 못했습니다.",
+                    "raw": decoded_clipboard,
+                }
+        elif query_wants_clipboard:
+            # read_clipboard_as_dataframe가 스킬에서 실행되지 않았더라도 report 단계에서 보조 조회
+            live_clipboard = await self.mcp.call_tool("read_clipboard_as_dataframe", {})
+            decoded_clipboard = self._decode_tool_output(live_clipboard)
+            if isinstance(decoded_clipboard, dict):
+                clipboard_data = decoded_clipboard
+            else:
+                clipboard_data = {
+                    "success": False,
+                    "message": "클립보드 응답 파싱 실패",
+                    "raw": decoded_clipboard,
+                }
+
+        clipboard_analysis = ""
+        if clipboard_data.get("success") is True:
+            analysis_payload = {
+                "shape": clipboard_data.get("shape", {}),
+                "columns": clipboard_data.get("columns", []),
+                "dtypes": clipboard_data.get("dtypes", {}),
+                "preview_records": clipboard_data.get("preview_records", [])[:20],
+            }
+            analysis_prompt = (
+                "당신은 표 데이터 분석가입니다. 아래 DataFrame 요약을 바탕으로 사용자 요청과 관련된 인사이트를 한국어로 작성하세요.\n"
+                "응답 형식:\n"
+                "1) 데이터 개요\n2) 핵심 인사이트\n3) 사용자가 바로 실행할 수 있는 다음 액션\n\n"
+                f"[사용자 요청]\n{state.query}\n\n"
+                f"[DataFrame 요약]\n{json.dumps(analysis_payload, ensure_ascii=False)}"
+            )
+            analysis_res = await self.llm.ainvoke(analysis_prompt)
+            clipboard_analysis = analysis_res.content
+
+        report_details = {
+            "execution": execution_summary,
+            "clipboard": clipboard_data,
+            "clipboard_analysis": clipboard_analysis,
+        }
+
+        prompt = (
+            f"요청: {state.query}\n"
+            f"실행 요약: {json.dumps(execution_summary, ensure_ascii=False)}\n"
+            f"클립보드 분석: {clipboard_analysis or clipboard_data.get('message', '없음')}\n"
+            f"전체 실행 이력: {history}\n\n"
+            "최종 답변은 한국어로 작성하세요. 반드시 '수행 여부'를 먼저 명시하고, "
+            "그 다음 클립보드 데이터(DataFrame) 분석 결과를 자연스럽게 이어서 설명하세요."
+        )
         res = await self.llm.ainvoke(prompt)
-        return {"report": res.content}
+        return {"report": res.content, "report_details": report_details}

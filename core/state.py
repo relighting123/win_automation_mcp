@@ -29,3 +29,4 @@ class AgentState(BaseModel):
     enriched_plan: List[ToolCall] = Field(default_factory=list) # 추출된 도구 호출 목록
     tool_sequence: List[str] = Field(default_factory=list) # 현재 스킬의 도구 순서
     report: str = ""  # 최종 자연어 분석 결과
+    report_details: Dict[str, Any] = Field(default_factory=dict)  # 구조화된 최종 리포트

@@ -22,6 +22,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         launch_application,
         restart_application,
     )
+    from tools.data_analysis_tool import read_clipboard_as_dataframe
 
     return {
         # app_mgmt_tool
@@ -41,4 +42,6 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "click_app_by_attr": click_app_by_attr,
         "highlight_app_by_attr": highlight_app_by_attr,
         "get_app_coords_by_attr": get_app_coords_by_attr,
+        # data_analysis_tool
+        "read_clipboard_as_dataframe": read_clipboard_as_dataframe,
     }
