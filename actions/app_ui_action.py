@@ -382,6 +382,128 @@ class AppUIAction:
                     return True
         return False
 
+    def _is_attr_match(
+        self,
+        *,
+        actual: str,
+        expected: str,
+        match_mode: str,
+        case_sensitive: bool,
+    ) -> bool:
+        if not expected:
+            return True
+        normalized_actual = self._normalize_text(actual or "", case_sensitive=case_sensitive)
+        normalized_expected = self._normalize_text(expected or "", case_sensitive=case_sensitive)
+        if match_mode == "exact":
+            return normalized_actual == normalized_expected
+        return normalized_expected in normalized_actual
+
+    def _extract_legacy_value(self, node: Any) -> str:
+        """UIA 노드의 LegacyIAccessible value를 최대한 안전하게 추출합니다."""
+        # 1) pywinauto helper
+        try:
+            legacy_props = self._safe_call(node.legacy_properties, None)
+            if isinstance(legacy_props, dict):
+                value = legacy_props.get("Value") or legacy_props.get("value")
+                if value is not None:
+                    return str(value)
+        except Exception:
+            pass
+
+        # 2) COM legacy interface
+        for iface_attr in ("iface_legacy_iaccessible", "iface_legacy"):
+            iface = self._safe_call(lambda: getattr(node, iface_attr), None)
+            if iface is None:
+                continue
+            for value_attr in ("CurrentValue", "Value"):
+                value = self._safe_call(lambda: getattr(iface, value_attr), None)
+                if value is not None:
+                    return str(value)
+
+        # 3) element_info fallback
+        for info_attr in ("legacy_value", "value"):
+            value = self._safe_call(lambda: getattr(node.element_info, info_attr), None)
+            if value is not None:
+                return str(value)
+        return ""
+
+    def _find_first_matching_node(
+        self,
+        *,
+        root: Any,
+        auto_id: Optional[str],
+        control_type: Optional[str],
+        title: Optional[str],
+        title_match_mode: str,
+        legacy_value: Optional[str],
+        legacy_match_mode: str,
+        case_sensitive: bool,
+    ) -> Optional[Any]:
+        nodes = [root]
+        descendants = self._safe_call(root.descendants, []) or []
+        nodes.extend(descendants)
+
+        for node in nodes:
+            node_auto_id = str(self._safe_call(lambda: node.element_info.automation_id, "") or "")
+            node_control_type = str(self._safe_call(lambda: node.element_info.control_type, "") or "")
+            node_title = str(self._safe_call(node.window_text, "") or "")
+            node_legacy_value = self._extract_legacy_value(node)
+
+            if auto_id and node_auto_id != auto_id:
+                continue
+            if control_type and node_control_type.lower() != str(control_type).lower():
+                continue
+            if title and not self._is_attr_match(
+                actual=node_title,
+                expected=title,
+                match_mode=title_match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                continue
+            if legacy_value and not self._is_attr_match(
+                actual=node_legacy_value,
+                expected=legacy_value,
+                match_mode=legacy_match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                continue
+            return node
+        return None
+
+    def _click_with_preferred_action(
+        self,
+        target: Any,
+        *,
+        button: str,
+        clicks: int,
+        double: bool,
+    ) -> str:
+        """
+        가능한 경우 invoke/select 기반 접근을 우선 시도하고, 실패 시 input 클릭으로 fallback 합니다.
+        반환값은 실제 적용된 클릭 방식입니다.
+        """
+        if double or clicks > 1:
+            target.double_click_input(button=button)
+            return "double_click_input"
+
+        if button.lower() == "left":
+            control_type = str(self._safe_call(lambda: target.element_info.control_type, "") or "").lower()
+            prefer_tree = control_type in {"treeitem", "tree"}
+            preferred_methods = ["invoke", "select"] if prefer_tree else ["invoke"]
+
+            for method_name in preferred_methods:
+                method = self._safe_call(lambda: getattr(target, method_name), None)
+                if method is None:
+                    continue
+                try:
+                    method()
+                    return method_name
+                except Exception:
+                    continue
+
+        target.click_input(button=button)
+        return "click_input"
+
     def _collect_uia_components(
         self,
         keyword: Optional[str] = None,
@@ -919,6 +1041,9 @@ class AppUIAction:
         control_type: Optional[str] = None,
         title: Optional[str] = None,
         title_match_mode: str = "exact",
+        legacy_value: Optional[str] = None,
+        legacy_match_mode: str = "exact",
+        case_sensitive: bool = False,
         button: str = "left",
         clicks: int = 1,
         double: bool = False,
@@ -927,8 +1052,8 @@ class AppUIAction:
         outline_colour: str = "red",
     ) -> AppUIActionResult:
         """
-        pywinauto의 child_window를 사용하여 특정 요소를 찾아 클릭합니다.
-        auto_id, control_type, title 중 하나 이상을 입력받아 대상을 식별합니다.
+        속성 기반으로 특정 요소를 찾아 클릭합니다.
+        auto_id/control_type/title/legacy_value 중 하나 이상을 입력받아 대상을 식별합니다.
         """
         self.ensure_focus()
         top_window = self._session.get_top_window()
@@ -941,33 +1066,48 @@ class AppUIAction:
                 result="error",
                 message=f"지원하지 않는 title_match_mode: {title_match_mode} (exact|contains)",
             )
+        legacy_match_mode = (legacy_match_mode or "exact").strip().lower()
+        if legacy_match_mode not in {"exact", "contains"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 legacy_match_mode: {legacy_match_mode} (exact|contains)",
+            )
 
-        # 검색 조건 구성
-        criteria = {}
-        if auto_id:
-            criteria["auto_id"] = auto_id
-        if control_type:
-            criteria["control_type"] = control_type
-        if title:
-            if title_match_mode == "contains":
-                criteria["title_re"] = f".*{title}.*"
-            else:
-                criteria["title"] = title
-        criteria["found_index"] = 0
-        # 동일 조건으로 여러 요소가 매칭되면 첫 번째 요소를 명시적으로 선택합니다.
-        # (요청사항: 다중 매칭 시 found_index=0)
-
-        if not criteria:
-            return AppUIActionResult(result="error", message="검색 조건(auto_id, control_type, title)이 하나 이상 필요합니다.")
+        if not any([auto_id, control_type, title, legacy_value]):
+            return AppUIActionResult(
+                result="error",
+                message="검색 조건(auto_id, control_type, title, legacy_value)이 하나 이상 필요합니다.",
+            )
 
         try:
-            # child_window 객체 생성
-            target = top_window.child_window(**criteria)
-            
-            # 요소 유효성 확인 및 대기
             actual_timeout = timeout if timeout is not None else 5.0
-            
-            target.wait("exists", timeout=actual_timeout)
+            start = time.monotonic()
+            target = None
+            while True:
+                target = self._find_first_matching_node(
+                    root=top_window,
+                    auto_id=auto_id,
+                    control_type=control_type,
+                    title=title,
+                    title_match_mode=title_match_mode,
+                    legacy_value=legacy_value,
+                    legacy_match_mode=legacy_match_mode,
+                    case_sensitive=case_sensitive,
+                )
+                if target is not None:
+                    break
+                if time.monotonic() - start > actual_timeout:
+                    break
+                time.sleep(0.2)
+
+            if target is None:
+                return AppUIActionResult(
+                    result="error",
+                    message=(
+                        "요소를 찾지 못했습니다: "
+                        f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}"
+                    ),
+                )
             
             # 하이라이트 표시
             if draw_outline:
@@ -976,17 +1116,22 @@ class AppUIAction:
                 except Exception as e:
                     logger.warning(f"테두리 그리기 실패: {e}")
             
-            # 클릭 실행
-            if double or clicks > 1:
-                target.double_click_input(button=button)
-                # 만약 3번 이상 클릭이 필요하다면 추가 로직이 필요하겠지만, 
-                # 일반적인 UI에서는 double이면 충분합니다.
-            else:
-                target.click_input(button=button)
-            
-            return AppUIActionResult(result="success", message=f"요소 클릭 성공: {criteria}")
+            click_method = self._click_with_preferred_action(
+                target,
+                button=button,
+                clicks=clicks,
+                double=double,
+            )
+            return AppUIActionResult(
+                result="success",
+                message=(
+                    "요소 클릭 성공: "
+                    f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}, "
+                    f"method={click_method}"
+                ),
+            )
         except Exception as e:
-            logger.error(f"child_window 클릭 실패: {e}")
+            logger.error(f"속성 기반 요소 클릭 실패: {e}")
             return AppUIActionResult(result="error", message=f"요소 클릭 실패: {e}")
 
     def highlight_element_by_attr(
