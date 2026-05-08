@@ -16,4 +16,15 @@ def register_skill_tools(*args, **kwargs):
     return _register_skill_tools(*args, **kwargs)
 
 
-__all__ = ["register_app_control_tools", "register_app_mgmt_tools", "register_skill_tools"]
+def register_data_analysis_tools(*args, **kwargs):
+    from .data_analysis_tool import register_data_analysis_tools as _register_data_analysis_tools
+
+    return _register_data_analysis_tools(*args, **kwargs)
+
+
+__all__ = [
+    "register_app_control_tools",
+    "register_app_mgmt_tools",
+    "register_data_analysis_tools",
+    "register_skill_tools",
+]
