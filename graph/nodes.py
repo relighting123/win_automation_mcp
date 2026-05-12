@@ -358,11 +358,15 @@ class GraphNodes:
         
         # [Post-process] Fixed 값 강제 적용 및 AI 값 검증
         final_calls = []
+        remaining_steps = list(steps_metadata)
 
         for i, call in enumerate(enriched.calls):
             # 도구 순서에 맞춰 메타데이터 적용 (수동/준자동 모드 대응)
-            matching_step = next((s for s in steps_metadata if s["tool"] == call.tool), None)
-            if matching_step:
+            # 동일한 도구가 여러 번 있을 경우 순차적으로 매칭하기 위해 매칭된 단계는 제외함
+            matching_idx = next((idx for idx, s in enumerate(remaining_steps) if s["tool"] == call.tool), None)
+            
+            if matching_idx is not None:
+                matching_step = remaining_steps.pop(matching_idx)
                 new_args = dict(call.args)
                 for arg_name, arg_meta in matching_step["args"].items():
                     if arg_meta["mode"] == "fixed":
