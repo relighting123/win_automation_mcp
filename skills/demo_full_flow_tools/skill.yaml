@@ -1,0 +1,16 @@
+description: "launch -> 입력 -> 클릭 -> 종료까지 도구 조합 예시"
+tools:
+  - tool: launch_application
+  - tool: type_app_text
+    args:
+      text: "Auto scenario for {username}"
+  - tool: press_app_shortcut
+    args:
+      shortcut: "ctrl+s"
+  - tool: click_app_by_keyword
+    args:
+      keyword: "{confirm_keyword}"
+      element_type: "any"
+  - tool: close_application
+    args:
+      force: false

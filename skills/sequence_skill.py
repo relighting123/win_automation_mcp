@@ -22,6 +22,25 @@ class SequenceSkill(BaseSkill):
         self._load_config()
 
     def _load_config(self):
+        # 1. 개별 폴더 기반 스킬 확인 (New Structure)
+        folder_path = Path("skills") / self.skill_name
+        folder_yaml = folder_path / "skill.yaml"
+        folder_md = folder_path / "skill.md"
+        
+        if folder_path.is_dir() and folder_yaml.exists():
+            logger.info(f"Loading skill '{self.skill_name}' from folder: {folder_path}")
+            with open(folder_yaml, "r", encoding="utf-8") as f:
+                skill_config = yaml.safe_load(f)
+                self.steps = skill_config.get("tools", skill_config.get("steps", []))
+                self.description = skill_config.get("description", "")
+            
+            # skill.md 내용 로드 (프롬프트 주입용)
+            self.instruction = ""
+            if folder_md.exists():
+                self.instruction = folder_md.read_text(encoding="utf-8")
+            return
+
+        # 2. 레거시 중앙 집중식 설정 확인 (Legacy Structure)
         path = Path(self.config_path)
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
@@ -31,6 +50,7 @@ class SequenceSkill(BaseSkill):
             skill_config = full_config.get("skills", {}).get(self.skill_name, {})
             self.steps = skill_config.get("tools", skill_config.get("steps", []))
             self.description = skill_config.get("description", "")
+            self.instruction = ""
 
     def _render_template(self, value: Any, runtime_kwargs: Dict[str, Any]) -> Any:
         """step args 내부 문자열 템플릿을 런타임 인자 기준으로 치환"""

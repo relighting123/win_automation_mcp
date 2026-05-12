@@ -96,35 +96,7 @@ skills:
         args:
           seconds: 1.0
 
-  demo_full_flow_tools:
-    description: "launch -> 입력 -> 클릭 -> 종료까지 도구 조합 예시"
-    tools:
-      - tool: launch_application
-      - tool: type_app_text
-        args:
-          text: "Auto scenario for {username}"
-      - tool: press_app_shortcut
-        args:
-          shortcut: "ctrl+s"
-      - tool: click_app_by_keyword
-        args:
-          keyword: "{confirm_keyword}"
-          element_type: "any"
-      - tool: close_application
-        args:
-          force: false
-
-  demo_mixed_args:
-    description: "고정 인자와 AI 생성 인자를 혼합해서 사용하는 예시"
-    tools:
-      - tool: type_app_text
-        args:
-          text: { mode: "fixed", value: "이 메시지는 고정입니다." }
-          interval: { mode: "ai" }
-      - tool: click_app_by_keyword
-        args:
-          keyword: { mode: "ai" }
-          element_type: "button" # 생략 시 fixed로 간주됨
+  # demo_full_flow_tools 및 demo_mixed_args는 각각 skills/ 폴더로 이동되었습니다.
 
   analyze_copied_table:
     description: "Ctrl+C로 복사된 데이터를 DataFrame으로 변환해 분석 리포트에 반영"

@@ -24,33 +24,70 @@ class GraphNodes:
         self._skills_cache: Optional[Dict[str, Any]] = None
 
     def _get_skills_config(self) -> Dict[str, Any]:
-        """skills.yaml 설정을 로드합니다."""
+        """skills.yaml 및 skills/ 디렉토리에서 스킬 설정들을 로드합니다."""
+        all_skills = {}
+        
+        # 1. Legacy skills.yaml 로드
         try:
             with open("config/skills.yaml", "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
-                self._skills_cache = config.get("skills", {})
-                return self._skills_cache
+                all_skills.update(config.get("skills", {}))
         except Exception as e:
-            logger.error(f"스킬 설정 로드 실패: {e}")
-            return {}
+            logger.warning(f"Legacy skills.yaml 로드 실패: {e}")
+
+        # 2. 개별 폴더 기반 스킬 로드 (skills/*/skill.yaml)
+        try:
+            skills_dir = Path("skills")
+            for skill_folder in skills_dir.iterdir():
+                if skill_folder.is_dir():
+                    yaml_path = skill_folder / "skill.yaml"
+                    if yaml_path.exists():
+                        with open(yaml_path, "r", encoding="utf-8") as f:
+                            skill_config = yaml.safe_load(f)
+                            # 폴더명을 스킬 ID로 사용
+                            all_skills[skill_folder.name] = skill_config
+        except Exception as e:
+            logger.error(f"디렉토리 기반 스킬 로드 중 오류: {e}")
+
+        self._skills_cache = all_skills
+        return all_skills
 
     async def _map_skill_id(self, skill_id: str, valid_skills: Dict[str, Any]) -> str:
         """존재하지 않는 스킬 ID를 의미상 가장 가까운 유효한 ID로 매핑합니다."""
-        if not skill_id or skill_id in valid_skills:
+        if not skill_id:
             return skill_id
 
+        # 1. 완전 일치 확인 (Case-insensitive)
+        skill_id_lower = skill_id.lower().strip()
         valid_ids = list(valid_skills.keys())
+        
+        # 정확히 일치하는 키 찾기 (대소문자 무시)
+        exact_match = next((sid for sid in valid_ids if sid.lower() == skill_id_lower), None)
+        if exact_match:
+            return exact_match
+
+        # 2. 정규화 일치 확인 (언더바, 하이픈 제거 후 비교)
+        def normalize(s):
+            return s.lower().replace("_", "").replace("-", "").strip()
+        
+        norm_id = normalize(skill_id)
+        norm_match = next((sid for sid in valid_ids if normalize(sid) == norm_id), None)
+        if norm_match:
+            logger.info(f"스킬 ID 정규화 매핑: '{skill_id}' -> '{norm_match}'")
+            return norm_match
+
         if not valid_ids:
             return skill_id
 
-        # 1. 문자열 유사도 기반 1차 매핑
+        # 3. 문자열 유사도 기반 매핑 (difflib)
         matches = difflib.get_close_matches(skill_id, valid_ids, n=1, cutoff=0.7)
         if matches:
             logger.info(f"스킬 ID 유사도 매핑: '{skill_id}' -> '{matches[0]}'")
             return matches[0]
 
-        # 2. LLM 기반 의미상 2차 매핑
+        # 4. LLM 기반 의미상 매핑
         logger.info(f"스킬 ID '{skill_id}'에 대한 의미적 매핑 시도 중...")
+        # ... (이하 동일)
         skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in valid_skills.items()])
         
         mapping_prompt = (
@@ -329,10 +366,12 @@ class GraphNodes:
             logger.error(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
             raise ValueError(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
 
+        # 스킬별 특화 안내문(skill.md)이 있으면 추가
+        skill_instruction = f"\n\n### CURRENT SKILL SPECIFIC GUIDE ###\n{skill.instruction}" if skill.instruction else ""
         mode_instruction = MODE_INSTRUCTIONS.get(state.mode, MODE_INSTRUCTIONS["semi"])
         
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", f"{EXTRACTOR_SYSTEM_PROMPT}\n\n{mode_instruction}"),
+            ("system", f"{EXTRACTOR_SYSTEM_PROMPT}\n\n{mode_instruction}{skill_instruction}"),
             ("user", (
                 "질의: {query}\n"
                 "현재 상황: {check_status}\n"
