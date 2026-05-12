@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 async def launch_application(
     executable_path: Optional[str] = None,
+    connect_path: Optional[str] = None,
+    window_title: Optional[str] = None,
+    window_title_re: Optional[str] = None,
     wait_for_window: bool = True,
 ) -> dict:
     """
@@ -30,9 +33,15 @@ async def launch_application(
 
     Args:
         executable_path: 실행할 파일 경로 (.exe 또는 연동된 데이터 파일)
+        connect_path: (데이터 파일 실행 시) 연결할 실제 실행 파일 경로
+        window_title: (데이터 파일 실행 시) 연결할 윈도우 제목
+        window_title_re: (데이터 파일 실행 시) 연결할 윈도우 제목 정규식
         wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
     """
-    logger.info(f"[Tool] launch_application 호출: path={executable_path}, wait={wait_for_window}")
+    logger.info(
+        f"[Tool] launch_application 호출: path={executable_path}, connect_path={connect_path}, "
+        f"title={window_title}, title_re={window_title_re}, wait={wait_for_window}"
+    )
 
     try:
         launcher = get_launcher()
@@ -42,6 +51,9 @@ async def launch_application(
         launcher.launch(
             path=target_path,
             wait_for_ready=wait_for_window,
+            connect_path=connect_path,
+            title=window_title,
+            title_re=window_title_re,
         )
 
         # 윈도우 포커스 확보 시도 (비전 액션 사용)

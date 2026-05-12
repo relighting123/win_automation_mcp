@@ -382,6 +382,7 @@ class AppSession:
                 os.startfile(exe_path)
                 
                 # 파일 실행 시에는 PID를 즉시 알 수 없으므로, 설정된 앱으로 연결(connect) 시도
+                # kwargs에 포함된 path, title, title_re 등을 활용하여 연결 시도
                 wait_until(
                     condition=lambda: self._try_connect(**kwargs),
                     timeout=startup_timeout,
@@ -477,8 +478,9 @@ class AppSession:
         strategies = []
         
         # 1. 명시적 인자 전략
+        actual_path = path or kwargs.get("connect_path")
         if process: strategies.append({"process": process})
-        if path: strategies.append({"path": path})
+        if actual_path: strategies.append({"path": actual_path})
         if title: strategies.append({"title": title})
         if kwargs.get("title_re"): strategies.append({"title_re": kwargs.get("title_re")})
         
@@ -498,10 +500,13 @@ class AppSession:
             
             # 보안 강화를 위해 타이틀 기반 폴백은 더 이상 사용하지 않습니다.
 
+        # pywinauto.connect에 전달할 인자 필터링 (불필요한 인자 제거)
+        conn_kwargs = {k: v for k, v in kwargs.items() if k not in ["connect_path"]}
+
         for args in strategies:
             try:
                 logger.debug(f"연결 시도 중: {args}")
-                self._app.connect(**args, **kwargs)
+                self._app.connect(**args, **conn_kwargs)
                 logger.info(f"애플리케이션 연결 성공: {args}")
                 return True
             except Exception as e:
