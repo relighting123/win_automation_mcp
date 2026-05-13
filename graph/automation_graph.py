@@ -62,7 +62,11 @@ if __name__ == "__main__":
         mcp_settings = get_mcp_settings()
         auto_settings = get_automation_settings()
 
-        mcp_client = MCPClient(base_url=mcp_settings["base_url"])
+        mcp_client = MCPClient(
+            base_url=mcp_settings["base_url"],
+            base_urls=mcp_settings.get("base_urls"),
+            server_map=mcp_settings.get("servers"),
+        )
         my_skills = ["demo_mixed_args"]
         my_query = "메모장에 안녕써줘"
         

@@ -2,6 +2,7 @@ import json
 import logging
 import yaml
 import difflib
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
 from langchain_core.prompts import ChatPromptTemplate
@@ -384,6 +385,14 @@ class GraphNodes:
         
         all_tools = await self.mcp.list_tools()
         skill_tools = [t for t in all_tools if t['name'] in tool_sequence]
+        available_tool_names = {t.get("name") for t in all_tools}
+        missing_tools = [tool for tool in tool_sequence if tool not in available_tool_names]
+        if missing_tools:
+            raise ValueError(
+                "현재 MCP 서버에 필요한 도구가 없습니다. "
+                f"누락 도구: {missing_tools}. "
+                "file-system 계열 스킬이라면 FileSystem MCP가 연결된 엔드포인트를 사용하세요."
+            )
         tools_info = json.dumps(skill_tools, indent=2, ensure_ascii=False)
         
         chain = prompt_template | structured_llm
