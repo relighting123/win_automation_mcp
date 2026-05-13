@@ -119,3 +119,25 @@ skills:
       - tool: wait
         args:
           seconds: 2.0
+
+  edit_source_section:
+    description: "파일 내 특정 소스 구간을 찾아 원하는 코드로 수정"
+    tools:
+      - tool: find_source_in_file
+        args:
+          file_path: { mode: "ai" }
+          query: { mode: "ai" }
+          match_mode: "contains"
+          case_sensitive: false
+          context_lines: 2
+          max_matches: 10
+      - tool: replace_source_in_file
+        args:
+          file_path: { mode: "ai" }
+          search_text: { mode: "ai" }
+          replacement_text: { mode: "ai" }
+          match_mode: "exact"
+          replace_all: false
+          occurrence: 1
+          case_sensitive: true
+          dry_run: false
