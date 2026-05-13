@@ -193,7 +193,7 @@ python mcp_server.py --transport sse --port 8000 --reload
 - `get_application_status`: 애플리케이션 상태 조회
 
 ### UI 시각 제어 (ui_vision_tool)
-- `click_app_child_window`: `auto_id`, `control_type`, `title` 등의 속성을 사용하여 요소를 직접 찾아 클릭합니다. (`draw_outline` 옵션 지원)
+- `click_app_child_window`: `auto_id`, `control_type`, `title` 등의 속성을 사용하여 요소를 직접 찾아 클릭합니다. `window_target(auto|top|child)`, `child_window_title`, `child_window_match_mode` 옵션으로 탐색 루트를 지정할 수 있습니다. (`draw_outline` 옵션 지원)
 - `highlight_app_child_window`: 클릭 없이 특정 요소를 찾아 화면에 강조(outline) 표시합니다.
 - `click_app_element`: UIA 요소 또는 OCR 텍스트를 찾아 클릭합니다.
 

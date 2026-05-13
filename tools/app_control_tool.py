@@ -171,6 +171,9 @@ def click_app_by_attr(
     legacy_value: Optional[str] = None,
     legacy_match_mode: str = "exact",
     case_sensitive: bool = False,
+    window_target: str = "auto",
+    child_window_title: Optional[str] = None,
+    child_window_match_mode: str = "contains",
     button: str = "left",
     clicks: int = 1,
     double: bool = False,
@@ -187,6 +190,15 @@ def click_app_by_attr(
     legacy_match_mode:
       - exact: LegacyIAccessible value 완전 일치
       - contains: LegacyIAccessible value 포함 일치
+    window_target:
+      - auto: child_window_title 지정 시 child 우선, 없으면 top 윈도우 기준 탐색
+      - top: 최상위 윈도우 기준 탐색
+      - child: child 윈도우 기준 탐색
+    child_window_title:
+      - window_target=child 또는 auto에서 child 윈도우 제목 필터
+    child_window_match_mode:
+      - exact: child_window_title 완전 일치
+      - contains: child_window_title 포함 일치
     draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
     """
     action = get_app_ui_action()
@@ -199,6 +211,9 @@ def click_app_by_attr(
         legacy_value=legacy_value,
         legacy_match_mode=legacy_match_mode,
         case_sensitive=case_sensitive,
+        window_target=window_target,
+        child_window_title=child_window_title,
+        child_window_match_mode=child_window_match_mode,
         button=button,
         clicks=clicks,
         double=double,

@@ -73,6 +73,9 @@ skills:
           control_type: "Button"
           title: "Save"
           title_match_mode: "exact"
+          window_target: "child"
+          child_window_title: "Document"
+          child_window_match_mode: "contains"
           button: "left"
           double: false
           timeout: 2.0
