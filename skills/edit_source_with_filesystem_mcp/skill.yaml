@@ -1,6 +1,6 @@
 description: "FileSystem MCP 도구로 파일 내용을 읽고 특정 소스 구간을 수정"
 tools:
-  - tool: read_file
+  - tool: read_text_file
     args:
       path: { mode: "ai" }
   - tool: edit_file
@@ -8,6 +8,6 @@ tools:
       path: { mode: "ai" }
       edits: { mode: "ai" }
       dryRun: false
-  - tool: read_file
+  - tool: read_text_file
     args:
       path: { mode: "ai" }
