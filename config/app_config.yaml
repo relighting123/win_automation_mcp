@@ -52,16 +52,8 @@ server:
   version: "1.0.0"
 
 mcp:
-  # 기본 MCP 서버 HTTP endpoint (단일 사용 시)
+  # FastMCP 서버 HTTP endpoint
   base_url: "http://localhost:8000/mcp"
-  # 멀티 MCP 사용 시 endpoint 목록 (선택)
-  # base_urls:
-  #   - "http://localhost:8000/mcp"   # windows automation
-  #   - "http://localhost:8900/mcp"   # filesystem mcp
-  # 서버 별칭 라우팅(alias.tool_name)용 설정 (선택)
-  # servers:
-  #   windows: "http://localhost:8000/mcp"
-  #   filesystem: "http://localhost:8900/mcp"
 
 automation:
   # 자동화 모드 설정 (auto: 자유 계획 및 개입, semi: 순차 실행 + 상황 개입, manual: 순차 실행 전용)
