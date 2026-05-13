@@ -114,7 +114,7 @@ class AppUIAction:
                 return AppUIActionResult(result="error", message="포커스를 줄 수 있는 앱 윈도우를 찾지 못했습니다")
 
             # 윈도우 상태 확인 및 복구
-            is_minimized = self._safe_call(wrapper.is_minimized, False)
+            is_minimized = self._safe_call(lambda: wrapper.is_minimized(), False)
             if is_minimized:
                 logger.info("윈도우가 최소화되어 있어 복구를 시도합니다.")
                 wrapper.restore()
@@ -140,7 +140,7 @@ class AppUIAction:
             time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.5))
             
             # 윈도우가 가시적인지 재확인
-            if not self._safe_call(wrapper.is_visible, False):
+            if not self._safe_call(lambda: wrapper.is_visible(), False):
                 logger.warning("포커스 시도 후에도 윈도우가 가시적이지 않습니다.")
                 # 한 번 더 restore 시도
                 self._safe_call(wrapper.restore, None)
@@ -269,7 +269,7 @@ class AppUIAction:
                         # 현재 포커스된 창이 우리 앱의 것이라면 해당 창을 그대로 사용
                         from pywinauto.controls.hwndwrapper import HwndWrapper
                         wrapper = HwndWrapper(fg_hwnd)
-                        if self._safe_call(wrapper.is_visible, False):
+                        if self._safe_call(lambda: wrapper.is_visible(), False):
                             logger.debug(f"현재 활성화된 윈도우를 타겟으로 선택: '{self._safe_call(wrapper.window_text, '')}'")
                             self._session.cached_window = wrapper
                             return wrapper
@@ -311,8 +311,8 @@ class AppUIAction:
                 if not is_valid_path:
                     continue
 
-                is_visible = self._safe_call(wrapper.is_visible, False)
-                is_minimized = self._safe_call(wrapper.is_minimized, False)
+                is_visible = self._safe_call(lambda: wrapper.is_visible(), False)
+                is_minimized = self._safe_call(lambda: wrapper.is_minimized(), False)
                 
                 if is_visible or is_minimized:
                     logger.debug(f"적합한 상위 윈도우 발견: '{title}' (visible={is_visible}, minimized={is_minimized})")
@@ -349,7 +349,7 @@ class AppUIAction:
                             proc_name = ""
 
                         if proc_name == target_proc_name:
-                            is_visible = self._safe_call(wrapper.is_visible, False)
+                            is_visible = self._safe_call(lambda: wrapper.is_visible(), False)
                             if is_visible:
                                 title = self._safe_call(wrapper.window_text, "")
                                 logger.info(f"프로세스 매칭으로 윈도우 발견: '{title}' (PID: {pid})")
@@ -501,9 +501,9 @@ class AppUIAction:
         seen_ids: set[str] = set()
         for child in raw_children:
             wrapper = self._safe_call(lambda: child.wrapper_object(), None) or child
-            if not self._safe_call(wrapper.exists, False):
+            if not self._safe_call(lambda: wrapper.exists(), False):
                 continue
-            if not self._safe_call(wrapper.is_visible, False):
+            if not self._safe_call(lambda: wrapper.is_visible(), False):
                 continue
 
             node_id = str(self._safe_call(lambda: wrapper.element_info.handle, None) or "")
@@ -536,7 +536,7 @@ class AppUIAction:
         - auto: child title이 있으면 child 우선, 없으면 top 사용
         """
         top_window = self._session.cached_window
-        if top_window is not None and not self._safe_call(top_window.exists, False):
+        if top_window is not None and not self._safe_call(lambda: top_window.exists(), False):
             top_window = None
         if top_window is None:
             top_window = self._pick_target_window() or self._session.get_top_window()
@@ -556,7 +556,7 @@ class AppUIAction:
                 lambda: top_window.child_window(title=child_title).wrapper_object(),
                 None,
             )
-            if direct_wrapper is not None and self._safe_call(direct_wrapper.exists, False):
+            if direct_wrapper is not None and self._safe_call(lambda: direct_wrapper.exists(), False):
                 return direct_wrapper
 
             # contains/case-insensitive 대응을 위해 title_re 경로도 보강
@@ -572,7 +572,7 @@ class AppUIAction:
                 lambda: top_window.child_window(title_re=pattern).wrapper_object(),
                 None,
             )
-            if regex_wrapper is not None and self._safe_call(regex_wrapper.exists, False):
+            if regex_wrapper is not None and self._safe_call(lambda: regex_wrapper.exists(), False):
                 return regex_wrapper
 
             return None
@@ -679,7 +679,7 @@ class AppUIAction:
         target_windows = []
         for w in all_windows:
             wrapper = self._safe_call(lambda: w.wrapper_object(), None) or w
-            if self._verify_process_path(wrapper) and self._safe_call(wrapper.is_visible, False):
+            if self._verify_process_path(wrapper) and self._safe_call(lambda: wrapper.is_visible(), False):
                 target_windows.append(wrapper)
 
         if not target_windows:
@@ -709,7 +709,7 @@ class AppUIAction:
                 if global_idx >= component_limit:
                     break
                 
-                if not self._safe_call(node.is_visible, False):
+                if not self._safe_call(lambda: node.is_visible(), False):
                     continue
 
                 title = self._safe_call(node.window_text, "") or ""
