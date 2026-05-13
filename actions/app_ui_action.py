@@ -125,7 +125,7 @@ class AppUIAction:
                 wrapper.set_focus()
                 
                 # 2. 추가적인 강제 활성화 (최소화되어 있지 않아도 뒤에 숨어있을 수 있음)
-                wrapper.draw_outline() # 시각적 확인용 (선택사항)
+                # draw_outline은 호출 비용이 커서 기본 포커스 경로에서는 사용하지 않습니다.
             except Exception as e:
                 logger.warning(f"set_focus 실패: {e}. 대안을 시도합니다.")
                 try:
@@ -447,7 +447,7 @@ class AppUIAction:
             node_auto_id = str(self._safe_call(lambda: node.element_info.automation_id, "") or "")
             node_control_type = str(self._safe_call(lambda: node.element_info.control_type, "") or "")
             node_title = str(self._safe_call(node.window_text, "") or "")
-            node_legacy_value = self._extract_legacy_value(node)
+            node_legacy_value = ""
 
             if auto_id and node_auto_id != auto_id:
                 continue
@@ -460,6 +460,8 @@ class AppUIAction:
                 case_sensitive=case_sensitive,
             ):
                 continue
+            if legacy_value:
+                node_legacy_value = self._extract_legacy_value(node)
             if legacy_value and not self._is_attr_match(
                 actual=node_legacy_value,
                 expected=legacy_value,
@@ -469,6 +471,82 @@ class AppUIAction:
                 continue
             return node
         return None
+
+    def _list_candidate_child_windows(self, root: Any) -> list[Any]:
+        """속성 클릭 시 탐색 루트로 사용할 child window 후보를 반환합니다."""
+        candidates: list[Any] = []
+        raw_children = self._safe_call(root.children, []) or []
+        allowed_control_types = {"window", "pane", "document", "group", "custom"}
+        for child in raw_children:
+            wrapper = self._safe_call(lambda: child.wrapper_object(), None) or child
+            if not self._safe_call(wrapper.exists, False):
+                continue
+            if not self._safe_call(wrapper.is_visible, False):
+                continue
+            control_type = str(self._safe_call(lambda: wrapper.element_info.control_type, "") or "").lower()
+            if control_type and control_type not in allowed_control_types:
+                continue
+            candidates.append(wrapper)
+        return candidates
+
+    def _resolve_attr_search_root(
+        self,
+        *,
+        window_target: str,
+        child_window_title: Optional[str],
+        child_window_match_mode: str,
+        case_sensitive: bool,
+    ) -> tuple[Optional[Any], str]:
+        """
+        click_app_by_attr 탐색 루트를 결정합니다.
+        - top: 최상위 윈도우에서 탐색
+        - child: top의 child window에서 탐색
+        - auto: child title이 있으면 child 우선, 없으면 top 사용
+        """
+        top_window = self._session.cached_window
+        if top_window is not None and not self._safe_call(top_window.exists, False):
+            top_window = None
+        if top_window is None:
+            top_window = self._pick_target_window() or self._session.get_top_window()
+        if top_window is None:
+            return None, "none"
+
+        target_mode = (window_target or "auto").strip().lower()
+        child_title = (child_window_title or "").strip()
+        children = self._list_candidate_child_windows(top_window)
+
+        def pick_child_by_title() -> Optional[Any]:
+            if not child_title:
+                return None
+            for child in children:
+                title = str(self._safe_call(child.window_text, "") or "")
+                if self._is_attr_match(
+                    actual=title,
+                    expected=child_title,
+                    match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                ):
+                    return child
+            return None
+
+        if target_mode == "top":
+            return top_window, "top"
+
+        if target_mode == "child":
+            matched_child = pick_child_by_title()
+            if matched_child is not None:
+                return matched_child, f"child(title={child_title})"
+            if child_title:
+                return None, f"child_not_found(title={child_title})"
+            if children:
+                return children[0], "child(first_visible)"
+            return None, "child_not_found(no_children)"
+
+        # auto mode
+        matched_child = pick_child_by_title()
+        if matched_child is not None:
+            return matched_child, f"auto->child(title={child_title})"
+        return top_window, "auto->top"
 
     def _click_with_preferred_action(
         self,
@@ -1044,6 +1122,9 @@ class AppUIAction:
         legacy_value: Optional[str] = None,
         legacy_match_mode: str = "exact",
         case_sensitive: bool = False,
+        window_target: str = "auto",
+        child_window_title: Optional[str] = None,
+        child_window_match_mode: str = "contains",
         button: str = "left",
         clicks: int = 1,
         double: bool = False,
@@ -1055,10 +1136,9 @@ class AppUIAction:
         속성 기반으로 특정 요소를 찾아 클릭합니다.
         auto_id/control_type/title/legacy_value 중 하나 이상을 입력받아 대상을 식별합니다.
         """
-        self.ensure_focus()
-        top_window = self._session.get_top_window()
-        if top_window is None:
-            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 확보할 수 없습니다.")
+        focus_result = self.ensure_focus()
+        if not focus_result.is_success:
+            return AppUIActionResult(result="error", message=focus_result.message)
 
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
@@ -1072,6 +1152,18 @@ class AppUIAction:
                 result="error",
                 message=f"지원하지 않는 legacy_match_mode: {legacy_match_mode} (exact|contains)",
             )
+        child_window_match_mode = (child_window_match_mode or "contains").strip().lower()
+        if child_window_match_mode not in {"exact", "contains"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 child_window_match_mode: {child_window_match_mode} (exact|contains)",
+            )
+        window_target = (window_target or "auto").strip().lower()
+        if window_target not in {"auto", "top", "child"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 window_target: {window_target} (auto|top|child)",
+            )
 
         if not any([auto_id, control_type, title, legacy_value]):
             return AppUIActionResult(
@@ -1083,17 +1175,28 @@ class AppUIAction:
             actual_timeout = timeout if timeout is not None else 5.0
             start = time.monotonic()
             target = None
+            search_root_info = "none"
             while True:
-                target = self._find_first_matching_node(
-                    root=top_window,
-                    auto_id=auto_id,
-                    control_type=control_type,
-                    title=title,
-                    title_match_mode=title_match_mode,
-                    legacy_value=legacy_value,
-                    legacy_match_mode=legacy_match_mode,
+                search_root, search_root_info = self._resolve_attr_search_root(
+                    window_target=window_target,
+                    child_window_title=child_window_title,
+                    child_window_match_mode=child_window_match_mode,
                     case_sensitive=case_sensitive,
                 )
+                if search_root is None:
+                    target = None
+                else:
+                    target = self._find_first_matching_node(
+                        root=search_root,
+                        auto_id=auto_id,
+                        control_type=control_type,
+                        title=title,
+                        title_match_mode=title_match_mode,
+                        legacy_value=legacy_value,
+                        legacy_match_mode=legacy_match_mode,
+                        case_sensitive=case_sensitive,
+                    )
+
                 if target is not None:
                     break
                 if time.monotonic() - start > actual_timeout:
@@ -1105,7 +1208,8 @@ class AppUIAction:
                     result="error",
                     message=(
                         "요소를 찾지 못했습니다: "
-                        f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}"
+                        f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}, "
+                        f"window_target={window_target}, child_window_title={child_window_title}, search_root={search_root_info}"
                     ),
                 )
             
@@ -1127,7 +1231,8 @@ class AppUIAction:
                 message=(
                     "요소 클릭 성공: "
                     f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}, "
-                    f"method={click_method}"
+                    f"window_target={window_target}, child_window_title={child_window_title}, "
+                    f"search_root={search_root_info}, method={click_method}"
                 ),
             )
         except Exception as e:
