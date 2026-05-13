@@ -277,6 +277,13 @@ class GraphNodes:
             logger.info("[manual 모드] 상황 체크를 건너뛰고 진행합니다.")
             return {"check_status": "manual_bypass", "next_action": "proceed"}
 
+        # [개선] 소스 수정이나 에디트 관련 스킬은 앱이 실행 중일 필요가 없으므로 상황 체크(앱 실행 트리거)를 건너뜁니다.
+        # 앱 실행 전에 설정을 바꿔야 하는 경우를 대비한 로직입니다.
+        source_keywords = ["edit", "source", "config", "replace", "find_text"]
+        if any(kw in current_skill_id.lower() for kw in source_keywords):
+            logger.info(f"[Bypass] 스킬 '{current_skill_id}'은 소스/설정 관련 작업이므로 화면 체크를 건너뜁니다.")
+            return {"check_status": "source_edit_bypass", "next_action": "proceed"}
+
         state_info = await self.mcp.call_tool("describe_current_state", {"include_components": False})
         
         skills_config = self._get_skills_config()
