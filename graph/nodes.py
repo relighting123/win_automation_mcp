@@ -2,6 +2,7 @@ import json
 import logging
 import yaml
 import difflib
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
 from langchain_core.prompts import ChatPromptTemplate
