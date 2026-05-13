@@ -345,6 +345,10 @@ def click_app_by_rgb(
     """
     logger.info(f"[Tool] click_app_by_rgb 호출: rgb=({r}, {g}, {b}), tolerance={tolerance}")
     action = get_app_ui_action()
+    focus_result = action.ensure_focus()
+    if not focus_result.is_success:
+        return json.dumps(focus_result.to_dict(), ensure_ascii=False)
+
     find_result = action.find_rgb_position(rgb=(r, g, b), tolerance=tolerance, timeout=timeout)
     
     if not find_result.is_success:
