@@ -320,6 +320,14 @@ LLM/MCP 연결 정보는 `config/app_config.yaml`에서 공통 관리합니다.
 ```yaml
 mcp:
   base_url: "http://localhost:8000/mcp"
+  # optional: 멀티 MCP endpoint 집계
+  base_urls:
+    - "http://localhost:8000/mcp"   # windows automation
+    - "http://localhost:8900/mcp"   # filesystem mcp
+  # optional: 서버 별칭 라우팅 (alias.tool_name)
+  servers:
+    windows: "http://localhost:8000/mcp"
+    filesystem: "http://localhost:8900/mcp"
 
 llm:
   base_url: "https://api.groq.com/openai/v1"
@@ -331,6 +339,9 @@ llm:
 
 fallback 우선순위:
 - MCP Base URL: `app_config.yaml.mcp.base_url` -> `MCP_BASE_URL` -> `http://localhost:8000/mcp`
+- MCP Base URLs(멀티): `app_config.yaml.mcp.base_urls` + `app_config.yaml.mcp.servers.*` + `MCP_BASE_URLS(콤마 구분)`
 - LLM Base URL: `app_config.yaml.llm.base_url` -> `INTERNAL_LLM_BASE_URL` -> `OPENAI_BASE_URL` -> `https://api.groq.com/openai/v1`
 - LLM API Key: `app_config.yaml.llm.api_key` -> `INTERNAL_LLM_API_KEY` -> `OPENAI_API_KEY` -> `""`
 - LLM Model: `app_config.yaml.llm.model` -> `INTERNAL_LLM_MODEL` -> `OPENAI_MODEL` -> `openai/gpt-oss-120b`
+
+멀티 MCP에서 동일한 이름의 도구가 여러 서버에 존재할 경우 `alias.tool_name` 형식으로 호출 대상을 명시할 수 있습니다.
