@@ -995,11 +995,14 @@ class AppUIAction:
                         # 리전이 있는 경우 절대 좌표로 변환
                         final_x = x + (region[0] if region else 0)
                         final_y = y + (region[1] if region else 0)
+                        logger.info(f"RGB {rgb} 발견: ({final_x}, {final_y})")
                         return AppUIActionResult(result="success", x=final_x, y=final_y)
 
             if timeout is None:
+                logger.warning(f"RGB {rgb}를 찾을 수 없습니다.")
                 return AppUIActionResult(result="not_found", message="RGB 위치를 찾을 수 없습니다")
             if timeout is not None and time.monotonic() - start > timeout:
+                logger.warning(f"RGB {rgb} 탐색 시간 초과 ({timeout}s)")
                 return AppUIActionResult(result="timeout", message="RGB 위치 탐색 시간 초과")
 
     def click_position(

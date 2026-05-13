@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections import deque
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -40,22 +41,39 @@ def _resolve_workspace_file(file_path: str) -> Path:
     return target
 
 
-def _find_occurrence_indices(line: str, search_text: str, case_sensitive: bool) -> List[int]:
-    if case_sensitive:
-        haystack = line
-        needle = search_text
+def _find_occurrence_indices(
+    line: str,
+    search_text: str,
+    case_sensitive: bool,
+    is_regex: bool = False,
+) -> List[Tuple[int, int]]:
+    """문자열 또는 정규표현식 매칭의 (시작, 끝) 인덱스 리스트를 반환합니다."""
+    indices: List[Tuple[int, int]] = []
+    
+    if is_regex:
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            for m in re.finditer(search_text, line, flags=flags):
+                indices.append((m.start(), m.end()))
+        except re.error as e:
+            logger.error("잘못된 정규표현식: %s", e)
+            raise ValueError(f"잘못된 정규표현식입니다: {e}")
     else:
-        haystack = line.lower()
-        needle = search_text.lower()
+        if case_sensitive:
+            haystack = line
+            needle = search_text
+        else:
+            haystack = line.lower()
+            needle = search_text.lower()
 
-    indices: List[int] = []
-    cursor = 0
-    while True:
-        idx = haystack.find(needle, cursor)
-        if idx < 0:
-            break
-        indices.append(idx)
-        cursor = idx + len(needle)
+        cursor = 0
+        while True:
+            idx = haystack.find(needle, cursor)
+            if idx < 0:
+                break
+            indices.append((idx, idx + len(needle)))
+            cursor = idx + len(needle)
+            
     return indices
 
 
@@ -63,6 +81,7 @@ def find_text_in_file(
     file_path: str,
     search_text: str,
     case_sensitive: bool = False,
+    is_regex: bool = False,
     context_lines: int = 2,
     max_matches: int = 20,
 ) -> str:
@@ -114,6 +133,7 @@ def find_text_in_file(
                     line=line,
                     search_text=search_text,
                     case_sensitive=case_sensitive,
+                    is_regex=is_regex,
                 )
                 if hit_indices and len(matches) < max_matches:
                     match_entry = {
@@ -159,9 +179,9 @@ def find_text_in_file(
         )
 
 
-def _replace_single_occurrence(line: str, search_text: str, replacement_text: str, target_index: int) -> str:
-    """line 내 target_index 위치의 1개 매칭만 교체합니다."""
-    return line[:target_index] + replacement_text + line[target_index + len(search_text) :]
+def _replace_single_occurrence(line: str, search_text: str, replacement_text: str, start_index: int, end_index: int) -> str:
+    """line 내 [start_index:end_index] 범위를 교체합니다."""
+    return line[:start_index] + replacement_text + line[end_index:]
 
 
 def replace_text_in_file(
@@ -171,6 +191,7 @@ def replace_text_in_file(
     replace_all: bool = False,
     occurrence: int = 1,
     case_sensitive: bool = True,
+    is_regex: bool = False,
     dry_run: bool = False,
     max_replacements: int = 10000,
 ) -> str:
@@ -231,6 +252,7 @@ def replace_text_in_file(
                         line=line,
                         search_text=search_text,
                         case_sensitive=case_sensitive,
+                        is_regex=is_regex,
                     )
                     hit_count = len(hit_indices)
 
@@ -239,30 +261,32 @@ def replace_text_in_file(
                             remain_budget = max_replacements - replaced_count
                             if remain_budget > 0:
                                 if remain_budget >= hit_count:
-                                    if case_sensitive:
+                                    if not is_regex and case_sensitive:
                                         updated_line = line.replace(search_text, replacement_text)
                                         applied = hit_count
                                     else:
                                         updated_line = line
                                         applied = 0
-                                        for idx in reversed(hit_indices):
+                                        for start, end in reversed(hit_indices):
                                             updated_line = _replace_single_occurrence(
                                                 updated_line,
                                                 search_text,
                                                 replacement_text,
-                                                idx,
+                                                start,
+                                                end,
                                             )
                                             applied += 1
                                     replaced_count += applied
                                 else:
                                     selected = hit_indices[:remain_budget]
                                     updated_line = line
-                                    for idx in reversed(selected):
+                                    for start, end in reversed(selected):
                                         updated_line = _replace_single_occurrence(
                                             updated_line,
                                             search_text,
                                             replacement_text,
-                                            idx,
+                                            start,
+                                            end,
                                         )
                                     replaced_count += len(selected)
 
@@ -277,12 +301,13 @@ def replace_text_in_file(
                         else:
                             if total_seen + hit_count >= occurrence and replaced_count == 0:
                                 local_index = occurrence - total_seen - 1
-                                target_idx = hit_indices[local_index]
+                                start, end = hit_indices[local_index]
                                 updated_line = _replace_single_occurrence(
                                     line,
                                     search_text,
                                     replacement_text,
-                                    target_idx,
+                                    start,
+                                    end,
                                 )
                                 replaced_count = 1
                                 if len(replacements_preview) < 20:
@@ -355,8 +380,146 @@ def replace_text_in_file(
         )
 
 
+
+def replace_text_with_context(
+    file_path: str,
+    search_text: str,
+    replacement_text: str,
+    context_text: str,
+    context_lines: int = 5,
+    case_sensitive: bool = True,
+    is_regex: bool = False,
+    is_context_regex: bool = False,
+    dry_run: bool = False,
+) -> str:
+    """
+    특정 문맥(context_text)이 근처에 있을 때만 검색 텍스트를 치환합니다.
+
+    - search_text: 찾을 텍스트
+    - replacement_text: 바꿀 텍스트
+    - context_text: 근처에 있어야 하는 키워드
+    - context_lines: 검색 텍스트 기준 앞뒤로 확인할 라인 수
+    """
+    logger.info(
+        "[Tool] replace_text_with_context 호출: file=%s, search=%s, context=%s, dry_run=%s",
+        file_path,
+        search_text,
+        context_text,
+        dry_run,
+    )
+
+    try:
+        target = _resolve_workspace_file(file_path)
+        if not search_text:
+            raise ValueError("search_text는 비어 있을 수 없습니다.")
+        if not context_text:
+            raise ValueError("context_text는 비어 있을 수 없습니다.")
+        
+        context_lines = max(int(context_lines), 0)
+        
+        # 전체 파일을 읽어서 라인 리스트로 변환 (컨텍스트 확인을 위해)
+        # 대용량 파일의 경우 메모리 문제가 있을 수 있으나, 문맥 확인을 위해 일정 범위의 버퍼가 필요함.
+        # 여기서는 구현의 단순성을 위해 전체를 읽거나, 슬라이딩 윈도우를 사용합니다.
+        # 기존 streaming 형식을 유지하면서 슬라이딩 윈도우로 구현합니다.
+        
+        lines: List[str] = []
+        with target.open("r", encoding="utf-8", errors="replace", newline="") as src:
+            lines = src.readlines()
+
+        replaced_count = 0
+        replacements_preview: List[Dict[str, Any]] = []
+        new_lines: List[str] = list(lines)
+
+        for i, line in enumerate(lines):
+            hit_indices = _find_occurrence_indices(
+                line=line,
+                search_text=search_text,
+                case_sensitive=case_sensitive,
+                is_regex=is_regex,
+            )
+            
+            if hit_indices:
+                # 문맥 확인 (i-context_lines ~ i+context_lines)
+                start_idx = max(0, i - context_lines)
+                end_idx = min(len(lines), i + context_lines + 1)
+                context_window = lines[start_idx:end_idx]
+                
+                context_found = False
+                c_flags = 0 if case_sensitive else re.IGNORECASE
+                for c_line in context_window:
+                    if is_context_regex:
+                        if re.search(context_text, c_line, flags=c_flags):
+                            context_found = True
+                            break
+                    else:
+                        if case_sensitive:
+                            if context_text in c_line:
+                                context_found = True
+                                break
+                        else:
+                            if context_text.lower() in c_line.lower():
+                                context_found = True
+                                break
+                
+                if context_found:
+                    updated_line = line
+                    if not is_regex and case_sensitive:
+                        updated_line = line.replace(search_text, replacement_text)
+                    else:
+                        # 대소문자 무시 또는 정규표현식 치환 (뒤에서부터 교체하여 인덱스 유지)
+                        for start, end in reversed(hit_indices):
+                            updated_line = _replace_single_occurrence(
+                                updated_line,
+                                search_text,
+                                replacement_text,
+                                start,
+                                end,
+                            )
+                    
+                    if updated_line != line:
+                        new_lines[i] = updated_line
+                        replaced_count += 1
+                        if len(replacements_preview) < 20:
+                            replacements_preview.append({
+                                "line_number": i + 1,
+                                "before": line.rstrip("\r\n")[:300],
+                                "after": updated_line.rstrip("\r\n")[:300]
+                            })
+
+        if replaced_count > 0 and not dry_run:
+            with target.open("w", encoding="utf-8", newline="") as f:
+                f.writelines(new_lines)
+
+        return json.dumps(
+            {
+                "success": replaced_count > 0,
+                "file_path": str(target),
+                "replaced_count": replaced_count,
+                "dry_run": dry_run,
+                "preview": replacements_preview,
+                "message": (
+                    f"{replaced_count}개 매칭을 문맥 기반으로 치환했습니다."
+                    if replaced_count > 0
+                    else "조건에 맞는 매칭을 찾지 못했습니다."
+                ),
+            },
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error("[Tool] replace_text_with_context 예외: %s", e)
+        return json.dumps(
+            {
+                "success": False,
+                "message": f"문맥 기반 치환 실패: {e}",
+                "error_detail": str(e),
+            },
+            ensure_ascii=False,
+        )
+
+
 def register_source_edit_tools(mcp: "FastMCP") -> None:
     """소스 검색/치환 도구를 FastMCP 서버에 등록합니다."""
     mcp.tool()(find_text_in_file)
     mcp.tool()(replace_text_in_file)
-    logger.info("소스 편집 도구 등록 완료: find_text_in_file, replace_text_in_file")
+    mcp.tool()(replace_text_with_context)
+    logger.info("소스 편집 도구 등록 완료: find_text_in_file, replace_text_in_file, replace_text_with_context")
