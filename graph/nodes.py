@@ -367,6 +367,17 @@ class GraphNodes:
             logger.error(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
             raise ValueError(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
 
+        if state.mode == "manual":
+            # manual 모드는 사람이 정의한 스킬 시퀀스를 그대로 실행하므로
+            # 단계별 기본/고정 인자만 사용하고 LLM 추출을 생략한다.
+            manual_calls: List[ToolCall] = []
+            for step in steps_metadata:
+                args: Dict[str, Any] = {}
+                for arg_name, arg_meta in step["args"].items():
+                    args[arg_name] = arg_meta.get("value")
+                manual_calls.append(ToolCall(tool=step["tool"], args=args))
+            return {"enriched_plan": manual_calls, "tool_sequence": tool_sequence}
+
         # 스킬별 특화 안내문(skill.md)이 있으면 추가
         skill_instruction = f"\n\n### CURRENT SKILL SPECIFIC GUIDE ###\n{skill.instruction}" if skill.instruction else ""
         mode_instruction = MODE_INSTRUCTIONS.get(state.mode, MODE_INSTRUCTIONS["semi"])
