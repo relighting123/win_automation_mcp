@@ -111,7 +111,6 @@ def register_all_tools() -> None:
     from tools.app_mgmt_tool import register_app_mgmt_tools
     from tools.app_control_tool import register_app_control_tools
     from tools.data_analysis_tool import register_data_analysis_tools
-    from tools.source_code_tool import register_source_code_tools
     from tools.skill_tool import register_skill_tools
     
     # 애플리케이션 관리 도구
@@ -122,9 +121,6 @@ def register_all_tools() -> None:
 
     # 클립보드/데이터프레임 분석 보조 도구
     register_data_analysis_tools(mcp)
-
-    # 파일 소스 검색/치환 도구
-    register_source_code_tools(mcp)
 
     # 고수준 Skill 기반 도구
     register_skill_tools(mcp)

@@ -23,7 +23,6 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         restart_application,
     )
     from tools.data_analysis_tool import read_clipboard_as_dataframe
-    from tools.source_code_tool import find_source_in_file, replace_source_in_file
 
     return {
         # app_mgmt_tool
@@ -45,7 +44,4 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "get_app_coords_by_attr": get_app_coords_by_attr,
         # data_analysis_tool
         "read_clipboard_as_dataframe": read_clipboard_as_dataframe,
-        # source_code_tool
-        "find_source_in_file": find_source_in_file,
-        "replace_source_in_file": replace_source_in_file,
     }
