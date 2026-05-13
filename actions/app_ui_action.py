@@ -472,17 +472,48 @@ class AppUIAction:
             return node
         return None
 
-    def _list_candidate_child_windows(self, root: Any) -> list[Any]:
+    def _get_node_title_candidates(self, node: Any) -> list[str]:
+        """노드에서 title 매칭에 사용할 후보 문자열 목록을 반환합니다."""
+        values: list[str] = []
+        values.append(str(self._safe_call(node.window_text, "") or ""))
+        values.append(str(self._safe_call(lambda: node.element_info.name, "") or ""))
+        values.append(str(self._safe_call(lambda: node.element_info.rich_text, "") or ""))
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = " ".join(str(value).split())
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    def _list_candidate_child_windows(self, root: Any, *, include_descendants: bool = False) -> list[Any]:
         """속성 클릭 시 탐색 루트로 사용할 child window 후보를 반환합니다."""
         candidates: list[Any] = []
         raw_children = self._safe_call(root.children, []) or []
+        if include_descendants:
+            descendants = self._safe_call(root.descendants, []) or []
+            raw_children.extend(descendants)
         allowed_control_types = {"window", "pane", "document", "group", "custom"}
+        seen_ids: set[str] = set()
         for child in raw_children:
             wrapper = self._safe_call(lambda: child.wrapper_object(), None) or child
             if not self._safe_call(wrapper.exists, False):
                 continue
             if not self._safe_call(wrapper.is_visible, False):
                 continue
+
+            node_id = str(self._safe_call(lambda: wrapper.element_info.handle, None) or "")
+            if not node_id:
+                node_id = str(self._safe_call(lambda: wrapper.element_info.runtime_id, None) or "")
+            if not node_id:
+                node_id = str(id(wrapper))
+            if node_id in seen_ids:
+                continue
+            seen_ids.add(node_id)
+
             control_type = str(self._safe_call(lambda: wrapper.element_info.control_type, "") or "").lower()
             if control_type and control_type not in allowed_control_types:
                 continue
@@ -519,14 +550,26 @@ class AppUIAction:
             if not child_title:
                 return None
             for child in children:
-                title = str(self._safe_call(child.window_text, "") or "")
-                if self._is_attr_match(
-                    actual=title,
-                    expected=child_title,
-                    match_mode=child_window_match_mode,
-                    case_sensitive=case_sensitive,
-                ):
-                    return child
+                for candidate_title in self._get_node_title_candidates(child):
+                    if self._is_attr_match(
+                        actual=candidate_title,
+                        expected=child_title,
+                        match_mode=child_window_match_mode,
+                        case_sensitive=case_sensitive,
+                    ):
+                        return child
+
+            # direct child에서 못 찾으면 descendants까지 확장 탐색
+            descendants = self._list_candidate_child_windows(top_window, include_descendants=True)
+            for child in descendants:
+                for candidate_title in self._get_node_title_candidates(child):
+                    if self._is_attr_match(
+                        actual=candidate_title,
+                        expected=child_title,
+                        match_mode=child_window_match_mode,
+                        case_sensitive=case_sensitive,
+                    ):
+                        return child
             return None
 
         if target_mode == "top":
