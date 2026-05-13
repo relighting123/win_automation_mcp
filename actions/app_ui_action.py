@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 import asyncio
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -546,9 +547,43 @@ class AppUIAction:
         child_title = (child_window_title or "").strip()
         children = self._list_candidate_child_windows(top_window)
 
+        def pick_child_by_direct_api() -> Optional[Any]:
+            if not child_title:
+                return None
+
+            # 사용자가 요청한 pywinauto 기본 방식(top_window.child_window(title=...))을 우선 시도
+            direct_wrapper = self._safe_call(
+                lambda: top_window.child_window(title=child_title).wrapper_object(),
+                None,
+            )
+            if direct_wrapper is not None and self._safe_call(direct_wrapper.exists, False):
+                return direct_wrapper
+
+            # contains/case-insensitive 대응을 위해 title_re 경로도 보강
+            pattern = re.escape(child_title)
+            if child_window_match_mode == "contains":
+                pattern = f".*{pattern}.*"
+            else:
+                pattern = f"^{pattern}$"
+            if not case_sensitive:
+                pattern = f"(?i){pattern}"
+
+            regex_wrapper = self._safe_call(
+                lambda: top_window.child_window(title_re=pattern).wrapper_object(),
+                None,
+            )
+            if regex_wrapper is not None and self._safe_call(regex_wrapper.exists, False):
+                return regex_wrapper
+
+            return None
+
         def pick_child_by_title() -> Optional[Any]:
             if not child_title:
                 return None
+            direct_matched = pick_child_by_direct_api()
+            if direct_matched is not None:
+                return direct_matched
+
             for child in children:
                 for candidate_title in self._get_node_title_candidates(child):
                     if self._is_attr_match(
