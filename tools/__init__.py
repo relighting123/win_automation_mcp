@@ -22,9 +22,16 @@ def register_data_analysis_tools(*args, **kwargs):
     return _register_data_analysis_tools(*args, **kwargs)
 
 
+def register_source_edit_tools(*args, **kwargs):
+    from .source_edit_tool import register_source_edit_tools as _register_source_edit_tools
+
+    return _register_source_edit_tools(*args, **kwargs)
+
+
 __all__ = [
     "register_app_control_tools",
     "register_app_mgmt_tools",
     "register_data_analysis_tools",
+    "register_source_edit_tools",
     "register_skill_tools",
 ]

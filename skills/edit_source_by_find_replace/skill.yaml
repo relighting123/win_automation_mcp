@@ -1,0 +1,26 @@
+description: "단일 MCP 서버에서 특정 구문을 찾아 치환하는 소스 수정 스킬"
+tools:
+  - tool: find_text_in_file
+    args:
+      file_path: { mode: "ai" }
+      search_text: { mode: "ai" }
+      case_sensitive: { mode: "ai", value: false }
+      context_lines: 2
+      max_matches: 10
+  - tool: replace_text_in_file
+    args:
+      file_path: { mode: "ai" }
+      search_text: { mode: "ai" }
+      replacement_text: { mode: "ai" }
+      replace_all: { mode: "ai", value: false }
+      occurrence: { mode: "ai", value: 1 }
+      case_sensitive: { mode: "ai", value: true }
+      dry_run: { mode: "ai", value: false }
+      max_replacements: 10000
+  - tool: find_text_in_file
+    args:
+      file_path: { mode: "ai" }
+      search_text: { mode: "ai" }
+      case_sensitive: { mode: "ai", value: false }
+      context_lines: 1
+      max_matches: 10
