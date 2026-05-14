@@ -11,6 +11,7 @@ import logging
 import time
 import asyncio
 import re
+import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -986,17 +987,42 @@ class AppUIAction:
 
         while True:
             screenshot = pyautogui.screenshot(region=region)
-            width, height = screenshot.size
-            pixels = screenshot.load()
+            
+            # [Optimization] numpy를 사용하여 픽셀 탐색 속도 대폭 향상
+            pixels = np.array(screenshot)
+            
+            # tolerance 내의 모든 픽셀을 한 번에 마스킹
+            # pixels shape: (height, width, channels)
+            # rgb: (r, g, b)
+            # channels가 4개(RGBA)인 경우 처음 3개만 사용
+            target_pixels = pixels[:, :, :3]
+            
+            # 각 채널별 차이 계산
+            # numpy 브로드캐스팅을 활용하여 (H, W, 3) - (3,) 연산 수행
+            diff = np.abs(target_pixels.astype(np.int16) - np.array(rgb, dtype=np.int16))
+            
+            # 모든 채널(axis=-1)이 tolerance 이내인 픽셀 찾기
+            mask = np.all(diff <= tolerance, axis=-1)
+            
+            # step 적용 (Slicing)
+            if step > 1:
+                # y, x 순서로 step 적용된 mask 생성
+                reduced_mask = np.zeros_like(mask)
+                reduced_mask[::step, ::step] = mask[::step, ::step]
+                mask = reduced_mask
 
-            for y in range(0, height, step):
-                for x in range(0, width, step):
-                    if self._match(pixels[x, y], rgb, tolerance):
-                        # 리전이 있는 경우 절대 좌표로 변환
-                        final_x = x + (region[0] if region else 0)
-                        final_y = y + (region[1] if region else 0)
-                        logger.info(f"RGB {rgb} 발견: ({final_x}, {final_y})")
-                        return AppUIActionResult(result="success", x=final_x, y=final_y)
+            # 일치하는 좌표 찾기
+            coords = np.where(mask)
+            if coords[0].size > 0:
+                # 첫 번째 일치하는 점 선택 (y, x 순서)
+                y_idx, x_idx = coords[0][0], coords[1][0]
+                
+                # 리전이 있는 경우 절대 좌표로 변환
+                final_x = int(x_idx) + (region[0] if region else 0)
+                final_y = int(y_idx) + (region[1] if region else 0)
+                
+                logger.info(f"RGB {rgb} 발견: ({final_x}, {final_y}) (numpy 최적화 적용)")
+                return AppUIActionResult(result="success", x=final_x, y=final_y)
 
             if timeout is None:
                 logger.warning(f"RGB {rgb}를 찾을 수 없습니다.")
@@ -1004,6 +1030,8 @@ class AppUIAction:
             if timeout is not None and time.monotonic() - start > timeout:
                 logger.warning(f"RGB {rgb} 탐색 시간 초과 ({timeout}s)")
                 return AppUIActionResult(result="timeout", message="RGB 위치 탐색 시간 초과")
+            
+            time.sleep(0.1)
 
     def click_position(
         self,

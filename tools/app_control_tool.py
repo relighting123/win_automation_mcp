@@ -327,6 +327,12 @@ def find_app_by_rgb(
     """
     logger.info(f"[Tool] find_app_by_rgb 호출: rgb=({r}, {g}, {b}), tolerance={tolerance}")
     action = get_app_ui_action()
+    
+    # 추가: 탐색 전 앱을 화면 앞으로 가져오고 활성화
+    focus_result = action.ensure_focus()
+    if not focus_result.is_success:
+        return json.dumps(focus_result.to_dict(), ensure_ascii=False)
+        
     result = action.find_rgb_position(rgb=(r, g, b), tolerance=tolerance, timeout=timeout)
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
