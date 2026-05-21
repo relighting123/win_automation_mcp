@@ -43,6 +43,12 @@ async def run_automation(
     resolved_api_key = api_key or settings["api_key"]
     resolved_base_url = base_url or settings["base_url"]
     resolved_mode = normalize_automation_mode(mode or auto_settings["mode"])
+    logger.info(
+        "[Automation] LLM 설정: model=%s, base_url=%s, mode=%s",
+        resolved_model,
+        resolved_base_url,
+        resolved_mode,
+    )
     
     agent = MiniHybridAgent(mcp, resolved_model, resolved_api_key, resolved_base_url)
     
