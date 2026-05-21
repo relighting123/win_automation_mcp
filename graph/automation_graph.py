@@ -1,12 +1,22 @@
 import logging
 import asyncio
+import os
 from langchain_openai import ChatOpenAI
 from mcp_client import MCPClient
 from core.llm_config import get_llm_settings, get_mcp_settings, get_automation_settings
+from core.server_lifecycle import mcp_server_context
 from .builder import build_automation_graph
 
-# 로깅 설정
 logger = logging.getLogger(__name__)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """환경변수 -> bool 변환 헬퍼"""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on", "y", "t"}
+
 
 class MiniHybridAgent:
     def __init__(self, mcp, model, api_key, base_url):
@@ -56,16 +66,14 @@ async def run_automation(
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
-    async def example():
-        llm_settings = get_llm_settings()
-        mcp_settings = get_mcp_settings()
-        auto_settings = get_automation_settings()
 
-        mcp_client = MCPClient(base_url=mcp_settings["base_url"])
+    async def example(mcp_base_url: str):
         my_skills = ["demo_mixed_args"]
         my_query = "메모장에 안녕써줘"
-        
+
+        auto_settings = get_automation_settings()
+        mcp_client = MCPClient(base_url=mcp_base_url)
+
         report_payload = await run_automation(
             mcp=mcp_client,
             query=my_query,
@@ -75,4 +83,20 @@ if __name__ == "__main__":
         print(f"\n[AI 자동화 보고서]\n{report_payload['report']}")
         print(f"\n[구조화 상세]\n{report_payload['report_details']}")
 
-    asyncio.run(example())
+    mcp_settings = get_mcp_settings()
+    base_url = mcp_settings["base_url"]
+
+    # 별도 터미널 없이 빠르게 서버를 띄우고 싶을 때:
+    #   AUTOMATION_AUTOSTART_SERVER=1 python -m graph.automation_graph
+    # (이미 서버가 떠 있으면 새로 띄우지 않고 그대로 재사용합니다.)
+    autostart = _env_bool("AUTOMATION_AUTOSTART_SERVER", default=True)
+    startup_timeout = float(os.getenv("AUTOMATION_SERVER_STARTUP_TIMEOUT", "30"))
+    server_log = os.getenv("AUTOMATION_SERVER_LOG") or "logs/mcp_server_auto.log"
+
+    with mcp_server_context(
+        base_url,
+        auto_start=autostart,
+        startup_timeout=startup_timeout,
+        log_file=server_log,
+    ):
+        asyncio.run(example(base_url))
