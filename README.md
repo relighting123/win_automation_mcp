@@ -215,6 +215,21 @@ python mcp_server.py --transport sse --port 8000 --reload
 ```
 
 ### 2. 실행 방법
+
+#### (권장) 한 줄로 서버까지 자동 기동
+`automation_graph.py`를 직접 실행하면 MCP 서버가 떠 있지 않을 때 자동으로 백그라운드로 띄워주고, 끝나면 정리합니다. (이미 떠 있는 서버는 재사용하며 종료시키지 않습니다.)
+
+```bash
+# 가장 빠른 한 줄 실행 (서버 자동 기동 포함)
+python -m graph.automation_graph
+```
+
+관련 환경변수:
+- `AUTOMATION_AUTOSTART_SERVER`: 자동 기동 on/off (기본 `1`, off 하려면 `0`)
+- `AUTOMATION_SERVER_STARTUP_TIMEOUT`: 서버 ready 대기 초 (기본 `30`)
+- `AUTOMATION_SERVER_LOG`: 자동 기동 서버의 로그 파일 (기본 `logs/mcp_server_auto.log`)
+
+#### 수동으로 서버를 띄우는 경우
 1. **MCP 서버 시작**: `python mcp_server.py --transport http`
 2. **Plan 지정 후 실행**:
    ```bash
@@ -225,6 +240,15 @@ python mcp_server.py --transport sse --port 8000 --reload
 기본값:
 - `MCP_BASE_URL`: `http://localhost:8000/mcp`
 - `AUTOMATION_PLAN_MD`: `plans/sample_plan.md`
+
+### 3. 서버 자동 기동을 다른 코드에서 사용하기
+```python
+from core.server_lifecycle import mcp_server_context
+
+with mcp_server_context("http://localhost:8000/mcp"):
+    # 이 블록 안에서는 MCP 서버가 반드시 떠 있음이 보장됩니다.
+    ...
+```
 
 ## 파인튜닝 (Finetuning)
 
