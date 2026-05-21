@@ -336,11 +336,6 @@ def main():
         action="store_true",
         help="파일 변경 시 자동 재시작 활성화"
     )
-    parser.add_argument(
-        "--skip-port-kill",
-        action="store_true",
-        help="시작 시 포트 점유 프로세스 강제 종료를 건너뜁니다 (빠른 재기동용)."
-    )
     
     args = parser.parse_args()
     
@@ -352,7 +347,7 @@ def main():
     logging.getLogger().setLevel(getattr(logging, args.log_level))
     
     # 포트 충돌 해결 (기존 프로세스 종료)
-    if args.transport in ("http", "streamable-http", "sse") and not args.skip_port_kill:
+    if args.transport in ("http", "streamable-http", "sse"):
         from core.network_utils import kill_process_on_port
         kill_process_on_port(args.port)
     

@@ -1,7 +1,7 @@
 import json
 import logging
-import os
 import yaml
+import difflib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
@@ -23,58 +23,6 @@ class GraphNodes:
         self.mcp = mcp
         self.llm = llm
         self._skills_cache: Optional[Dict[str, Any]] = None
-        self._llm_call_target = self._resolve_llm_call_target()
-        self._llm_prompt_logging_enabled = (
-            os.getenv("LOG_LLM_PROMPTS", "true").strip().lower() not in {"0", "false", "off", "no"}
-        )
-        max_chars_raw = os.getenv("LLM_PROMPT_LOG_MAX_CHARS", "8000").strip()
-        try:
-            parsed_max_chars = int(max_chars_raw)
-            self._llm_prompt_log_max_chars = parsed_max_chars if parsed_max_chars > 0 else 8000
-        except ValueError:
-            self._llm_prompt_log_max_chars = 8000
-
-    @staticmethod
-    def _serialize_prompt_payload(prompt_payload: Any) -> str:
-        if isinstance(prompt_payload, str):
-            return prompt_payload
-        try:
-            return json.dumps(prompt_payload, ensure_ascii=False, indent=2, default=str)
-        except Exception:
-            return str(prompt_payload)
-
-    def _resolve_llm_call_target(self) -> Dict[str, str]:
-        model_name = (
-            getattr(self.llm, "model_name", None)
-            or getattr(self.llm, "model", None)
-            or getattr(self.llm, "model_id", None)
-            or "unknown"
-        )
-        base_url = (
-            getattr(self.llm, "openai_api_base", None)
-            or getattr(self.llm, "base_url", None)
-            or "unknown"
-        )
-        return {"model": str(model_name), "base_url": str(base_url)}
-
-    def _log_llm_prompt(self, stage: str, prompt_payload: Any) -> None:
-        """LLM 호출 직전 프롬프트를 로그로 남깁니다."""
-        if not self._llm_prompt_logging_enabled:
-            return
-
-        serialized = self._serialize_prompt_payload(prompt_payload)
-        if len(serialized) > self._llm_prompt_log_max_chars:
-            clipped = serialized[: self._llm_prompt_log_max_chars]
-            omitted = len(serialized) - self._llm_prompt_log_max_chars
-            serialized = f"{clipped}\n...(truncated, omitted {omitted} chars)"
-
-        logger.info(
-            "[LLM Call][%s] model=%s base_url=%s",
-            stage,
-            self._llm_call_target["model"],
-            self._llm_call_target["base_url"],
-        )
-        logger.info("[LLM Prompt][%s]\n%s", stage, serialized)
 
     def _get_skills_config(self) -> Dict[str, Any]:
         """skills.yaml 및 skills/ 디렉토리에서 스킬 설정들을 로드합니다."""
@@ -105,41 +53,63 @@ class GraphNodes:
         self._skills_cache = all_skills
         return all_skills
 
-    @staticmethod
-    def _normalize_mode(mode: str) -> str:
-        """실행 모드를 정규화합니다. (auto|semi|manual)"""
-        normalized = (mode or "").strip().lower()
-        if normalized in {"auto", "semi", "manual"}:
-            return normalized
-        logger.warning("알 수 없는 mode '%s' 감지, semi로 대체합니다.", mode)
-        return "semi"
-
     async def _map_skill_id(self, skill_id: str, valid_skills: Dict[str, Any]) -> str:
-        """스킬 ID를 결정론적으로 정규화합니다. (유사도/의미 매핑 없음)"""
+        """존재하지 않는 스킬 ID를 의미상 가장 가까운 유효한 ID로 매핑합니다."""
         if not skill_id:
             return skill_id
 
-        requested_skill_id = skill_id.strip()
-        skill_id_lower = requested_skill_id.lower()
+        # 1. 완전 일치 확인 (Case-insensitive)
+        skill_id_lower = skill_id.lower().strip()
         valid_ids = list(valid_skills.keys())
         
-        # 1. 완전 일치 확인 (Case-insensitive)
+        # 정확히 일치하는 키 찾기 (대소문자 무시)
         exact_match = next((sid for sid in valid_ids if sid.lower() == skill_id_lower), None)
         if exact_match:
             return exact_match
 
-        # 2. 정규화 일치 확인 (언더바/하이픈 차이 허용)
+        # 2. 정규화 일치 확인 (언더바, 하이픈 제거 후 비교)
         def normalize(s):
             return s.lower().replace("_", "").replace("-", "").strip()
         
-        norm_id = normalize(requested_skill_id)
+        norm_id = normalize(skill_id)
         norm_match = next((sid for sid in valid_ids if normalize(sid) == norm_id), None)
         if norm_match:
             logger.info(f"스킬 ID 정규화 매핑: '{skill_id}' -> '{norm_match}'")
             return norm_match
 
-        logger.warning("등록되지 않은 스킬 ID '%s'는 변경하지 않고 유지합니다.", requested_skill_id)
-        return requested_skill_id
+        if not valid_ids:
+            return skill_id
+
+        # 3. 문자열 유사도 기반 매핑 (difflib)
+        matches = difflib.get_close_matches(skill_id, valid_ids, n=1, cutoff=0.7)
+        if matches:
+            logger.info(f"스킬 ID 유사도 매핑: '{skill_id}' -> '{matches[0]}'")
+            return matches[0]
+
+        # 4. LLM 기반 의미상 매핑
+        logger.info(f"스킬 ID '{skill_id}'에 대한 의미적 매핑 시도 중...")
+        # ... (이하 동일)
+        skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in valid_skills.items()])
+        
+        mapping_prompt = (
+            f"사용자가 요청하거나 시스템이 제안한 '{skill_id}'라는 스킬이 현재 등록된 목록에 없습니다.\n"
+            f"아래 등록된 스킬 목록 중 의미상 가장 적절한 스킬 ID 하나만 골라주세요.\n\n"
+            f"[등록된 스킬 목록]\n{skills_info}\n\n"
+            "답변은 반드시 스킬 ID만 출력하세요. 정말 적당한 것이 없다면 가장 첫 번째 스킬 ID를 출력하세요."
+        )
+        
+        try:
+            res = await self.llm.ainvoke(mapping_prompt)
+            match = res.content.strip()
+            # 따옴표나 마크다운 제거
+            match = match.replace("`", "").replace("'", "").replace("\"", "")
+            if match in valid_skills:
+                logger.info(f"스킬 ID 의미 매핑 성공: '{skill_id}' -> '{match}'")
+                return match
+        except Exception as e:
+            logger.warning(f"의미 매핑 중 오류 발생: {e}")
+
+        return valid_ids[0]
 
     def _create_structured_plan_model(self, valid_ids: List[str]):
         """유효한 스킬 ID만 선택하도록 강제하는 동적 Pydantic 모델 생성 (Latest LangGraph/LangChain Pattern)"""
@@ -259,30 +229,20 @@ class GraphNodes:
         """[auto] 모드일 경우 전체 실행 계획(Skill Sequence)을 AI가 자율적으로 수립"""
         skills_config = self._get_skills_config()
         valid_ids = list(skills_config.keys())
-        resolved_mode = self._normalize_mode(state.mode)
 
-        if resolved_mode != "auto":
-            logger.info(f"[{resolved_mode} 모드] 기존 스킬 리스트 검증 시작")
+        if state.mode != "auto":
+            # [수정] semi/manual 모드에서도 입력된 skill_ids가 유효한지 검증 및 매핑
+            logger.info(f"[{state.mode} 모드] 기존 스킬 리스트 검증 및 매핑 시작")
             mapped_ids = []
-            invalid_ids = []
             for sid in state.skill_ids:
-                mapped = await self._map_skill_id(sid, skills_config)
-                mapped_ids.append(mapped)
-                if mapped not in skills_config:
-                    invalid_ids.append(sid)
-
-            if resolved_mode == "manual" and invalid_ids:
-                raise ValueError(
-                    f"[manual 모드] 등록되지 않은 스킬 ID가 포함되어 있습니다: {invalid_ids}. "
-                    f"사용 가능한 스킬: {valid_ids}"
-                )
-            return {"mode": resolved_mode, "skill_ids": mapped_ids}
+                mapped_ids.append(await self._map_skill_id(sid, skills_config))
+            return {"skill_ids": mapped_ids}
 
         logger.info("--- [auto 모드] AI 스킬 계획 시작 ---")
         
         if not valid_ids:
             logger.warning("사용 가능한 스킬이 정의되어 있지 않습니다.")
-            return {"mode": resolved_mode, "skill_ids": []}
+            return {"skill_ids": []}
 
         skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in skills_config.items()])
 
@@ -291,40 +251,31 @@ class GraphNodes:
         structured_llm = self.llm.with_structured_output(SkillPlanModel)
         
         try:
-            planner_messages = [
+            plan = await structured_llm.ainvoke([
                 ("system", PLANNER_SYSTEM_PROMPT),
                 ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
-            ]
-            self._log_llm_prompt("plan", planner_messages)
-            plan = await structured_llm.ainvoke(planner_messages)
+            ])
             
             # Pydantic 모델이 리스트를 반환하므로 .skill_ids 접근
             result_ids = getattr(plan, "skill_ids", [])
             logger.info(f"AI 계획 결과: {result_ids}")
-            return {"mode": resolved_mode, "skill_ids": result_ids}
+            return {"skill_ids": result_ids}
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
             # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
-            fallback_prompt = f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요."
-            self._log_llm_prompt("plan_fallback", fallback_prompt)
-            raw_res = await self.llm.ainvoke(fallback_prompt)
+            raw_res = await self.llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
-            mapped_ids = []
-            for pid in potential_ids:
-                mapped = await self._map_skill_id(pid, skills_config)
-                if mapped in skills_config and mapped not in mapped_ids:
-                    mapped_ids.append(mapped)
-            return {"mode": resolved_mode, "skill_ids": mapped_ids}
+            mapped_ids = [await self._map_skill_id(pid, skills_config) for pid in potential_ids]
+            return {"skill_ids": mapped_ids}
 
     async def check_situation(self, state: AgentState):
         """현재 화면 상태를 분석하여 스킬 실행 가능 여부 체크"""
         current_skill_id = state.skill_ids[state.current_index]
-        resolved_mode = self._normalize_mode(state.mode)
         logger.info(f"--- 상황 체크 시작: {current_skill_id} (Index: {state.current_index}) ---")
         
-        if resolved_mode == "manual":
+        if state.mode == "manual":
             logger.info("[manual 모드] 상황 체크를 건너뛰고 진행합니다.")
-            return {"mode": resolved_mode, "check_status": "manual_bypass", "next_action": "proceed"}
+            return {"check_status": "manual_bypass", "next_action": "proceed"}
 
         # [개선] 소스 수정이나 에디트 관련 스킬은 앱이 실행 중일 필요가 없으므로 상황 체크(앱 실행 트리거)를 건너뜁니다.
         # 앱 실행 전에 설정을 바꿔야 하는 경우를 대비한 로직입니다.
@@ -348,12 +299,10 @@ class GraphNodes:
         DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
         structured_llm = self.llm.with_structured_output(DynamicAnalysisModel)
         
-        analysis_messages = [
+        analysis = await structured_llm.ainvoke([
             ("system", ANALYST_SYSTEM_PROMPT),
             ("user", prompt)
-        ]
-        self._log_llm_prompt("check_situation", analysis_messages)
-        analysis = await structured_llm.ainvoke(analysis_messages)
+        ])
         
         logger.info(
             "상황 분석 결과: category=%s, next_action=%s, reason=%s",
@@ -406,7 +355,6 @@ class GraphNodes:
             )
         
         return {
-            "mode": resolved_mode,
             "check_status": analysis.reason, 
             "next_action": next_action,
             "extra_skill": fallback_skill,
@@ -417,7 +365,6 @@ class GraphNodes:
     async def extract(self, state: AgentState):
         """현재 인덱스의 Skill ID를 기반으로 도구 순서를 로드하고 파라미터 추출"""
         current_skill_id = state.skill_ids[state.current_index]
-        resolved_mode = self._normalize_mode(state.mode)
         
         skill = SequenceSkill(skill_name=current_skill_id)
         steps_metadata = skill.get_steps_with_metadata(state.model_dump())
@@ -427,7 +374,7 @@ class GraphNodes:
             logger.error(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
             raise ValueError(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
 
-        if resolved_mode == "manual":
+        if state.mode == "manual":
             # manual 모드는 사람이 정의한 스킬 시퀀스를 그대로 실행하므로
             # 단계별 기본/고정 인자만 사용하고 LLM 추출을 생략한다.
             manual_calls: List[ToolCall] = []
@@ -436,11 +383,11 @@ class GraphNodes:
                 for arg_name, arg_meta in step["args"].items():
                     args[arg_name] = arg_meta.get("value")
                 manual_calls.append(ToolCall(tool=step["tool"], args=args))
-            return {"mode": resolved_mode, "enriched_plan": manual_calls, "tool_sequence": tool_sequence}
+            return {"enriched_plan": manual_calls, "tool_sequence": tool_sequence}
 
         # 스킬별 특화 안내문(skill.md)이 있으면 추가
         skill_instruction = f"\n\n### CURRENT SKILL SPECIFIC GUIDE ###\n{skill.instruction}" if skill.instruction else ""
-        mode_instruction = MODE_INSTRUCTIONS.get(resolved_mode, MODE_INSTRUCTIONS["semi"])
+        mode_instruction = MODE_INSTRUCTIONS.get(state.mode, MODE_INSTRUCTIONS["semi"])
         
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", f"{EXTRACTOR_SYSTEM_PROMPT}\n\n{mode_instruction}{skill_instruction}"),
@@ -459,19 +406,13 @@ class GraphNodes:
         tools_info = json.dumps(skill_tools, indent=2, ensure_ascii=False)
         
         chain = prompt_template | structured_llm
-        chain_inputs = {
+        enriched = await chain.ainvoke({
             "query": state.query,
             "check_status": state.check_status,
             "skill_id": current_skill_id,
             "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
             "tools_info": tools_info
-        }
-        rendered_messages = prompt_template.format_messages(**chain_inputs)
-        self._log_llm_prompt(
-            "extract",
-            [{"role": msg.type, "content": msg.content} for msg in rendered_messages],
-        )
-        enriched = await chain.ainvoke(chain_inputs)
+        })
         
         # [Post-process] Fixed 값 강제 적용 및 AI 값 검증
         final_calls = []
@@ -505,7 +446,7 @@ class GraphNodes:
             removed = [call.tool for call in enriched.calls if call.tool not in tool_sequence]
             logger.warning(f"스킬 '{current_skill_id}'에 정의되지 않은 도구 호출이 제외되었습니다: {removed}")
 
-        return {"mode": resolved_mode, "enriched_plan": valid_calls, "tool_sequence": tool_sequence}
+        return {"enriched_plan": valid_calls, "tool_sequence": tool_sequence}
 
     async def run(self, state: AgentState):
         """추출된 파라미터로 MCP 도구 순차 실행"""
@@ -580,7 +521,6 @@ class GraphNodes:
                 f"[사용자 요청]\n{state.query}\n\n"
                 f"[DataFrame 요약]\n{json.dumps(analysis_payload, ensure_ascii=False)}"
             )
-            self._log_llm_prompt("report_clipboard_analysis", analysis_prompt)
             analysis_res = await self.llm.ainvoke(analysis_prompt)
             clipboard_analysis = analysis_res.content
 
@@ -598,6 +538,5 @@ class GraphNodes:
             "최종 답변은 한국어로 작성하세요. 반드시 '수행 여부'를 먼저 명시하고, "
             "그 다음 클립보드 데이터(DataFrame) 분석 결과를 자연스럽게 이어서 설명하세요."
         )
-        self._log_llm_prompt("report_final", prompt)
         res = await self.llm.ainvoke(prompt)
         return {"report": res.content, "report_details": report_details}
