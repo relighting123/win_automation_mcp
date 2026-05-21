@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
 from langchain_core.prompts import ChatPromptTemplate
 from core.state import AgentState, ToolCall, ToolCalls, SituationAnalysis
+from core.llm_logging import log_llm_request, log_llm_response
 from graph.prompts import (
     PLANNER_SYSTEM_PROMPT, 
     ANALYST_SYSTEM_PROMPT, 
@@ -237,12 +238,16 @@ class GraphNodes:
         SkillPlanModel = self._create_structured_plan_model(valid_ids)
         structured_llm = self.llm.with_structured_output(SkillPlanModel)
         
+        plan_messages = [
+            ("system", PLANNER_SYSTEM_PROMPT),
+            ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}"),
+        ]
+        log_llm_request("plan", plan_messages, extra={"mode": resolved_mode, "query": state.query})
+
         try:
-            plan = await structured_llm.ainvoke([
-                ("system", PLANNER_SYSTEM_PROMPT),
-                ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
-            ])
-            
+            plan = await structured_llm.ainvoke(plan_messages)
+            log_llm_response("plan", plan)
+
             # Pydantic 모델이 리스트를 반환하므로 .skill_ids 접근
             result_ids = getattr(plan, "skill_ids", [])
             logger.info(f"AI 계획 결과: {result_ids}")
@@ -250,7 +255,10 @@ class GraphNodes:
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
             # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
-            raw_res = await self.llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
+            fallback_prompt = f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요."
+            log_llm_request("plan.fallback", fallback_prompt)
+            raw_res = await self.llm.ainvoke(fallback_prompt)
+            log_llm_response("plan.fallback", raw_res)
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
             mapped_ids = []
             for pid in potential_ids:
@@ -290,11 +298,18 @@ class GraphNodes:
         # [최신 기법] 상황 분석에서도 유효한 스킬 ID만 제안하도록 동적 모델 적용
         DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
         structured_llm = self.llm.with_structured_output(DynamicAnalysisModel)
-        
-        analysis = await structured_llm.ainvoke([
+
+        analysis_messages = [
             ("system", ANALYST_SYSTEM_PROMPT),
-            ("user", prompt)
-        ])
+            ("user", prompt),
+        ]
+        log_llm_request(
+            "check_situation",
+            analysis_messages,
+            extra={"skill_id": current_skill_id, "mode": resolved_mode},
+        )
+        analysis = await structured_llm.ainvoke(analysis_messages)
+        log_llm_response("check_situation", analysis)
         
         logger.info(
             "상황 분석 결과: category=%s, next_action=%s, reason=%s",
@@ -400,13 +415,28 @@ class GraphNodes:
         tools_info = json.dumps(skill_tools, indent=2, ensure_ascii=False)
         
         chain = prompt_template | structured_llm
-        enriched = await chain.ainvoke({
+        prompt_variables = {
             "query": state.query,
             "check_status": state.check_status,
             "skill_id": current_skill_id,
             "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
-            "tools_info": tools_info
-        })
+            "tools_info": tools_info,
+        }
+        try:
+            rendered_messages = [
+                (getattr(m, "type", m.__class__.__name__), getattr(m, "content", str(m)))
+                for m in prompt_template.format_messages(**prompt_variables)
+            ]
+        except Exception:  # noqa: BLE001
+            # 포매팅에 실패해도 로그 자체가 흐름을 막지는 않도록 한다.
+            rendered_messages = [("input_variables", prompt_variables)]
+        log_llm_request(
+            "extract",
+            rendered_messages,
+            extra={"skill_id": current_skill_id, "mode": resolved_mode},
+        )
+        enriched = await chain.ainvoke(prompt_variables)
+        log_llm_response("extract", enriched)
         
         # [Post-process] Fixed 값 강제 적용 및 AI 값 검증
         final_calls = []
@@ -515,7 +545,9 @@ class GraphNodes:
                 f"[사용자 요청]\n{state.query}\n\n"
                 f"[DataFrame 요약]\n{json.dumps(analysis_payload, ensure_ascii=False)}"
             )
+            log_llm_request("report.clipboard_analysis", analysis_prompt)
             analysis_res = await self.llm.ainvoke(analysis_prompt)
+            log_llm_response("report.clipboard_analysis", analysis_res)
             clipboard_analysis = analysis_res.content
 
         report_details = {
@@ -532,5 +564,7 @@ class GraphNodes:
             "최종 답변은 한국어로 작성하세요. 반드시 '수행 여부'를 먼저 명시하고, "
             "그 다음 클립보드 데이터(DataFrame) 분석 결과를 자연스럽게 이어서 설명하세요."
         )
+        log_llm_request("report.final", prompt)
         res = await self.llm.ainvoke(prompt)
+        log_llm_response("report.final", res)
         return {"report": res.content, "report_details": report_details}

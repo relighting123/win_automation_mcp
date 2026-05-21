@@ -234,6 +234,28 @@ python mcp_server.py --transport http --skip-port-kill
 2. 재기동이 잦다면 `--skip-port-kill` 옵션으로 시작 전 포트 정리 단계를 생략하세요.
 3. 로그 출력이 병목이면 `--log-level WARNING`으로 줄여 초기 출력 부담을 낮추세요.
 
+### LLM 프롬프트 로깅
+LLM(plan / check_situation / extract / report 등)에 어떤 프롬프트가 전달됐는지 확인하려면
+`llm.prompt` 로거의 INFO 로그를 보면 됩니다. 기본적으로 자동화 실행 시 활성화되어 콘솔에 출력됩니다.
+
+- 비활성화: `LLM_PROMPT_LOG=0`
+- 파일로 따로 저장: `LLM_PROMPT_LOG_FILE=logs/llm_prompts.log`
+- 너무 긴 응답을 자르고 싶을 때: `LLM_PROMPT_LOG_MAX_CHARS=4000`
+
+각 호출은 다음과 같은 포맷으로 기록됩니다.
+```
+=== [LLM REQUEST: extract] === {"skill_id": "...", "mode": "semi"}
+[system]
+...system prompt 본문...
+
+[user]
+...user prompt 본문...
+=== [END LLM REQUEST: extract] ===
+=== [LLM RESPONSE: extract] ===
+...응답 본문 또는 structured output JSON...
+=== [END LLM RESPONSE: extract] ===
+```
+
 ## 파인튜닝 (Finetuning)
 
 Gemma 모델의 도구 호출 능력 및 파라미터 추출 성능을 개선하기 위한 파이프라인을 제공합니다. `finetuning/` 디렉토리를 확인하세요.

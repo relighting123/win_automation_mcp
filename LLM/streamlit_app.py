@@ -18,6 +18,7 @@ if current_dir not in sys.path:
 from langgraph_agent import create_mcp_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from core.llm_config import get_llm_settings, get_mcp_settings
+from core.llm_logging import log_llm_request, log_llm_response
 
 # 공통 LLM 설정 로드 (config/app_config.yaml 우선)
 llm_settings = get_llm_settings()
@@ -271,12 +272,19 @@ with tab1:
 만약 매칭되는 값이 없다면 빈 문자열("")을 넣으세요.
 """
                                 try:
+                                    extract_messages = [{"role": "user", "content": extract_prompt}]
+                                    log_llm_request(
+                                        "streamlit.workflow_param_extract",
+                                        extract_messages,
+                                        extra={"model": model_name, "placeholders": placeholders},
+                                    )
                                     extract_res = extract_client.chat.completions.create(
-                                        messages=[{"role": "user", "content": extract_prompt}],
+                                        messages=extract_messages,
                                         model=model_name,
                                         temperature=0
                                     )
                                     values_json = extract_res.choices[0].message.content
+                                    log_llm_response("streamlit.workflow_param_extract", values_json)
                                     # JSON 추출 로직 (마크다운 대응)
                                     if "```json" in values_json:
                                         values_json = values_json.split("```json")[1].split("```")[0].strip()
@@ -356,6 +364,11 @@ with tab1:
                 iteration = 0
                 while iteration < MAX_ITERATIONS:
                     iteration += 1
+                    log_llm_request(
+                        f"streamlit.chat[iter={iteration}]",
+                        st.session_state.messages,
+                        extra={"model": model_name, "tool_count": len(tools) if tools else 0},
+                    )
                     chat_completion = client.chat.completions.create(
                         messages=st.session_state.messages,
                         model=model_name,
@@ -365,6 +378,20 @@ with tab1:
                         stream=False
                     )
                     response_message = chat_completion.choices[0].message
+                    log_llm_response(
+                        f"streamlit.chat[iter={iteration}]",
+                        {
+                            "content": response_message.content,
+                            "tool_calls": [
+                                {
+                                    "id": t.id,
+                                    "name": t.function.name,
+                                    "arguments": t.function.arguments,
+                                }
+                                for t in (response_message.tool_calls or [])
+                            ],
+                        },
+                    )
                     tool_calls = response_message.tool_calls
                     if response_message.content:
                         full_response += response_message.content

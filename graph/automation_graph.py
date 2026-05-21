@@ -13,6 +13,12 @@ from .builder import build_automation_graph
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
+# LLM 프롬프트 로거가 자동화 실행 시 항상 출력되도록 기본 레벨을 보장한다.
+# (루트 logger 가 WARNING 이라도 INFO 로그를 받을 수 있게 한다.)
+_llm_prompt_logger = logging.getLogger("llm.prompt")
+if _llm_prompt_logger.level == logging.NOTSET:
+    _llm_prompt_logger.setLevel(logging.INFO)
+
 class MiniHybridAgent:
     def __init__(self, mcp, model, api_key, base_url):
         self.mcp = mcp
