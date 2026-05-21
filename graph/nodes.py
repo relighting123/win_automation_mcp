@@ -23,6 +23,7 @@ class GraphNodes:
         self.mcp = mcp
         self.llm = llm
         self._skills_cache: Optional[Dict[str, Any]] = None
+        self._llm_call_target = self._resolve_llm_call_target()
         self._llm_prompt_logging_enabled = (
             os.getenv("LOG_LLM_PROMPTS", "true").strip().lower() not in {"0", "false", "off", "no"}
         )
@@ -42,6 +43,20 @@ class GraphNodes:
         except Exception:
             return str(prompt_payload)
 
+    def _resolve_llm_call_target(self) -> Dict[str, str]:
+        model_name = (
+            getattr(self.llm, "model_name", None)
+            or getattr(self.llm, "model", None)
+            or getattr(self.llm, "model_id", None)
+            or "unknown"
+        )
+        base_url = (
+            getattr(self.llm, "openai_api_base", None)
+            or getattr(self.llm, "base_url", None)
+            or "unknown"
+        )
+        return {"model": str(model_name), "base_url": str(base_url)}
+
     def _log_llm_prompt(self, stage: str, prompt_payload: Any) -> None:
         """LLM 호출 직전 프롬프트를 로그로 남깁니다."""
         if not self._llm_prompt_logging_enabled:
@@ -53,6 +68,12 @@ class GraphNodes:
             omitted = len(serialized) - self._llm_prompt_log_max_chars
             serialized = f"{clipped}\n...(truncated, omitted {omitted} chars)"
 
+        logger.info(
+            "[LLM Call][%s] model=%s base_url=%s",
+            stage,
+            self._llm_call_target["model"],
+            self._llm_call_target["base_url"],
+        )
         logger.info("[LLM Prompt][%s]\n%s", stage, serialized)
 
     def _get_skills_config(self) -> Dict[str, Any]:
