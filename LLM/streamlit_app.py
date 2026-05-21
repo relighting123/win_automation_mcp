@@ -75,15 +75,57 @@ st.sidebar.markdown("""
 3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
 """)
 
+MCP_ACCEPT_CANDIDATES = (
+    "application/json, text/event-stream",
+    "application/json",
+    "text/event-stream",
+)
+
+def _iter_accept_candidates(preferred_accept: str | None = None):
+    first = preferred_accept or MCP_ACCEPT_CANDIDATES[0]
+    yield first
+    for candidate in MCP_ACCEPT_CANDIDATES:
+        if candidate != first:
+            yield candidate
+
+def _post_mcp_with_accept_fallback(
+    *,
+    url: str,
+    payload: dict,
+    session_id: str | None = None,
+    timeout: int = 15,
+    stream: bool = False,
+    preferred_accept: str | None = None,
+):
+    attempted_headers = []
+    last_406_body = ""
+    for accept_header in _iter_accept_candidates(preferred_accept):
+        headers = {
+            "Accept": accept_header,
+            "Content-Type": "application/json",
+        }
+        if session_id:
+            headers["mcp-session-id"] = session_id
+        attempted_headers.append(accept_header)
+
+        response = requests.post(
+            url, json=payload, headers=headers, timeout=timeout, stream=stream
+        )
+        if response.status_code == 406:
+            last_406_body = response.text
+            continue
+
+        return response, accept_header
+
+    raise RuntimeError(
+        f"MCP 요청 실패(406): {last_406_body or 'Not Acceptable'} "
+        f"(시도한 Accept 헤더: {', '.join(attempted_headers)})"
+    )
+
 @st.cache_data(ttl=600)  # 10분간 캐시 유지
 def get_mcp_tools(mcp_url):
     """MCP 서버에서 사용 가능한 도구 목록을 가져옵니다."""
     try:
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json"
-        }
-        
         # 1. 초기화 (initialize) 요청
         init_payload = {
             "jsonrpc": "2.0",
@@ -95,21 +137,44 @@ def get_mcp_tools(mcp_url):
                 "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
             }
         }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=15)
+        init_res, accepted_header = _post_mcp_with_accept_fallback(
+            url=mcp_url,
+            payload=init_payload,
+            timeout=15,
+            preferred_accept=MCP_ACCEPT_CANDIDATES[0],
+        )
+        if init_res.status_code != 200:
+            return []
         session_id = init_res.headers.get("mcp-session-id")
         
         if not session_id:
             return []
-            
-        headers["mcp-session-id"] = session_id
+
+        # 2. 초기화 완료 알림
+        notify_res, accepted_header = _post_mcp_with_accept_fallback(
+            url=mcp_url,
+            payload={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            session_id=session_id,
+            timeout=5,
+            preferred_accept=accepted_header,
+        )
+        if notify_res.status_code >= 400:
+            return []
         
-        # 2. 도구 목록 요청
+        # 3. 도구 목록 요청
         tools_payload = {
             "jsonrpc": "2.0",
             "method": "tools/list",
             "id": 1
         }
-        res = requests.post(mcp_url, json=tools_payload, headers=headers, timeout=15)
+        res, _ = _post_mcp_with_accept_fallback(
+            url=mcp_url,
+            payload=tools_payload,
+            session_id=session_id,
+            timeout=15,
+            stream=True,
+            preferred_accept=accepted_header,
+        )
         
         if res.status_code == 200:
             # SSE 스트림 파싱
@@ -131,6 +196,23 @@ def get_mcp_tools(mcp_url):
                                     }
                                 })
                             return openai_tools
+            # JSON 응답 파싱 (비-SSE 서버 대응)
+            try:
+                payload = res.json()
+                if "result" in payload and "tools" in payload["result"]:
+                    openai_tools = []
+                    for tool in payload["result"]["tools"]:
+                        openai_tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": tool["name"],
+                                "description": tool["description"],
+                                "parameters": tool["inputSchema"]
+                            }
+                        })
+                    return openai_tools
+            except Exception:
+                pass
         return []
     except Exception as e:
         # 캐시가 실패하는 경우를 대비해 에러 로그만 남기고 빈 리스트 반환
@@ -140,11 +222,6 @@ def get_mcp_tools(mcp_url):
 def call_mcp_tool(name, arguments):
     """MCP 서버의 도구를 실행합니다."""
     try:
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json"
-        }
-        
         # 1. 초기화
         init_payload = {
             "jsonrpc": "2.0",
@@ -156,16 +233,29 @@ def call_mcp_tool(name, arguments):
                 "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
             }
         }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=15)
+        init_res, accepted_header = _post_mcp_with_accept_fallback(
+            url=mcp_url,
+            payload=init_payload,
+            timeout=15,
+            preferred_accept=MCP_ACCEPT_CANDIDATES[0],
+        )
+        if init_res.status_code != 200:
+            return {"error": f"initialize failed with status {init_res.status_code}"}
         session_id = init_res.headers.get("mcp-session-id")
         
         if not session_id:
             return {"error": "Failed to get session ID"}
-            
-        headers["mcp-session-id"] = session_id
         
         # 2. 초기화 완료 알림
-        requests.post(mcp_url, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=headers, timeout=2)
+        notify_res, accepted_header = _post_mcp_with_accept_fallback(
+            url=mcp_url,
+            payload={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            session_id=session_id,
+            timeout=5,
+            preferred_accept=accepted_header,
+        )
+        if notify_res.status_code >= 400:
+            return {"error": f"initialized notification failed with status {notify_res.status_code}"}
             
         # 3. 도구 호출
         payload = {
@@ -175,7 +265,14 @@ def call_mcp_tool(name, arguments):
             "id": int(time.time())
         }
         
-        response = requests.post(mcp_url, json=payload, headers=headers, timeout=60, stream=True)
+        response, _ = _post_mcp_with_accept_fallback(
+            url=mcp_url,
+            payload=payload,
+            session_id=session_id,
+            timeout=60,
+            stream=True,
+            preferred_accept=accepted_header,
+        )
         
         if response.status_code == 200:
             for line in response.iter_lines():
@@ -185,7 +282,16 @@ def call_mcp_tool(name, arguments):
                         res_json = json.loads(decoded[6:])
                         if "result" in res_json:
                             return res_json["result"]
-        return {"error": f"Status {response.status_code}"}
+            try:
+                parsed = response.json()
+                if "result" in parsed:
+                    return parsed["result"]
+                if "error" in parsed:
+                    return {"error": str(parsed["error"])}
+            except Exception:
+                pass
+
+        return {"error": f"Status {response.status_code}: {response.text}"}
     except Exception as e:
         return {"error": str(e)}
 
