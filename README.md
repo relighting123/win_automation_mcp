@@ -168,9 +168,6 @@ python mcp_server.py --transport http --host 127.0.0.1 --port 8000 --path /mcp
 
 # SSE 전송 방식 (파일 변경 시 자동 재시작 포함)
 python mcp_server.py --transport sse --port 8000 --reload
-
-# 빠른 재기동(기존 포트 정리 단계 생략)
-python mcp_server.py --transport http --skip-port-kill
 ```
 
 ## 사용 가능한 도구
@@ -228,11 +225,6 @@ python mcp_server.py --transport http --skip-port-kill
 기본값:
 - `MCP_BASE_URL`: `http://localhost:8000/mcp`
 - `AUTOMATION_PLAN_MD`: `plans/sample_plan.md`
-
-### Automation Graph 실행 시 서버를 빨리 올리는 팁
-1. 개발 중에는 MCP 서버를 **한 번만** 띄우고 재사용하세요.
-2. 재기동이 잦다면 `--skip-port-kill` 옵션으로 시작 전 포트 정리 단계를 생략하세요.
-3. 로그 출력이 병목이면 `--log-level WARNING`으로 줄여 초기 출력 부담을 낮추세요.
 
 ## 파인튜닝 (Finetuning)
 
