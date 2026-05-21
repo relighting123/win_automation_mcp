@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
-import requests
 import json
 import re
-import time
 import os
 import sys
 from datetime import datetime
@@ -15,9 +13,15 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
+# 프로젝트 루트(LLM/의 상위 디렉토리)를 sys.path에 추가하여 mcp_client 등 공통 모듈을 import 한다.
+_project_root = os.path.dirname(current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from langgraph_agent import create_mcp_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from core.llm_config import get_llm_settings, get_mcp_settings
+from mcp_client import MCPClient
 
 # 공통 LLM 설정 로드 (config/app_config.yaml 우선)
 llm_settings = get_llm_settings()
@@ -75,117 +79,65 @@ st.sidebar.markdown("""
 3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
 """)
 
-@st.cache_data(ttl=600)  # 10분간 캐시 유지
-def get_mcp_tools(mcp_url):
-    """MCP 서버에서 사용 가능한 도구 목록을 가져옵니다."""
+@st.cache_resource(show_spinner=False)
+def _get_mcp_client(url: str) -> MCPClient:
+    """주어진 base_url에 대해 MCPClient 인스턴스를 캐시한다.
+
+    Streamlit은 매 인터랙션마다 스크립트를 재실행하므로, 매번 새로운 MCP 세션을
+    만들면 서버에 세션이 누적되고 ``notifications/initialized``가 도중에 타임아웃
+    되었을 때 그 다음 ``tools/call``이 일관되지 않은 상태로 실행되어 406/404 와
+    같은 거부가 발생할 수 있다. ``MCPClient``는 내부적으로 세션을 캐싱하고
+    406/404 거부 시 재초기화 후 재시도하므로 이를 통해 통신한다.
+    """
+    return MCPClient(base_url=url)
+
+
+def _run_async(coro):
+    """Streamlit(동기) 컨텍스트에서 async 호출을 안전하게 실행."""
     try:
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json"
-        }
-        
-        # 1. 초기화 (initialize) 요청
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
-            }
-        }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=15)
-        session_id = init_res.headers.get("mcp-session-id")
-        
-        if not session_id:
-            return []
-            
-        headers["mcp-session-id"] = session_id
-        
-        # 2. 도구 목록 요청
-        tools_payload = {
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "id": 1
-        }
-        res = requests.post(mcp_url, json=tools_payload, headers=headers, timeout=15)
-        
-        if res.status_code == 200:
-            # SSE 스트림 파싱
-            for line in res.iter_lines():
-                if line:
-                    decoded = line.decode('utf-8')
-                    if decoded.startswith("data: "):
-                        data = json.loads(decoded[6:])
-                        if "result" in data and "tools" in data["result"]:
-                            # OpenAI 형식에 맞게 변환
-                            openai_tools = []
-                            for tool in data["result"]["tools"]:
-                                openai_tools.append({
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool["name"],
-                                        "description": tool["description"],
-                                        "parameters": tool["inputSchema"]
-                                    }
-                                })
-                            return openai_tools
-        return []
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("event loop is closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
+def get_mcp_tools(mcp_url):
+    """MCP 서버에서 사용 가능한 도구 목록을 OpenAI function calling 형식으로 반환."""
+    try:
+        client = _get_mcp_client(mcp_url)
+        tools = _run_async(client.list_tools())
+        openai_tools = []
+        for tool in tools or []:
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
+                }
+            })
+        return openai_tools
     except Exception as e:
-        # 캐시가 실패하는 경우를 대비해 에러 로그만 남기고 빈 리스트 반환
+        # 페이지가 죽지 않게 빈 리스트로 처리하되, 사용자에게 원인은 보여준다.
         print(f"Failed to fetch tools: {e}")
+        try:
+            st.warning(f"MCP 도구 목록을 가져오지 못했습니다: {e}")
+        except Exception:
+            pass
         return []
 
+
 def call_mcp_tool(name, arguments):
-    """MCP 서버의 도구를 실행합니다."""
+    """MCP 서버의 도구를 실행한다 (세션 재사용 + 406/404 자동 재시도).
+
+    LangGraph 노드들과 시그니처가 호환되도록 동기 함수로 노출한다.
+    """
     try:
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json"
-        }
-        
-        # 1. 초기화
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "streamlit-client", "version": "1.0.0"}
-            }
-        }
-        init_res = requests.post(mcp_url, json=init_payload, headers=headers, timeout=15)
-        session_id = init_res.headers.get("mcp-session-id")
-        
-        if not session_id:
-            return {"error": "Failed to get session ID"}
-            
-        headers["mcp-session-id"] = session_id
-        
-        # 2. 초기화 완료 알림
-        requests.post(mcp_url, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=headers, timeout=2)
-            
-        # 3. 도구 호출
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-            "id": int(time.time())
-        }
-        
-        response = requests.post(mcp_url, json=payload, headers=headers, timeout=60, stream=True)
-        
-        if response.status_code == 200:
-            for line in response.iter_lines():
-                if line:
-                    decoded = line.decode('utf-8')
-                    if decoded.startswith("data: "):
-                        res_json = json.loads(decoded[6:])
-                        if "result" in res_json:
-                            return res_json["result"]
-        return {"error": f"Status {response.status_code}"}
+        client = _get_mcp_client(mcp_url)
+        return _run_async(client.call_tool(name, arguments))
     except Exception as e:
         return {"error": str(e)}
 
