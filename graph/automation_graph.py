@@ -2,7 +2,12 @@ import logging
 import asyncio
 from langchain_openai import ChatOpenAI
 from mcp_client import MCPClient
-from core.llm_config import get_llm_settings, get_mcp_settings, get_automation_settings
+from core.llm_config import (
+    get_llm_settings,
+    get_mcp_settings,
+    get_automation_settings,
+    normalize_automation_mode,
+)
 from .builder import build_automation_graph
 
 # 로깅 설정
@@ -37,7 +42,7 @@ async def run_automation(
     resolved_model = model or settings["model"]
     resolved_api_key = api_key or settings["api_key"]
     resolved_base_url = base_url or settings["base_url"]
-    resolved_mode = mode or auto_settings["mode"]
+    resolved_mode = normalize_automation_mode(mode or auto_settings["mode"])
     
     agent = MiniHybridAgent(mcp, resolved_model, resolved_api_key, resolved_base_url)
     

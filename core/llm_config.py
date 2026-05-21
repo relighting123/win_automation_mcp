@@ -8,6 +8,7 @@ config/app_config.yaml의 llm 설정을 우선 사용하고,
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -16,11 +17,23 @@ from dotenv import load_dotenv
 
 # .env 파일이 있으면 환경 변수로 로드합니다.
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_LLM_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_LLM_MODEL = "openai/gpt-oss-120b"
 DEFAULT_MCP_BASE_URL = "http://localhost:8000/mcp"
+DEFAULT_AUTOMATION_MODE = "semi"
+
+
+def normalize_automation_mode(mode: Optional[str]) -> str:
+    """자동화 모드 문자열을 auto|semi|manual 중 하나로 정규화합니다."""
+    normalized = (mode or "").strip().lower()
+    if normalized in {"auto", "semi", "manual"}:
+        return normalized
+    if mode:
+        logger.warning("알 수 없는 automation.mode '%s' 감지, semi로 대체합니다.", mode)
+    return DEFAULT_AUTOMATION_MODE
 
 
 def _resolve_config_path(config_path: Optional[str] = None) -> Optional[Path]:
@@ -118,6 +131,6 @@ def get_automation_settings(config_path: Optional[str] = None) -> Dict[str, str]
     """
     config = load_app_config(config_path)
     auto_config = config.get("automation", {}) if isinstance(config, dict) else {}
-    mode = auto_config.get("mode", "semi")
+    mode = normalize_automation_mode(auto_config.get("mode", DEFAULT_AUTOMATION_MODE))
     return {"mode": str(mode)}
 
