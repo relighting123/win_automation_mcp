@@ -157,6 +157,65 @@ class GraphNodes:
                 return True
         return False
 
+    @staticmethod
+    def _is_retryable_llm_error(exc: Exception) -> bool:
+        """504/게이트웨이/일시적 네트워크 오류 등 재시도 가능한 LLM 오류를 판정합니다."""
+        message = str(exc).lower()
+        retry_tokens = (
+            "504",
+            "502",
+            "503",
+            "gateway timeout",
+            "timed out",
+            "timeout",
+            "service unavailable",
+            "temporarily unavailable",
+            "connection reset",
+            "connection aborted",
+        )
+        return any(token in message for token in retry_tokens)
+
+    async def _ainvoke_with_retry(
+        self,
+        runnable: Any,
+        payload: Any,
+        *,
+        timeout: float,
+        max_attempts: int,
+        op_name: str,
+    ) -> Any:
+        """LLM ainvoke를 timeout + exponential backoff 재시도로 실행합니다."""
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, max(1, max_attempts) + 1):
+            try:
+                return await asyncio.wait_for(runnable.ainvoke(payload), timeout=timeout)
+            except asyncio.TimeoutError as exc:
+                last_exc = exc
+                retryable = True
+                reason = "timeout"
+            except Exception as exc:
+                last_exc = exc
+                retryable = self._is_retryable_llm_error(exc)
+                reason = str(exc)
+
+            if attempt >= max_attempts or not retryable:
+                break
+
+            delay = min(6.0, 1.5 * (2 ** (attempt - 1)))
+            logger.warning(
+                "%s 실패(%s). %d/%d 재시도 전 %.1fs 대기",
+                op_name,
+                reason,
+                attempt,
+                max_attempts,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(f"{op_name} 실패: 알 수 없는 LLM 호출 오류")
+
     def _collect_execution_summary(self, history: List[Dict[str, Any]]) -> Dict[str, Any]:
         """실행 이력에서 성공/실패/스킵 정보를 집계합니다."""
         failed_steps: List[Dict[str, Any]] = []
@@ -239,10 +298,16 @@ class GraphNodes:
         structured_llm = self.llm.with_structured_output(SkillPlanModel)
         
         try:
-            plan = await structured_llm.ainvoke([
-                ("system", PLANNER_SYSTEM_PROMPT),
-                ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
-            ])
+            plan = await self._ainvoke_with_retry(
+                structured_llm,
+                [
+                    ("system", PLANNER_SYSTEM_PROMPT),
+                    ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
+                ],
+                timeout=45.0,
+                max_attempts=3,
+                op_name="plan.structured_llm",
+            )
             
             # Pydantic 모델이 리스트를 반환하므로 .skill_ids 접근
             result_ids = getattr(plan, "skill_ids", [])
@@ -251,7 +316,17 @@ class GraphNodes:
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
             # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
-            raw_res = await self.llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
+            try:
+                raw_res = await self._ainvoke_with_retry(
+                    self.llm,
+                    f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.",
+                    timeout=30.0,
+                    max_attempts=2,
+                    op_name="plan.fallback_llm",
+                )
+            except Exception as fallback_e:
+                logger.error("Fallback 계획 수립도 실패했습니다: %s", fallback_e)
+                return {"mode": resolved_mode, "skill_ids": []}
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
             mapped_ids = []
             for pid in potential_ids:
@@ -320,12 +395,15 @@ class GraphNodes:
         DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
         structured_llm = self.llm.with_structured_output(DynamicAnalysisModel)
         try:
-            analysis = await asyncio.wait_for(
-                structured_llm.ainvoke([
+            analysis = await self._ainvoke_with_retry(
+                structured_llm,
+                [
                     ("system", ANALYST_SYSTEM_PROMPT),
                     ("user", prompt)
-                ]),
+                ],
                 timeout=40.0,
+                max_attempts=3,
+                op_name="check_situation.analysis_llm",
             )
         except asyncio.TimeoutError:
             logger.error("상황 분석 LLM 호출이 시간 초과되어 proceed로 진행합니다.")
@@ -446,13 +524,29 @@ class GraphNodes:
         tools_info = json.dumps(skill_tools, indent=2, ensure_ascii=False)
         
         chain = prompt_template | structured_llm
-        enriched = await chain.ainvoke({
-            "query": state.query,
-            "check_status": state.check_status,
-            "skill_id": current_skill_id,
-            "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
-            "tools_info": tools_info
-        })
+        try:
+            enriched = await self._ainvoke_with_retry(
+                chain,
+                {
+                    "query": state.query,
+                    "check_status": state.check_status,
+                    "skill_id": current_skill_id,
+                    "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
+                    "tools_info": tools_info
+                },
+                timeout=50.0,
+                max_attempts=3,
+                op_name=f"extract.{current_skill_id}",
+            )
+        except Exception as e:
+            logger.error("도구 인자 추출 실패(%s). 기본 인자로 fallback 합니다.", e)
+            fallback_calls: List[ToolCall] = []
+            for step in steps_metadata:
+                default_args: Dict[str, Any] = {}
+                for arg_name, arg_meta in step["args"].items():
+                    default_args[arg_name] = arg_meta.get("value")
+                fallback_calls.append(ToolCall(tool=step["tool"], args=default_args))
+            return {"mode": resolved_mode, "enriched_plan": fallback_calls, "tool_sequence": tool_sequence}
         
         # [Post-process] Fixed 값 강제 적용 및 AI 값 검증
         final_calls = []
@@ -561,8 +655,18 @@ class GraphNodes:
                 f"[사용자 요청]\n{state.query}\n\n"
                 f"[DataFrame 요약]\n{json.dumps(analysis_payload, ensure_ascii=False)}"
             )
-            analysis_res = await self.llm.ainvoke(analysis_prompt)
-            clipboard_analysis = analysis_res.content
+            try:
+                analysis_res = await self._ainvoke_with_retry(
+                    self.llm,
+                    analysis_prompt,
+                    timeout=45.0,
+                    max_attempts=2,
+                    op_name="report.clipboard_analysis",
+                )
+                clipboard_analysis = analysis_res.content
+            except Exception as e:
+                logger.error("클립보드 LLM 분석 실패: %s", e)
+                clipboard_analysis = "LLM 분석 실패로 요약을 생성하지 못했습니다."
 
         report_details = {
             "execution": execution_summary,
@@ -578,5 +682,22 @@ class GraphNodes:
             "최종 답변은 한국어로 작성하세요. 반드시 '수행 여부'를 먼저 명시하고, "
             "그 다음 클립보드 데이터(DataFrame) 분석 결과를 자연스럽게 이어서 설명하세요."
         )
-        res = await self.llm.ainvoke(prompt)
-        return {"report": res.content, "report_details": report_details}
+        try:
+            res = await self._ainvoke_with_retry(
+                self.llm,
+                prompt,
+                timeout=45.0,
+                max_attempts=2,
+                op_name="report.final",
+            )
+            final_report = res.content
+        except Exception as e:
+            logger.error("최종 리포트 LLM 호출 실패: %s", e)
+            status = execution_summary.get("status", "unknown")
+            failed_steps = execution_summary.get("failed_steps", [])
+            final_report = (
+                f"수행 여부: {status}\n"
+                f"- 실패 단계 수: {len(failed_steps)}\n"
+                f"- 참고: LLM 응답 지연/오류(예: 504)로 자동 요약 생성에 실패하여 기본 리포트를 반환합니다."
+            )
+        return {"report": final_report, "report_details": report_details}

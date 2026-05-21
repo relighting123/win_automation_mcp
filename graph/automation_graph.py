@@ -14,9 +14,16 @@ from .builder import build_automation_graph
 logger = logging.getLogger(__name__)
 
 class MiniHybridAgent:
-    def __init__(self, mcp, model, api_key, base_url):
+    def __init__(self, mcp, model, api_key, base_url, timeout: float = 45.0, max_retries: int = 2):
         self.mcp = mcp
-        self.llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=0)
+        self.llm = ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=0,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
         # 분리된 빌더를 통해 그래프 생성
         self.graph = build_automation_graph(self.mcp, self.llm)
 
@@ -42,9 +49,18 @@ async def run_automation(
     resolved_model = model or settings["model"]
     resolved_api_key = api_key or settings["api_key"]
     resolved_base_url = base_url or settings["base_url"]
+    resolved_timeout = float(settings.get("timeout", "45"))
+    resolved_max_retries = int(settings.get("max_retries", "2"))
     resolved_mode = normalize_automation_mode(mode or auto_settings["mode"])
     
-    agent = MiniHybridAgent(mcp, resolved_model, resolved_api_key, resolved_base_url)
+    agent = MiniHybridAgent(
+        mcp,
+        resolved_model,
+        resolved_api_key,
+        resolved_base_url,
+        timeout=resolved_timeout,
+        max_retries=resolved_max_retries,
+    )
     
     # 그래프 실행
     final = await agent.graph.ainvoke({

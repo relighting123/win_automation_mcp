@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LLM_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_LLM_MODEL = "openai/gpt-oss-120b"
+DEFAULT_LLM_TIMEOUT = "45"
+DEFAULT_LLM_MAX_RETRIES = "2"
 DEFAULT_MCP_BASE_URL = "http://localhost:8000/mcp"
 DEFAULT_AUTOMATION_MODE = "semi"
 
@@ -96,11 +98,25 @@ def get_llm_settings(config_path: Optional[str] = None) -> Dict[str, str]:
         or os.getenv("OPENAI_MODEL")
         or DEFAULT_LLM_MODEL
     )
+    timeout = (
+        llm_config.get("timeout")
+        or os.getenv("INTERNAL_LLM_TIMEOUT")
+        or os.getenv("OPENAI_TIMEOUT")
+        or DEFAULT_LLM_TIMEOUT
+    )
+    max_retries = (
+        llm_config.get("max_retries")
+        or os.getenv("INTERNAL_LLM_MAX_RETRIES")
+        or os.getenv("OPENAI_MAX_RETRIES")
+        or DEFAULT_LLM_MAX_RETRIES
+    )
 
     return {
         "base_url": str(base_url),
         "api_key": str(api_key),
         "model": str(model),
+        "timeout": str(timeout),
+        "max_retries": str(max_retries),
     }
 
 
