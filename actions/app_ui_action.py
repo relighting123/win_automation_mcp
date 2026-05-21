@@ -7,7 +7,6 @@ UIA 제어가 어려운 상황을 위해 화면 캡처 및 OCR 기반 조작 기
 
 from __future__ import annotations
 
-from collections import deque
 import logging
 import time
 import asyncio
@@ -523,51 +522,6 @@ class AppUIAction:
             candidates.append(wrapper)
         return candidates
 
-    def _get_node_id(self, node: Any) -> str:
-        """UIA 노드 식별에 사용할 안정적인 ID를 반환합니다."""
-        node_id = str(self._safe_call(lambda: node.element_info.handle, None) or "")
-        if not node_id:
-            node_id = str(self._safe_call(lambda: node.element_info.runtime_id, None) or "")
-        if not node_id:
-            node_id = str(id(node))
-        return node_id
-
-    def _iter_visible_nodes_bfs(self, root: Any, *, limit: int):
-        """
-        UIA 트리를 BFS로 순회하며 limit 개수만큼 가시 노드를 반환합니다.
-        descendants() 전체 확장을 피해서 대규모 트리에서 지연을 줄입니다.
-        """
-        if root is None or limit <= 0:
-            return
-
-        queue = deque([root])
-        seen_ids: set[str] = set()
-        yielded = 0
-        scanned = 0
-        # visible 노드가 드문 화면에서도 무한정 스캔하지 않도록 예산을 둡니다.
-        scan_budget = max(limit * 8, limit + 50)
-
-        while queue and yielded < limit and scanned < scan_budget:
-            raw_node = queue.popleft()
-            node = self._safe_call(lambda: raw_node.wrapper_object(), None) or raw_node
-            node_id = self._get_node_id(node)
-            if node_id in seen_ids:
-                continue
-            seen_ids.add(node_id)
-            scanned += 1
-
-            if not self._safe_call(lambda: node.exists(), False):
-                continue
-
-            children = self._safe_call(node.children, []) or []
-            queue.extend(children)
-
-            if not self._safe_call(lambda: node.is_visible(), False):
-                continue
-
-            yield node
-            yielded += 1
-
     def _resolve_attr_search_root(
         self,
         *,
@@ -735,7 +689,6 @@ class AppUIAction:
         components: list[dict] = []
         keyword_hits: list[dict] = []
         target_keyword = (keyword or "").strip()
-        collection_started = time.perf_counter()
         
         # 첫 번째 윈도우 정보
         main_wrapper = target_windows[0]
@@ -749,13 +702,16 @@ class AppUIAction:
         global_idx = 0
         for wrapper in target_windows:
             win_title = self._safe_call(wrapper.window_text, "Unknown Window")
-            remaining_slots = component_limit - global_idx
-            if remaining_slots <= 0:
-                break
+            nodes = [wrapper]
+            descendants = self._safe_call(wrapper.descendants, []) or []
+            nodes.extend(descendants)
 
-            for node in self._iter_visible_nodes_bfs(wrapper, limit=remaining_slots):
+            for node in nodes:
                 if global_idx >= component_limit:
                     break
+                
+                if not self._safe_call(lambda: node.is_visible(), False):
+                    continue
 
                 title = self._safe_call(node.window_text, "") or ""
                 auto_id = self._safe_call(lambda: node.element_info.automation_id, "") or ""
@@ -795,14 +751,6 @@ class AppUIAction:
             if global_idx >= component_limit:
                 break
 
-        elapsed_ms = int((time.perf_counter() - collection_started) * 1000)
-        logger.info(
-            "UIA 구성요소 수집 완료: components=%d, keyword_hits=%d, windows=%d, elapsed_ms=%d",
-            len(components),
-            len(keyword_hits),
-            len(target_windows),
-            elapsed_ms,
-        )
         return components, keyword_hits, summary_window
 
 
