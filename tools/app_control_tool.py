@@ -270,6 +270,8 @@ async def describe_current_state(
     case_sensitive: bool = False,
     include_components: bool = True,
     component_limit: int = 150,
+    include_ocr_hits: bool = False,
+    ocr_timeout: float = 1.0,
 ) -> str:
     """
     현재 애플리케이션의 화면 상태와 UI 구성요소 목록을 가져옵니다.
@@ -282,6 +284,8 @@ async def describe_current_state(
         case_sensitive=case_sensitive,
         include_components=include_components,
         component_limit=component_limit,
+        include_ocr_hits=include_ocr_hits,
+        ocr_timeout=ocr_timeout,
     )
     
     # [Token Optimization] LLM용 결과 데이터 경량화
