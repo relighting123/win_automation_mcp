@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import yaml
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Union
@@ -22,6 +23,37 @@ class GraphNodes:
         self.mcp = mcp
         self.llm = llm
         self._skills_cache: Optional[Dict[str, Any]] = None
+        self._llm_prompt_logging_enabled = (
+            os.getenv("LOG_LLM_PROMPTS", "true").strip().lower() not in {"0", "false", "off", "no"}
+        )
+        max_chars_raw = os.getenv("LLM_PROMPT_LOG_MAX_CHARS", "8000").strip()
+        try:
+            parsed_max_chars = int(max_chars_raw)
+            self._llm_prompt_log_max_chars = parsed_max_chars if parsed_max_chars > 0 else 8000
+        except ValueError:
+            self._llm_prompt_log_max_chars = 8000
+
+    @staticmethod
+    def _serialize_prompt_payload(prompt_payload: Any) -> str:
+        if isinstance(prompt_payload, str):
+            return prompt_payload
+        try:
+            return json.dumps(prompt_payload, ensure_ascii=False, indent=2, default=str)
+        except Exception:
+            return str(prompt_payload)
+
+    def _log_llm_prompt(self, stage: str, prompt_payload: Any) -> None:
+        """LLM 호출 직전 프롬프트를 로그로 남깁니다."""
+        if not self._llm_prompt_logging_enabled:
+            return
+
+        serialized = self._serialize_prompt_payload(prompt_payload)
+        if len(serialized) > self._llm_prompt_log_max_chars:
+            clipped = serialized[: self._llm_prompt_log_max_chars]
+            omitted = len(serialized) - self._llm_prompt_log_max_chars
+            serialized = f"{clipped}\n...(truncated, omitted {omitted} chars)"
+
+        logger.info("[LLM Prompt][%s]\n%s", stage, serialized)
 
     def _get_skills_config(self) -> Dict[str, Any]:
         """skills.yaml 및 skills/ 디렉토리에서 스킬 설정들을 로드합니다."""
@@ -238,10 +270,12 @@ class GraphNodes:
         structured_llm = self.llm.with_structured_output(SkillPlanModel)
         
         try:
-            plan = await structured_llm.ainvoke([
+            planner_messages = [
                 ("system", PLANNER_SYSTEM_PROMPT),
                 ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
-            ])
+            ]
+            self._log_llm_prompt("plan", planner_messages)
+            plan = await structured_llm.ainvoke(planner_messages)
             
             # Pydantic 모델이 리스트를 반환하므로 .skill_ids 접근
             result_ids = getattr(plan, "skill_ids", [])
@@ -250,7 +284,9 @@ class GraphNodes:
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
             # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
-            raw_res = await self.llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
+            fallback_prompt = f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요."
+            self._log_llm_prompt("plan_fallback", fallback_prompt)
+            raw_res = await self.llm.ainvoke(fallback_prompt)
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
             mapped_ids = []
             for pid in potential_ids:
@@ -291,10 +327,12 @@ class GraphNodes:
         DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
         structured_llm = self.llm.with_structured_output(DynamicAnalysisModel)
         
-        analysis = await structured_llm.ainvoke([
+        analysis_messages = [
             ("system", ANALYST_SYSTEM_PROMPT),
             ("user", prompt)
-        ])
+        ]
+        self._log_llm_prompt("check_situation", analysis_messages)
+        analysis = await structured_llm.ainvoke(analysis_messages)
         
         logger.info(
             "상황 분석 결과: category=%s, next_action=%s, reason=%s",
@@ -400,13 +438,19 @@ class GraphNodes:
         tools_info = json.dumps(skill_tools, indent=2, ensure_ascii=False)
         
         chain = prompt_template | structured_llm
-        enriched = await chain.ainvoke({
+        chain_inputs = {
             "query": state.query,
             "check_status": state.check_status,
             "skill_id": current_skill_id,
             "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
             "tools_info": tools_info
-        })
+        }
+        rendered_messages = prompt_template.format_messages(**chain_inputs)
+        self._log_llm_prompt(
+            "extract",
+            [{"role": msg.type, "content": msg.content} for msg in rendered_messages],
+        )
+        enriched = await chain.ainvoke(chain_inputs)
         
         # [Post-process] Fixed 값 강제 적용 및 AI 값 검증
         final_calls = []
@@ -515,6 +559,7 @@ class GraphNodes:
                 f"[사용자 요청]\n{state.query}\n\n"
                 f"[DataFrame 요약]\n{json.dumps(analysis_payload, ensure_ascii=False)}"
             )
+            self._log_llm_prompt("report_clipboard_analysis", analysis_prompt)
             analysis_res = await self.llm.ainvoke(analysis_prompt)
             clipboard_analysis = analysis_res.content
 
@@ -532,5 +577,6 @@ class GraphNodes:
             "최종 답변은 한국어로 작성하세요. 반드시 '수행 여부'를 먼저 명시하고, "
             "그 다음 클립보드 데이터(DataFrame) 분석 결과를 자연스럽게 이어서 설명하세요."
         )
+        self._log_llm_prompt("report_final", prompt)
         res = await self.llm.ainvoke(prompt)
         return {"report": res.content, "report_details": report_details}
