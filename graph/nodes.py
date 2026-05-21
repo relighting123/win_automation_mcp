@@ -1,7 +1,6 @@
 import json
 import logging
 import yaml
-import difflib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
@@ -53,24 +52,42 @@ class GraphNodes:
         self._skills_cache = all_skills
         return all_skills
 
-    async def _map_skill_id(self, skill_id: str, valid_skills: Dict[str, Any]) -> str:
-        """존재하지 않는 스킬 ID를 의미상 가장 가까운 유효한 ID로 매핑합니다."""
+    async def _map_skill_id(
+        self,
+        skill_id: str,
+        valid_skills: Dict[str, Any],
+        allow_semantic_fallback: bool = True,
+    ) -> str:
+        """
+        입력된 스킬 ID를 유효한 스킬 ID로 정규화합니다.
+
+        매핑 전략:
+          1. 완전 일치 (대소문자 무시)
+          2. 구분자 정규화 일치 (언더바/하이픈 제거 후 비교)
+          3. (옵션) LLM 기반 의미 매핑 - allow_semantic_fallback=True 일 때만 동작
+
+        문자열 유사도(difflib) 기반 매핑은 의도치 않은 스킬(예: login_skill)로
+        매핑되는 사고를 유발하므로 사용하지 않습니다.
+
+        manual 모드처럼 사용자가 스킬을 직접 지정한 경우에는
+        allow_semantic_fallback=False 로 호출하여 매핑 결과가 없으면 원본 ID를
+        그대로 반환합니다(이후 단계에서 명확히 실패하도록).
+        """
         if not skill_id:
             return skill_id
 
-        # 1. 완전 일치 확인 (Case-insensitive)
         skill_id_lower = skill_id.lower().strip()
         valid_ids = list(valid_skills.keys())
-        
-        # 정확히 일치하는 키 찾기 (대소문자 무시)
+
+        # 1. 완전 일치 (Case-insensitive)
         exact_match = next((sid for sid in valid_ids if sid.lower() == skill_id_lower), None)
         if exact_match:
             return exact_match
 
-        # 2. 정규화 일치 확인 (언더바, 하이픈 제거 후 비교)
-        def normalize(s):
+        # 2. 구분자 정규화 일치 (언더바, 하이픈 제거 후 비교)
+        def normalize(s: str) -> str:
             return s.lower().replace("_", "").replace("-", "").strip()
-        
+
         norm_id = normalize(skill_id)
         norm_match = next((sid for sid in valid_ids if normalize(sid) == norm_id), None)
         if norm_match:
@@ -80,36 +97,44 @@ class GraphNodes:
         if not valid_ids:
             return skill_id
 
-        # 3. 문자열 유사도 기반 매핑 (difflib)
-        matches = difflib.get_close_matches(skill_id, valid_ids, n=1, cutoff=0.7)
-        if matches:
-            logger.info(f"스킬 ID 유사도 매핑: '{skill_id}' -> '{matches[0]}'")
-            return matches[0]
+        if not allow_semantic_fallback:
+            logger.warning(
+                "스킬 ID '%s'에 정확/정규화 매핑이 없으며 의미 매핑 허용 안 됨. 원본 ID를 그대로 사용합니다.",
+                skill_id,
+            )
+            return skill_id
 
-        # 4. LLM 기반 의미상 매핑
+        # 3. LLM 기반 의미 매핑 (auto 모드 등 LLM이 추론한 ID 보정용)
         logger.info(f"스킬 ID '{skill_id}'에 대한 의미적 매핑 시도 중...")
-        # ... (이하 동일)
-        skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in valid_skills.items()])
-        
+        skills_info = "\n".join(
+            [f"- {sid}: {info.get('description', '')}" for sid, info in valid_skills.items()]
+        )
+
         mapping_prompt = (
-            f"사용자가 요청하거나 시스템이 제안한 '{skill_id}'라는 스킬이 현재 등록된 목록에 없습니다.\n"
+            f"시스템이 제안한 '{skill_id}'라는 스킬이 현재 등록된 목록에 없습니다.\n"
             f"아래 등록된 스킬 목록 중 의미상 가장 적절한 스킬 ID 하나만 골라주세요.\n\n"
             f"[등록된 스킬 목록]\n{skills_info}\n\n"
-            "답변은 반드시 스킬 ID만 출력하세요. 정말 적당한 것이 없다면 가장 첫 번째 스킬 ID를 출력하세요."
+            "답변은 반드시 스킬 ID만 출력하세요. 적절한 스킬이 없다면 'NONE'을 출력하세요."
         )
-        
+
         try:
             res = await self.llm.ainvoke(mapping_prompt)
             match = res.content.strip()
-            # 따옴표나 마크다운 제거
             match = match.replace("`", "").replace("'", "").replace("\"", "")
             if match in valid_skills:
                 logger.info(f"스킬 ID 의미 매핑 성공: '{skill_id}' -> '{match}'")
                 return match
+            logger.warning(
+                "스킬 ID '%s'에 대한 의미 매핑 실패(LLM 응답: '%s'). 원본 ID를 유지합니다.",
+                skill_id,
+                match,
+            )
         except Exception as e:
             logger.warning(f"의미 매핑 중 오류 발생: {e}")
 
-        return valid_ids[0]
+        # 명확한 매칭이 없으면 임의의 스킬로 대체하지 않고 원본을 그대로 반환합니다.
+        # (예: 첫 번째 스킬 강제 선택은 의도치 않은 'login_skill' 실행 등의 사고 유발)
+        return skill_id
 
     def _create_structured_plan_model(self, valid_ids: List[str]):
         """유효한 스킬 ID만 선택하도록 강제하는 동적 Pydantic 모델 생성 (Latest LangGraph/LangChain Pattern)"""
@@ -231,11 +256,25 @@ class GraphNodes:
         valid_ids = list(skills_config.keys())
 
         if state.mode != "auto":
-            # [수정] semi/manual 모드에서도 입력된 skill_ids가 유효한지 검증 및 매핑
-            logger.info(f"[{state.mode} 모드] 기존 스킬 리스트 검증 및 매핑 시작")
+            # semi/manual 모드에서도 입력된 skill_ids를 검증/정규화합니다.
+            # 단, manual 모드는 사용자가 명시한 스킬을 그대로 실행해야 하므로
+            # 정확/정규화 매핑만 허용하고 LLM 의미 매핑은 비활성화합니다.
+            # (manual 모드에서 임의로 'login_skill' 같은 다른 스킬이 자동 실행되는 사고 예방)
+            allow_semantic = state.mode != "manual"
+            logger.info(
+                "[%s 모드] 기존 스킬 리스트 검증 및 매핑 시작 (semantic_fallback=%s)",
+                state.mode,
+                allow_semantic,
+            )
             mapped_ids = []
             for sid in state.skill_ids:
-                mapped_ids.append(await self._map_skill_id(sid, skills_config))
+                mapped_ids.append(
+                    await self._map_skill_id(
+                        sid,
+                        skills_config,
+                        allow_semantic_fallback=allow_semantic,
+                    )
+                )
             return {"skill_ids": mapped_ids}
 
         logger.info("--- [auto 모드] AI 스킬 계획 시작 ---")
@@ -262,10 +301,13 @@ class GraphNodes:
             return {"skill_ids": result_ids}
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
-            # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
+            # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑 (auto 모드 한정)
             raw_res = await self.llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
-            mapped_ids = [await self._map_skill_id(pid, skills_config) for pid in potential_ids]
+            mapped_ids = [
+                await self._map_skill_id(pid, skills_config, allow_semantic_fallback=True)
+                for pid in potential_ids
+            ]
             return {"skill_ids": mapped_ids}
 
     async def check_situation(self, state: AgentState):
