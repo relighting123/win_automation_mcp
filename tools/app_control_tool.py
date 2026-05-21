@@ -276,12 +276,17 @@ async def describe_current_state(
     """
     logger.info(f"[Tool] describe_current_state 호출: keyword={keyword}")
     action = get_app_ui_action()
+    # describe_current_state 는 "현재 시점의 스냅샷" 의미이므로 OCR 을 단발(single-shot)
+    # 로만 수행해야 한다. 기본 ocr_timeout=2.0 로 두면 키워드가 화면에 없을 때
+    # 매 호출마다 2초씩 대기하면서 동일한 OCR 을 반복 수행하게 되어, 도구 호출이
+    # 체감상 매우 느려진다.
     result = await action.describe_current_state(
         keyword=keyword,
         match_mode=match_mode,
         case_sensitive=case_sensitive,
         include_components=include_components,
         component_limit=component_limit,
+        ocr_timeout=None,
     )
     
     # [Token Optimization] LLM용 결과 데이터 경량화

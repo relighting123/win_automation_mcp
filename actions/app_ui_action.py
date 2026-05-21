@@ -11,6 +11,7 @@ import logging
 import time
 import asyncio
 import re
+from collections import deque
 import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,11 @@ class AppUIAction:
         "windows": "win",
     }
 
+    # AppUIAction은 매 도구 호출마다 새로 인스턴스화되므로, 프로세스 경로 검증 결과는
+    # 클래스 단위(=프로세스 단위) 캐시에 보관해 psutil/COM 호출을 줄인다.
+    # 키: (process_id, target_path_norm), 값: bool
+    _PROC_PATH_VERIFICATION_CACHE: dict[tuple[int, str], bool] = {}
+
     def __init__(self, session: Optional[AppSession] = None):
         self._session = session or AppSession.get_instance()
         self._launcher = get_launcher()
@@ -89,6 +95,22 @@ class AppUIAction:
             logger.debug(f"윈도우 영역 획득 실패: {e}")
         
         return None
+
+    def _is_window_foreground(self, wrapper: Any) -> bool:
+        """주어진 wrapper가 현재 시스템 Foreground 윈도우인지 확인합니다."""
+        try:
+            import win32gui
+            fg_hwnd = win32gui.GetForegroundWindow()
+            if not fg_hwnd:
+                return False
+            wrapper_hwnd = self._safe_call(lambda: wrapper.element_info.handle, None)
+            if wrapper_hwnd is None:
+                wrapper_hwnd = self._safe_call(lambda: wrapper.handle, None)
+            if wrapper_hwnd is None:
+                return False
+            return int(fg_hwnd) == int(wrapper_hwnd)
+        except Exception:
+            return False
 
     def ensure_focus(self) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
@@ -116,35 +138,37 @@ class AppUIAction:
 
             # 윈도우 상태 확인 및 복구
             is_minimized = self._safe_call(lambda: wrapper.is_minimized(), False)
+            already_foreground = (not is_minimized) and self._is_window_foreground(wrapper)
+
             if is_minimized:
                 logger.info("윈도우가 최소화되어 있어 복구를 시도합니다.")
                 wrapper.restore()
                 time.sleep(self._session.config.get("timeouts", {}).get("ui_delay", 0.5))
 
-            # 윈도우를 최상단으로 가져오고 포커스 설정
-            try:
-                # 1. 일반적인 포커스 시도
-                wrapper.set_focus()
-                
-                # 2. 추가적인 강제 활성화 (최소화되어 있지 않아도 뒤에 숨어있을 수 있음)
-                # draw_outline은 호출 비용이 커서 기본 포커스 경로에서는 사용하지 않습니다.
-            except Exception as e:
-                logger.warning(f"set_focus 실패: {e}. 대안을 시도합니다.")
+            # 이미 Foreground 상태라면 set_focus + after_focus_delay sleep 을 건너뛴다.
+            # describe_current_state 처럼 빈번하게 호출되는 경로에서 매 호출 500ms를
+            # 잃지 않도록 하는 핵심 최적화 지점이다.
+            if not already_foreground:
+                # 윈도우를 최상단으로 가져오고 포커스 설정
                 try:
-                    # win32 backend의 경우 더 강력한 활성화 시도
-                    wrapper.maximize()
-                    wrapper.restore()
-                except Exception:
-                    pass
-            
-            # 윈도우 활성화 대기
-            time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.5))
-            
-            # 윈도우가 가시적인지 재확인
-            if not self._safe_call(lambda: wrapper.is_visible(), False):
-                logger.warning("포커스 시도 후에도 윈도우가 가시적이지 않습니다.")
-                # 한 번 더 restore 시도
-                self._safe_call(wrapper.restore, None)
+                    wrapper.set_focus()
+                except Exception as e:
+                    logger.warning(f"set_focus 실패: {e}. 대안을 시도합니다.")
+                    try:
+                        # win32 backend의 경우 더 강력한 활성화 시도
+                        wrapper.maximize()
+                        wrapper.restore()
+                    except Exception:
+                        pass
+
+                # 윈도우 활성화 대기
+                time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.5))
+
+                # 윈도우가 가시적인지 재확인
+                if not self._safe_call(lambda: wrapper.is_visible(), False):
+                    logger.warning("포커스 시도 후에도 윈도우가 가시적이지 않습니다.")
+                    # 한 번 더 restore 시도
+                    self._safe_call(wrapper.restore, None)
 
             return AppUIActionResult(
                 result="success",
@@ -226,24 +250,36 @@ class AppUIAction:
         }
 
     def _verify_process_path(self, wrapper: Any) -> bool:
-        """윈도우의 프로세스 경로가 설정된 실행 경로와 일치하는지 확인합니다."""
+        """윈도우의 프로세스 경로가 설정된 실행 경로와 일치하는지 확인합니다.
+
+        psutil.Process(pid).exe() 호출 비용이 무시할 수 없을 만큼 큰 환경(예: Windows)에서
+        describe_current_state 같은 호출이 매번 모든 윈도우에 대해 검증을 반복하면 누적
+        지연이 발생한다. 동일 (pid, target_path) 조합에 대해서는 결과를 캐싱한다.
+        """
         target_path = self._session.config.get("application", {}).get("executable_path")
         if not target_path:
             return True  # 경로가 설정되어 있지 않으면 검사 생략 (Loose matching)
 
         try:
-            import psutil
             pid = self._safe_call(lambda: wrapper.element_info.process_id, None)
             if pid is None:
                 return False
-            
+
+            target_path_norm = str(target_path).lower().replace('/', '\\')
+            cache_key = (int(pid), target_path_norm)
+            cached = self._PROC_PATH_VERIFICATION_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+
+            import psutil
             proc = psutil.Process(pid)
             actual_path = self._safe_call(lambda: proc.exe(), "").lower().replace('/', '\\')
-            target_path_norm = target_path.lower().replace('/', '\\')
-            
+
             match = (actual_path == target_path_norm)
             if not match:
                 logger.debug(f"Process path MISMATCH: Actual='{actual_path}', Expected='{target_path_norm}'")
+            # 결과를 캐시하여 동일 PID에 대한 반복 비용 제거.
+            self._PROC_PATH_VERIFICATION_CACHE[cache_key] = match
             return match
         except Exception as e:
             logger.debug(f"프로세스 경로 검증 중 오류: {e}")
@@ -668,16 +704,29 @@ class AppUIAction:
         case_sensitive: bool = False,
         component_limit: int = 300,
     ) -> tuple[list[dict], list[dict], dict]:
-        """프로세스의 모든 가시적인 윈도우에서 UIA 구성요소를 수집합니다."""
+        """프로세스의 가시적인 윈도우에서 UIA 구성요소를 수집합니다.
+
+        성능 최적화:
+        1) ``_verify_process_path`` 결과를 (pid, target_path) 단위로 캐시하여 매 호출마다
+           반복되던 psutil 조회 비용을 제거한다.
+        2) ``wrapper.descendants()`` 가 트리 전체(수천 노드)를 한 번에 래핑하여
+           ``component_limit`` 이 효과적으로 동작하지 않는 문제를 해결하기 위해,
+           BFS로 ``children()`` 을 따라 내려가며 한도에 도달하면 즉시 중단한다.
+        3) ``rectangle()`` COM 호출은 비싼 편이고, 컴포넌트 리스트에서는
+           좌표가 LLM에 전달되지 않는다(``app_control_tool`` 의 compact 변환에서 제거됨).
+           키워드 매칭된 노드에 대해서만 좌표를 계산한다.
+        """
         if not self._session.is_connected:
             self._safe_call(self._session.connect, None)
-        
+
         if not self._session.is_connected:
             return [], [], {}
 
-        # 1. 해당 프로세스의 모든 가시적인 윈도우 찾기
-        all_windows = self._session.app.windows()
-        target_windows = []
+        # 모달/팝업까지 포함하도록 프로세스의 가시 윈도우를 모두 열거한다.
+        # _verify_process_path 가 PID 단위로 캐싱되므로 windows() 자체 비용 외에는
+        # 반복적인 psutil 호출이 추가되지 않는다.
+        target_windows: list = []
+        all_windows = self._safe_call(lambda: self._session.app.windows(), []) or []
         for w in all_windows:
             wrapper = self._safe_call(lambda: w.wrapper_object(), None) or w
             if self._verify_process_path(wrapper) and self._safe_call(lambda: wrapper.is_visible(), False):
@@ -686,11 +735,13 @@ class AppUIAction:
         if not target_windows:
             return [], [], {}
 
+        if self._session.cached_window is None:
+            self._session.cached_window = target_windows[0]
+
         components: list[dict] = []
         keyword_hits: list[dict] = []
         target_keyword = (keyword or "").strip()
-        
-        # 첫 번째 윈도우 정보
+
         main_wrapper = target_windows[0]
         summary_window = {
             "title": self._safe_call(main_wrapper.window_text, "") or "",
@@ -698,58 +749,86 @@ class AppUIAction:
             "rect": self._rect_to_dict(self._safe_call(main_wrapper.rectangle, None)),
         }
 
-        # 2. 모든 타겟 윈도우의 자식 요소 수집
+        # 2) 모든 타겟 윈도우에 대해 BFS로 부분 트리만 탐색.
+        #    component_limit 도달 즉시 중단되어, 트리 전체 래핑 비용을 피한다.
         global_idx = 0
-        for wrapper in target_windows:
-            win_title = self._safe_call(wrapper.window_text, "Unknown Window")
-            nodes = [wrapper]
-            descendants = self._safe_call(wrapper.descendants, []) or []
-            nodes.extend(descendants)
+        # 안전한 BFS 깊이 상한. 일반적인 데스크톱 앱 UI 트리는 이 정도 깊이 안에 들어온다.
+        # 깊이가 깊더라도 component_limit 으로 어차피 컷오프된다.
+        max_depth = 24
 
-            for node in nodes:
-                if global_idx >= component_limit:
-                    break
-                
-                if not self._safe_call(lambda: node.is_visible(), False):
+        for wrapper in target_windows:
+            if global_idx >= component_limit:
+                break
+
+            win_title = self._safe_call(wrapper.window_text, "Unknown Window")
+
+            queue: deque = deque()
+            queue.append((wrapper, 0))
+
+            while queue and global_idx < component_limit:
+                node, depth = queue.popleft()
+
+                node_visible = self._safe_call(lambda: node.is_visible(), False)
+
+                # 자식 탐색은 가시 여부와 무관하게 진행 (descendants() 의 평탄화 동작과 동일하게
+                # 일부 컨트롤은 자기 자신이 offscreen 으로 보고되어도 자식이 화면에 보일 수 있다).
+                if depth < max_depth:
+                    enqueue_children = True
+                else:
+                    enqueue_children = False
+
+                if not node_visible:
+                    if enqueue_children:
+                        children = self._safe_call(lambda: node.children(), []) or []
+                        for child in children:
+                            queue.append((child, depth + 1))
                     continue
 
                 title = self._safe_call(node.window_text, "") or ""
                 auto_id = self._safe_call(lambda: node.element_info.automation_id, "") or ""
                 control_type = self._safe_call(lambda: node.element_info.control_type, "") or ""
-                rect = self._safe_call(node.rectangle, None)
-                rect_dict = self._rect_to_dict(rect)
-                
-                # 내부 로직용 데이터 (좌표 포함)
-                comp = {
+
+                is_kw_hit = bool(target_keyword) and self._is_keyword_match(
+                    candidate_values=[title, auto_id, control_type],
+                    keyword=target_keyword,
+                    match_mode=match_mode,
+                    case_sensitive=case_sensitive,
+                )
+
+                # rectangle() 은 가장 비싼 COM 호출 중 하나이므로 키워드 hit 노드에만 수행한다.
+                cx: Optional[int] = None
+                cy: Optional[int] = None
+                if is_kw_hit:
+                    rect_dict = self._rect_to_dict(self._safe_call(node.rectangle, None))
+                    cx = rect_dict.get("center_x")
+                    cy = rect_dict.get("center_y")
+
+                components.append({
                     "index": global_idx,
                     "title": title,
                     "auto_id": auto_id,
                     "control_type": control_type,
                     "window": win_title,
-                    "x": rect_dict.get("center_x"),
-                    "y": rect_dict.get("center_y"),
-                }
-                components.append(comp)
+                    "x": cx,
+                    "y": cy,
+                })
 
-                if target_keyword and self._is_keyword_match(
-                    candidate_values=[title, auto_id, control_type],
-                    keyword=target_keyword,
-                    match_mode=match_mode,
-                    case_sensitive=case_sensitive,
-                ):
+                if is_kw_hit:
                     keyword_hits.append({
                         "index": global_idx,
                         "title": title,
                         "auto_id": auto_id,
-                        "x": rect_dict.get("center_x"),
-                        "y": rect_dict.get("center_y"),
-                        "source": "uia"
+                        "x": cx,
+                        "y": cy,
+                        "source": "uia",
                     })
-                
+
                 global_idx += 1
-            
-            if global_idx >= component_limit:
-                break
+
+                if enqueue_children and global_idx < component_limit:
+                    children = self._safe_call(lambda: node.children(), []) or []
+                    for child in children:
+                        queue.append((child, depth + 1))
 
         return components, keyword_hits, summary_window
 
