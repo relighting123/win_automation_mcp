@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import yaml
@@ -276,7 +277,35 @@ class GraphNodes:
             logger.info(f"[Bypass] 스킬 '{current_skill_id}'은 소스/설정 관련 작업이므로 화면 체크를 건너뜁니다.")
             return {"check_status": "source_edit_bypass", "next_action": "proceed"}
 
-        state_info = await self.mcp.call_tool("describe_current_state", {"include_components": False})
+        try:
+            raw_state_info = await asyncio.wait_for(
+                self.mcp.call_tool("describe_current_state", {"include_components": False}),
+                timeout=25.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("상황 체크용 describe_current_state 호출이 시간 초과되어 proceed로 진행합니다.")
+            return {
+                "mode": resolved_mode,
+                "check_status": "state_check_timeout",
+                "next_action": "proceed",
+            }
+        except Exception as e:
+            logger.error("상황 체크용 describe_current_state 호출 실패: %s", e)
+            return {
+                "mode": resolved_mode,
+                "check_status": f"state_check_error: {e}",
+                "next_action": "proceed",
+            }
+
+        state_info = self._decode_tool_output(raw_state_info)
+        if isinstance(state_info, dict):
+            state_info = {
+                "focus": state_info.get("focus"),
+                "app": state_info.get("app"),
+                "screen_flags": state_info.get("screen_flags"),
+                "target_window": state_info.get("target_window"),
+                "error": state_info.get("error"),
+            }
         
         skills_config = self._get_skills_config()
         valid_ids = list(skills_config.keys())
@@ -290,11 +319,28 @@ class GraphNodes:
         # [최신 기법] 상황 분석에서도 유효한 스킬 ID만 제안하도록 동적 모델 적용
         DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
         structured_llm = self.llm.with_structured_output(DynamicAnalysisModel)
-        
-        analysis = await structured_llm.ainvoke([
-            ("system", ANALYST_SYSTEM_PROMPT),
-            ("user", prompt)
-        ])
+        try:
+            analysis = await asyncio.wait_for(
+                structured_llm.ainvoke([
+                    ("system", ANALYST_SYSTEM_PROMPT),
+                    ("user", prompt)
+                ]),
+                timeout=40.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("상황 분석 LLM 호출이 시간 초과되어 proceed로 진행합니다.")
+            return {
+                "mode": resolved_mode,
+                "check_status": "situation_analysis_timeout",
+                "next_action": "proceed",
+            }
+        except Exception as e:
+            logger.error("상황 분석 LLM 호출 실패: %s", e)
+            return {
+                "mode": resolved_mode,
+                "check_status": f"situation_analysis_error: {e}",
+                "next_action": "proceed",
+            }
         
         logger.info(
             "상황 분석 결과: category=%s, next_action=%s, reason=%s",

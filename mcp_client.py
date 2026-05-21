@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import json
+import time
 from typing import Dict, Any, List, Optional
 
 class MCPClient:
@@ -89,6 +90,76 @@ class MCPClient:
         if params is not None:
             payload["params"] = params
 
+        def _parse_json_line(line: str) -> Optional[Dict[str, Any]]:
+            normalized = line.strip()
+            if not normalized or normalized.startswith("event:"):
+                return None
+            if normalized.startswith("data:"):
+                normalized = normalized[5:].strip()
+            if not normalized or normalized == "[DONE]":
+                return None
+            try:
+                parsed_line = json.loads(normalized)
+                if isinstance(parsed_line, dict):
+                    return parsed_line
+            except json.JSONDecodeError:
+                return None
+            return None
+
+        async def _parse_stream_payload(response: httpx.Response) -> Optional[Dict[str, Any]]:
+            parsed_payload: Optional[Dict[str, Any]] = None
+            async for raw_line in response.aiter_lines():
+                parsed_payload = _parse_json_line(raw_line)
+                if parsed_payload is not None:
+                    return parsed_payload
+
+            raw_body = (await response.aread()).decode("utf-8", errors="ignore")
+            # 1) event-stream 형태 파싱
+            for raw_line in raw_body.splitlines():
+                parsed_payload = _parse_json_line(raw_line)
+                if parsed_payload is not None:
+                    return parsed_payload
+            # 2) 일반 JSON 본문 파싱
+            try:
+                body_json = json.loads(raw_body.strip())
+                if isinstance(body_json, dict):
+                    return body_json
+            except Exception:
+                return None
+            return None
+
+        async def _poll_accepted(location: str) -> Dict[str, Any]:
+            # location이 상대 경로면 base_url 기준 절대 URL로 보정
+            try:
+                poll_url = str(httpx.URL(self.base_url).join(location))
+            except Exception:
+                poll_url = location
+
+            deadline = time.monotonic() + 60.0
+            while time.monotonic() < deadline:
+                async with client.stream(
+                    "GET",
+                    poll_url,
+                    headers=self._build_headers(include_session=True),
+                    timeout=30.0,
+                ) as poll_response:
+                    if poll_response.status_code == 202:
+                        await poll_response.aread()
+                        await asyncio.sleep(0.5)
+                        continue
+                    if poll_response.status_code != 200:
+                        body = (await poll_response.aread()).decode("utf-8", errors="ignore")
+                        raise RuntimeError(
+                            f"{method} poll 실패({poll_response.status_code}): {body}"
+                        )
+
+                    parsed_poll = await _parse_stream_payload(poll_response)
+                    if parsed_poll:
+                        return parsed_poll
+                await asyncio.sleep(0.2)
+
+            raise RuntimeError(f"{method} poll 타임아웃(60s): location={poll_url}")
+
         parsed: Optional[Dict[str, Any]] = None
         async with client.stream(
             "POST",
@@ -97,41 +168,29 @@ class MCPClient:
             headers=self._build_headers(include_session=True),
             timeout=60.0,
         ) as response:
-            if response.status_code != 200:
+            if response.status_code == 202:
+                location = response.headers.get("location") or response.headers.get("Location")
+                if not location:
+                    body = (await response.aread()).decode("utf-8", errors="ignore")
+                    parsed_from_body: Optional[Dict[str, Any]] = None
+                    try:
+                        parsed_from_body = json.loads(body.strip())
+                    except Exception:
+                        pass
+                    if parsed_from_body is None:
+                        raise RuntimeError(
+                            f"{method} 202 응답에 polling location이 없습니다: {body}"
+                        )
+                    parsed = parsed_from_body
+                else:
+                    parsed = await _poll_accepted(location)
+            elif response.status_code != 200:
                 body = (await response.aread()).decode("utf-8", errors="ignore")
                 raise RuntimeError(
                     f"{method} 실패({response.status_code}): {body}"
                 )
-
-            async for raw_line in response.aiter_lines():
-                line = raw_line.strip()
-                if not line or line.startswith("event:"):
-                    continue
-                if line.startswith("data:"):
-                    line = line[5:].strip()
-                if not line or line == "[DONE]":
-                    continue
-                try:
-                    parsed = json.loads(line)
-                    break
-                except json.JSONDecodeError:
-                    continue
-
-            if parsed is None:
-                raw_body = (await response.aread()).decode("utf-8", errors="ignore")
-                for raw_line in raw_body.splitlines():
-                    line = raw_line.strip()
-                    if not line or line.startswith("event:"):
-                        continue
-                    if line.startswith("data:"):
-                        line = line[5:].strip()
-                    if not line or line == "[DONE]":
-                        continue
-                    try:
-                        parsed = json.loads(line)
-                        break
-                    except json.JSONDecodeError:
-                        continue
+            else:
+                parsed = await _parse_stream_payload(response)
 
         if not parsed:
             raise RuntimeError("MCP 응답에서 JSON payload를 파싱하지 못했습니다.")
