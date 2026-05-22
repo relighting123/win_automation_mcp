@@ -322,15 +322,45 @@ mcp:
   base_url: "http://localhost:8000/mcp"
 
 llm:
+  provider: "openai_compatible"
   base_url: "https://api.groq.com/openai/v1"
   model: "openai/gpt-oss-120b"
   api_key: ""
+  profiles:
+    # Gemma를 단순 실행/파라미터 추출용으로 사용하는 예시
+    execution:
+      provider: "openai_compatible"
+      base_url: "http://localhost:1234/v1"
+      model: "gemma-3-4b-it"
+      api_key: ""
+    # plan/analysis/report는 외부 고성능 모델 사용
+    planning:
+      provider: "openai_compatible"
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-4.1-mini"
+      api_key: ""
+    analysis:
+      provider: "openai_compatible"
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-4.1"
+      api_key: ""
+    reporting:
+      provider: "openai_compatible"
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-4.1"
+      api_key: ""
 ```
 
 보안상 `api_key`는 비워두고 환경변수로 주입하는 것을 권장합니다.
+
+`provider` 지원값:
+- `openai_compatible` (기본)
+- `google_genai` (Gemini/Gemma API; `langchain-google-genai` 필요)
+- `ollama` (`langchain-ollama` 필요)
 
 fallback 우선순위:
 - MCP Base URL: `app_config.yaml.mcp.base_url` -> `MCP_BASE_URL` -> `http://localhost:8000/mcp`
 - LLM Base URL: `app_config.yaml.llm.base_url` -> `INTERNAL_LLM_BASE_URL` -> `OPENAI_BASE_URL` -> `https://api.groq.com/openai/v1`
 - LLM API Key: `app_config.yaml.llm.api_key` -> `INTERNAL_LLM_API_KEY` -> `OPENAI_API_KEY` -> `""`
 - LLM Model: `app_config.yaml.llm.model` -> `INTERNAL_LLM_MODEL` -> `OPENAI_MODEL` -> `openai/gpt-oss-120b`
+- LLM Provider: `app_config.yaml.llm.provider` -> `INTERNAL_LLM_PROVIDER` -> `OPENAI_PROVIDER` -> `openai_compatible`

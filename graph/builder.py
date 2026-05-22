@@ -2,11 +2,17 @@ from langgraph.graph import StateGraph, END
 from core.state import AgentState
 from graph.nodes import GraphNodes
 
-def build_automation_graph(mcp, llm):
+def build_automation_graph(mcp, execution_llm, planner_llm=None, analyst_llm=None, reporter_llm=None):
     """
     StateGraph를 생성하고 노드 및 엣지를 구성합니다.
     """
-    nodes = GraphNodes(mcp, llm)
+    nodes = GraphNodes(
+        mcp=mcp,
+        execution_llm=execution_llm,
+        planner_llm=planner_llm,
+        analyst_llm=analyst_llm,
+        reporter_llm=reporter_llm,
+    )
     builder = StateGraph(AgentState)
     
     # 노드 추가

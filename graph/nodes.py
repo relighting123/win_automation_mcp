@@ -19,9 +19,14 @@ from skills.sequence_skill import SequenceSkill
 logger = logging.getLogger(__name__)
 
 class GraphNodes:
-    def __init__(self, mcp, llm):
+    def __init__(self, mcp, execution_llm, planner_llm=None, analyst_llm=None, reporter_llm=None):
         self.mcp = mcp
-        self.llm = llm
+        self.execution_llm = execution_llm
+        self.planner_llm = planner_llm or execution_llm
+        self.analyst_llm = analyst_llm or self.planner_llm
+        self.reporter_llm = reporter_llm or self.planner_llm
+        # 하위 호환: 기존 코드가 self.llm을 참조할 수 있도록 유지
+        self.llm = self.execution_llm
         self._skills_cache: Optional[Dict[str, Any]] = None
 
     def _get_skills_config(self) -> Dict[str, Any]:
@@ -99,7 +104,7 @@ class GraphNodes:
         )
         
         try:
-            res = await self.llm.ainvoke(mapping_prompt)
+            res = await self.planner_llm.ainvoke(mapping_prompt)
             match = res.content.strip()
             # 따옴표나 마크다운 제거
             match = match.replace("`", "").replace("'", "").replace("\"", "")
@@ -248,7 +253,7 @@ class GraphNodes:
 
         # [최신 기법] Dynamic Literal을 사용한 Structured Output으로 Hallucination 방지
         SkillPlanModel = self._create_structured_plan_model(valid_ids)
-        structured_llm = self.llm.with_structured_output(SkillPlanModel)
+        structured_llm = self.planner_llm.with_structured_output(SkillPlanModel)
         
         try:
             plan = await structured_llm.ainvoke([
@@ -263,7 +268,7 @@ class GraphNodes:
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
             # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
-            raw_res = await self.llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
+            raw_res = await self.planner_llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
             mapped_ids = [await self._map_skill_id(pid, skills_config) for pid in potential_ids]
             return {"skill_ids": mapped_ids}
@@ -297,7 +302,7 @@ class GraphNodes:
         
         # [최신 기법] 상황 분석에서도 유효한 스킬 ID만 제안하도록 동적 모델 적용
         DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
-        structured_llm = self.llm.with_structured_output(DynamicAnalysisModel)
+        structured_llm = self.analyst_llm.with_structured_output(DynamicAnalysisModel)
         
         analysis = await structured_llm.ainvoke([
             ("system", ANALYST_SYSTEM_PROMPT),
@@ -399,7 +404,7 @@ class GraphNodes:
             ))
         ])
 
-        structured_llm = self.llm.with_structured_output(ToolCalls, method="function_calling", strict=False)
+        structured_llm = self.execution_llm.with_structured_output(ToolCalls, method="function_calling", strict=False)
         
         all_tools = await self.mcp.list_tools()
         skill_tools = [t for t in all_tools if t['name'] in tool_sequence]
@@ -521,7 +526,7 @@ class GraphNodes:
                 f"[사용자 요청]\n{state.query}\n\n"
                 f"[DataFrame 요약]\n{json.dumps(analysis_payload, ensure_ascii=False)}"
             )
-            analysis_res = await self.llm.ainvoke(analysis_prompt)
+            analysis_res = await self.analyst_llm.ainvoke(analysis_prompt)
             clipboard_analysis = analysis_res.content
 
         report_details = {
@@ -538,5 +543,5 @@ class GraphNodes:
             "최종 답변은 한국어로 작성하세요. 반드시 '수행 여부'를 먼저 명시하고, "
             "그 다음 클립보드 데이터(DataFrame) 분석 결과를 자연스럽게 이어서 설명하세요."
         )
-        res = await self.llm.ainvoke(prompt)
+        res = await self.reporter_llm.ainvoke(prompt)
         return {"report": res.content, "report_details": report_details}

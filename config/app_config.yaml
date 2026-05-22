@@ -58,3 +58,35 @@ mcp:
 automation:
   # 자동화 모드 설정 (auto: 자유 계획 및 개입, semi: 순차 실행 + 상황 개입, manual: 순차 실행 전용)
   mode: "manual"
+
+llm:
+  # 기본 provider: OpenAI 호환 API
+  provider: "openai_compatible"
+  base_url: "https://api.groq.com/openai/v1"
+  model: "openai/gpt-oss-120b"
+  api_key: ""
+  profiles:
+    # 단순 실행/파라미터 추출: 경량 Gemma 등
+    execution:
+      provider: "openai_compatible"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
+      api_key: ""
+    # 계획 수립
+    planning:
+      provider: "openai_compatible"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
+      api_key: ""
+    # 상황/데이터 분석
+    analysis:
+      provider: "openai_compatible"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
+      api_key: ""
+    # 최종 리포트 생성
+    reporting:
+      provider: "openai_compatible"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
+      api_key: ""
