@@ -20,6 +20,7 @@ load_dotenv()
 
 DEFAULT_LLM_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_LLM_MODEL = "openai/gpt-oss-120b"
+DEFAULT_LLM_PROVIDER = "openai_compatible"
 DEFAULT_MCP_BASE_URL = "http://localhost:8000/mcp"
 
 
@@ -52,43 +53,76 @@ def load_app_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         return {}
 
 
-def get_llm_settings(config_path: Optional[str] = None) -> Dict[str, str]:
-    """
-    공통 LLM 설정을 반환합니다.
+def _resolve_profile_config(llm_config: Dict[str, Any], profile: str) -> Dict[str, Any]:
+    """기본 llm 설정 + profile override를 병합합니다."""
+    profile_key = (profile or "default").strip().lower()
+    profile_map = llm_config.get("profiles", {})
+    profile_config = {}
+    if isinstance(profile_map, dict):
+        profile_config = profile_map.get(profile_key, {}) or {}
 
-    우선순위:
-      1) app_config.yaml -> llm
-      2) INTERNAL_LLM_* 환경변수
-      3) OPENAI_* 환경변수
-      4) 하드코딩 기본값
+    base_config = {
+        k: v
+        for k, v in llm_config.items()
+        if k != "profiles"
+    }
+    if isinstance(profile_config, dict):
+        base_config.update(profile_config)
+    return base_config
+
+
+def get_llm_profile_settings(profile: str = "default", config_path: Optional[str] = None) -> Dict[str, str]:
+    """
+    profile별 LLM 설정을 반환합니다.
+
+    기본 profile 목록:
+      - default: 공통 기본 모델
+      - execution: 단순 도구 실행/파라미터 추출
+      - planning: 계획 수립
+      - analysis: 상황/데이터 분석
+      - reporting: 최종 보고 생성
     """
     config = load_app_config(config_path)
-    llm_config = config.get("llm", {}) if isinstance(config, dict) else {}
+    raw_llm_config = config.get("llm", {}) if isinstance(config, dict) else {}
+    llm_config = raw_llm_config if isinstance(raw_llm_config, dict) else {}
+    merged = _resolve_profile_config(llm_config, profile)
 
+    provider = (
+        merged.get("provider")
+        or os.getenv("INTERNAL_LLM_PROVIDER")
+        or os.getenv("OPENAI_PROVIDER")
+        or DEFAULT_LLM_PROVIDER
+    )
     base_url = (
-        llm_config.get("base_url")
+        merged.get("base_url")
         or os.getenv("INTERNAL_LLM_BASE_URL")
         or os.getenv("OPENAI_BASE_URL")
         or DEFAULT_LLM_BASE_URL
     )
     api_key = (
-        llm_config.get("api_key")
+        merged.get("api_key")
         or os.getenv("INTERNAL_LLM_API_KEY")
         or os.getenv("OPENAI_API_KEY")
         or ""
     )
     model = (
-        llm_config.get("model")
+        merged.get("model")
         or os.getenv("INTERNAL_LLM_MODEL")
         or os.getenv("OPENAI_MODEL")
         or DEFAULT_LLM_MODEL
     )
 
     return {
+        "provider": str(provider),
         "base_url": str(base_url),
         "api_key": str(api_key),
         "model": str(model),
     }
+
+
+def get_llm_settings(config_path: Optional[str] = None) -> Dict[str, str]:
+    """기본(default profile) LLM 설정을 반환합니다."""
+    return get_llm_profile_settings(profile="default", config_path=config_path)
 
 
 def get_mcp_settings(config_path: Optional[str] = None) -> Dict[str, str]:
