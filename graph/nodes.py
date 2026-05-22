@@ -19,9 +19,17 @@ from skills.sequence_skill import SequenceSkill
 logger = logging.getLogger(__name__)
 
 class GraphNodes:
-    def __init__(self, mcp, llm):
+    def __init__(self, mcp, llm, task_llm=None):
+        """
+        Dual-LLM 그래프 노드.
+
+        - `llm` (reasoning LLM): 계획 수립, 상황 분석, 클립보드/리포트 분석 등 사고력 중심 작업에 사용.
+        - `task_llm`: 파라미터 추출, 스킬 ID 매핑 등 단순 변환 작업에 사용 (Gemma 등 경량 LLM 권장).
+          None 으로 두면 `llm` 을 그대로 재사용합니다 (단일 LLM 모드).
+        """
         self.mcp = mcp
         self.llm = llm
+        self.task_llm = task_llm or llm
         self._skills_cache: Optional[Dict[str, Any]] = None
 
     def _get_skills_config(self) -> Dict[str, Any]:

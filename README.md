@@ -317,20 +317,58 @@ npx @modelcontextprotocol/inspector
 LLM/MCP 연결 정보는 `config/app_config.yaml`에서 공통 관리합니다.
 `automation_graph.py`와 `LLM/streamlit_app.py`가 동일 설정을 기본값으로 사용합니다.
 
+### Dual-LLM 구조 (Gemma + 외부 LLM)
+
+이 프로젝트는 **역할별 LLM 분리**를 지원합니다.
+
+| 역할 | 용도 | 권장 LLM |
+| --- | --- | --- |
+| `reasoning` | 계획 수립, 상황 분석, 클립보드/리포트 분석 | 외부 LLM (Groq, OpenAI 호환 API 등) |
+| `task` | 파라미터 추출, 스킬 ID 매핑 같이 단순 변환 작업 | 로컬에서 서빙되는 Gemma 등 경량/파인튜닝 LLM |
+
 ```yaml
 mcp:
   base_url: "http://localhost:8000/mcp"
 
 llm:
-  base_url: "https://api.groq.com/openai/v1"
-  model: "openai/gpt-oss-120b"
-  api_key: ""
+  reasoning:
+    provider: "openai"
+    base_url: "https://api.groq.com/openai/v1"
+    model: "openai/gpt-oss-120b"
+    api_key: ""
+    structured_output_method: "function_calling"
+    temperature: 0
+
+  task:
+    provider: "gemma"
+    base_url: "http://localhost:8001/v1"   # vLLM/Ollama 등 OpenAI 호환 endpoint
+    model: "google/gemma-3-4b-it"
+    api_key: ""
+    structured_output_method: "json_mode"  # Gemma 는 OpenAI tools 미지원 → json_mode 권장
+    temperature: 0
 ```
 
-보안상 `api_key`는 비워두고 환경변수로 주입하는 것을 권장합니다.
+#### Gemma 가 OpenAI provider 와 다르다는 점에 대한 해결
 
-fallback 우선순위:
-- MCP Base URL: `app_config.yaml.mcp.base_url` -> `MCP_BASE_URL` -> `http://localhost:8000/mcp`
-- LLM Base URL: `app_config.yaml.llm.base_url` -> `INTERNAL_LLM_BASE_URL` -> `OPENAI_BASE_URL` -> `https://api.groq.com/openai/v1`
-- LLM API Key: `app_config.yaml.llm.api_key` -> `INTERNAL_LLM_API_KEY` -> `OPENAI_API_KEY` -> `""`
-- LLM Model: `app_config.yaml.llm.model` -> `INTERNAL_LLM_MODEL` -> `OPENAI_MODEL` -> `openai/gpt-oss-120b`
+Gemma 를 vLLM / Ollama / llama.cpp 같은 OpenAI 호환 서버로 띄워 사용할 경우,
+`tools` / function calling 을 정식 지원하지 않는 경우가 많습니다.
+`core/llm_factory.py` 의 `RoleLLM.with_structured_output()` 은 다음 순서로 자동
+fallback 하여 이 차이를 흡수합니다.
+
+1. provider 가 `gemma` 이면 `json_mode` → `json_schema` 를 먼저 시도
+2. 그래도 실패하면 **JSON Schema 를 프롬프트에 주입하고 응답에서 JSON 만 추출**하는
+   `_JsonPromptStructuredLLM` 으로 최종 fallback
+
+따라서 그래프 노드 코드(`graph/nodes.py`)는 OpenAI 모델과 Gemma 모델 모두에서
+같은 인터페이스(`with_structured_output(...)`)로 동작합니다.
+
+#### Fallback 우선순위
+
+- MCP Base URL: `app_config.yaml.mcp.base_url` → `MCP_BASE_URL` → `http://localhost:8000/mcp`
+- Reasoning LLM 필드: `app_config.yaml.llm.reasoning.*` → `app_config.yaml.llm.*` (legacy)
+  → `REASONING_LLM_*` env → `INTERNAL_LLM_*` env → `OPENAI_*` env → 하드코딩 기본값
+- Task LLM 필드: `app_config.yaml.llm.task.*` → `app_config.yaml.llm.*` (legacy)
+  → `TASK_LLM_*` env → `INTERNAL_LLM_*` env → `OPENAI_*` env → 하드코딩 기본값 (Gemma)
+
+> 보안상 `api_key` 는 빈 문자열로 두고 환경변수로 주입하는 것을 권장합니다.
+> 한쪽 LLM 만 설정해도 동작하며, `task` 가 비어 있으면 `reasoning` LLM 이 양쪽에 사용됩니다.

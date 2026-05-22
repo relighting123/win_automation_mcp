@@ -55,11 +55,28 @@ else:
 # 사이드바 설정
 st.sidebar.title("Configuration")
 mcp_url = st.sidebar.text_input("MCP Server URL", DEFAULT_MCP_URL)
-api_base_url = st.sidebar.text_input("LLM API Base URL", DEFAULT_LLM_API_BASE_URL)
-api_key = st.sidebar.text_input("API Key", value=DEFAULT_LLM_API_KEY, type="password")
-model_name = st.sidebar.text_input("Model Name", DEFAULT_LLM_MODEL_NAME)
+
+st.sidebar.markdown("**Reasoning LLM** (계획/상황분석/리포트)")
+api_base_url = st.sidebar.text_input("Reasoning LLM Base URL", DEFAULT_LLM_API_BASE_URL)
+api_key = st.sidebar.text_input("Reasoning API Key", value=DEFAULT_LLM_API_KEY, type="password")
+model_name = st.sidebar.text_input("Reasoning Model", DEFAULT_LLM_MODEL_NAME)
+
+st.sidebar.markdown("**Task LLM** (Gemma 등 단순 작업)")
+task_base_url = st.sidebar.text_input("Task LLM Base URL", DEFAULT_TASK_LLM_BASE_URL)
+task_api_key = st.sidebar.text_input("Task API Key", value=DEFAULT_TASK_LLM_API_KEY, type="password")
+task_model_name = st.sidebar.text_input("Task Model", DEFAULT_TASK_LLM_MODEL_NAME)
+task_provider = st.sidebar.selectbox(
+    "Task Provider",
+    options=["gemma", "openai"],
+    index=0 if DEFAULT_TASK_LLM_PROVIDER == "gemma" else 1,
+    help="gemma 선택 시 structured output 은 json_mode/JSON 프롬프트 fallback 으로 동작합니다.",
+)
+
 use_langgraph = st.sidebar.toggle("Use LangGraph Workflow", value=True, help="컴플렉스 워크플로우를 위해 LangGraph를 사용합니다.")
-st.sidebar.caption("기본값은 config/app_config.yaml의 llm/mcp 설정을 사용하며, 필요 시 입력창에서 임시 override할 수 있습니다.")
+st.sidebar.caption(
+    "기본값은 config/app_config.yaml 의 llm.reasoning / llm.task 설정을 사용하며, "
+    "필요 시 입력창에서 임시 override 할 수 있습니다."
+)
 
 if st.sidebar.button("Clear Chat"):
     st.session_state.messages = [

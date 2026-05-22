@@ -58,3 +58,45 @@ mcp:
 automation:
   # 자동화 모드 설정 (auto: 자유 계획 및 개입, semi: 순차 실행 + 상황 개입, manual: 순차 실행 전용)
   mode: "manual"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM 설정 (Dual-LLM)
+#
+# - llm.reasoning : 계획, 상황 판단, 클립보드/리포트 분석 같은 사고력 중심 작업.
+#                   외부 LLM (Groq, OpenAI 호환 API 등) 권장.
+# - llm.task      : 파라미터 추출, 스킬 ID 매핑 같이 입력→구조화 출력에 가까운 단순 작업.
+#                   파인튜닝된 Gemma 등 경량 로컬 LLM 권장.
+#
+# 한쪽만 설정해도 동작합니다. task 가 비어 있으면 reasoning LLM 이 그대로 재사용됩니다.
+# 환경변수로도 override 가능합니다:
+#   REASONING_LLM_BASE_URL / REASONING_LLM_API_KEY / REASONING_LLM_MODEL
+#   TASK_LLM_BASE_URL      / TASK_LLM_API_KEY      / TASK_LLM_MODEL
+#
+# provider 가 "gemma" 인 경우 structured output 은 자동으로 json_mode (또는 프롬프트 기반
+# JSON fallback) 로 처리되므로 OpenAI 의 tools/function-calling 미지원으로 인한
+# 오류 걱정을 덜 수 있습니다.
+# ─────────────────────────────────────────────────────────────────────────────
+llm:
+  # (선택) 레거시 단일 LLM 키 — 두 역할 공통으로 적용됩니다.
+  # base_url: "https://api.groq.com/openai/v1"
+  # model: "openai/gpt-oss-120b"
+  # api_key: ""
+
+  reasoning:
+    provider: "openai"
+    base_url: "https://api.groq.com/openai/v1"
+    model: "openai/gpt-oss-120b"
+    api_key: ""
+    structured_output_method: "function_calling"
+    temperature: 0
+
+  task:
+    provider: "gemma"
+    # vLLM/Ollama 등 로컬에서 띄운 Gemma 서버의 OpenAI 호환 endpoint
+    base_url: "http://localhost:8001/v1"
+    model: "google/gemma-3-4b-it"
+    # 로컬 서버가 키 검증을 하지 않는 경우 빈 문자열로 둡니다.
+    api_key: ""
+    # Gemma 는 OpenAI tools 미지원이므로 json_mode 가 안전합니다.
+    structured_output_method: "json_mode"
+    temperature: 0
