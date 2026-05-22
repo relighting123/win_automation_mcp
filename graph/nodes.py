@@ -1,7 +1,6 @@
 import json
 import logging
 import yaml
-import difflib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
@@ -59,7 +58,7 @@ class GraphNodes:
         return all_skills
 
     async def _map_skill_id(self, skill_id: str, valid_skills: Dict[str, Any]) -> str:
-        """존재하지 않는 스킬 ID를 의미상 가장 가까운 유효한 ID로 매핑합니다."""
+        """스킬 ID를 정확 일치 또는 구분자 차이만 보정합니다."""
         if not skill_id:
             return skill_id
 
@@ -82,39 +81,8 @@ class GraphNodes:
             logger.info(f"스킬 ID 정규화 매핑: '{skill_id}' -> '{norm_match}'")
             return norm_match
 
-        if not valid_ids:
-            return skill_id
-
-        # 3. 문자열 유사도 기반 매핑 (difflib)
-        matches = difflib.get_close_matches(skill_id, valid_ids, n=1, cutoff=0.7)
-        if matches:
-            logger.info(f"스킬 ID 유사도 매핑: '{skill_id}' -> '{matches[0]}'")
-            return matches[0]
-
-        # 4. LLM 기반 의미상 매핑
-        logger.info(f"스킬 ID '{skill_id}'에 대한 의미적 매핑 시도 중...")
-        # ... (이하 동일)
-        skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in valid_skills.items()])
-        
-        mapping_prompt = (
-            f"사용자가 요청하거나 시스템이 제안한 '{skill_id}'라는 스킬이 현재 등록된 목록에 없습니다.\n"
-            f"아래 등록된 스킬 목록 중 의미상 가장 적절한 스킬 ID 하나만 골라주세요.\n\n"
-            f"[등록된 스킬 목록]\n{skills_info}\n\n"
-            "답변은 반드시 스킬 ID만 출력하세요. 정말 적당한 것이 없다면 가장 첫 번째 스킬 ID를 출력하세요."
-        )
-        
-        try:
-            res = await self.planner_llm.ainvoke(mapping_prompt)
-            match = res.content.strip()
-            # 따옴표나 마크다운 제거
-            match = match.replace("`", "").replace("'", "").replace("\"", "")
-            if match in valid_skills:
-                logger.info(f"스킬 ID 의미 매핑 성공: '{skill_id}' -> '{match}'")
-                return match
-        except Exception as e:
-            logger.warning(f"의미 매핑 중 오류 발생: {e}")
-
-        return valid_ids[0]
+        logger.warning("정의되지 않은 스킬 ID 감지: '%s'. 유사도 매핑 없이 원본을 유지합니다.", skill_id)
+        return skill_id
 
     def _create_structured_plan_model(self, valid_ids: List[str]):
         """유효한 스킬 ID만 선택하도록 강제하는 동적 Pydantic 모델 생성 (Latest LangGraph/LangChain Pattern)"""
@@ -400,6 +368,7 @@ class GraphNodes:
                 "질의: {query}\n"
                 "현재 상황: {check_status}\n"
                 "현재 스킬({skill_id})의 도구 순서 및 인자 제약: {tool_constraints}\n"
+                "허용된 도구명(정확히 이 문자열만 사용): {allowed_tool_names}\n"
                 "사용 가능한 도구 정보:\n{tools_info}"
             ))
         ])
@@ -416,6 +385,7 @@ class GraphNodes:
             "check_status": state.check_status,
             "skill_id": current_skill_id,
             "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
+            "allowed_tool_names": json.dumps(tool_sequence, ensure_ascii=False),
             "tools_info": tools_info
         })
         
