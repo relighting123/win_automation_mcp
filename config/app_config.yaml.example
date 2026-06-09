@@ -1,0 +1,86 @@
+# Application Configuration for Windows Automation
+# FastMCP + pywinauto 기반 윈도우 자동화 설정
+#
+# 사용법:
+#   이 파일을 config/app_config.yaml 로 복사한 뒤
+#   실제 값으로 채워 넣으세요.
+#   config/app_config.yaml 은 .gitignore 에 등록되어 있으므로
+#   git 에 커밋되지 않습니다.
+
+application:
+  # 타겟 애플리케이션 실행 경로 (실제 PC 경로로 수정하세요)
+  executable_path: "C:\\Program Files\\YourApp\\yourapp.exe"
+  # 프로세스 이름 (작업 관리자에서 확인)
+  process_name: "yourapp.exe"
+  # pywinauto backend 설정 (uia 권장)
+  backend: "uia"
+  # 애플리케이션 시작 후 초기화 대기 시간 (초)
+  startup_timeout: 30
+  # 자동화 속도 설정 (fast, normal)
+  automation_speed: "fast"
+
+timeouts:
+  default_wait: 10
+  long_wait: 60
+  short_wait: 3
+  retry_interval: 0.1
+  ui_delay: 0.1
+  after_focus_delay: 0.1
+
+retry:
+  default_attempts: 3
+  connection_attempts: 5
+
+logging:
+  level: "INFO"
+  file_path: "logs/automation.log"
+  max_size_mb: 10
+  backup_count: 5
+
+server:
+  name: "Windows Automation MCP Server"
+  version: "1.0.0"
+
+mcp:
+  # FastMCP 서버 HTTP endpoint
+  base_url: "http://localhost:8000/mcp"
+
+automation:
+  # 자동화 모드: auto | semi | manual
+  mode: "manual"
+
+llm:
+  # LLM provider (openai_compatible 권장)
+  provider: "openai_compatible"
+  # API base URL (예: https://api.openai.com/v1, https://api.groq.com/openai/v1 등)
+  base_url: "https://api.your-provider.com/v1"
+  # 사용할 모델 이름
+  model: "your-model-name"
+  # API 키 (또는 .env 의 INTERNAL_LLM_API_KEY / OPENAI_API_KEY 환경변수 사용)
+  api_key: ""
+
+  profiles:
+    # 단순 실행/파라미터 추출용 경량 모델
+    execution:
+      provider: "openai_compatible"
+      base_url: "https://api.your-provider.com/v1"
+      model: "your-model-name"
+      api_key: ""
+    # 계획 수립용 모델
+    planning:
+      provider: "openai_compatible"
+      base_url: "https://api.your-provider.com/v1"
+      model: "your-model-name"
+      api_key: ""
+    # 상황/데이터 분석용 모델
+    analysis:
+      provider: "openai_compatible"
+      base_url: "https://api.your-provider.com/v1"
+      model: "your-model-name"
+      api_key: ""
+    # 최종 리포트 생성용 모델
+    reporting:
+      provider: "openai_compatible"
+      base_url: "https://api.your-provider.com/v1"
+      model: "your-model-name"
+      api_key: ""

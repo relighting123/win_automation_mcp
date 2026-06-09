@@ -12,3 +12,6 @@ tool_calling_dataset.jsonl
 .gemini/
 .idea/
 .vscode/
+
+# 실제 설정 파일 (API 키, 프로그램 경로 등 민감 정보 포함)
+config/app_config.yaml
