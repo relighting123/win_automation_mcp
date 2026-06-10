@@ -14,9 +14,9 @@ from typing import Optional
 import requests
 from openai import OpenAI
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.theme import Theme
 
 # ── Project root on sys.path ─────────────────────────────────────────────────
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -24,11 +24,43 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 
 from core.llm_config import get_llm_settings, get_mcp_settings
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# ── Version ───────────────────────────────────────────────────────────────────
 VERSION = "0.1.0"
-CONFIG_DIR = Path.home() / ".chatRTD"
+
+# ── opencode color palette ────────────────────────────────────────────────────
+# https://github.com/opencode-ai/opencode  (MIT)  dark theme
+_C = {
+    "primary":   "#fab283",   # warm orange  — brand / highlight
+    "secondary": "#5c9cf5",   # blue         — secondary info
+    "accent":    "#9d7cd8",   # purple       — accent
+    "text":      "#e0e0e0",   # light        — normal text
+    "muted":     "#6a6a6a",   # mid-gray     — dim / labels
+    "border":    "#4b4c5c",   # dark-gray    — borders / rules
+    "success":   "#7fd88f",   # green
+    "error":     "#e06c75",   # red
+    "warning":   "#f5a742",   # amber
+}
+
+_THEME = Theme({
+    "primary":   _C["primary"],
+    "secondary": _C["secondary"],
+    "accent":    _C["accent"],
+    "muted":     _C["muted"],
+    "ok":        _C["success"],
+    "err":       _C["error"],
+    "warn":      _C["warning"],
+    "border":    _C["border"],
+    "tool":      _C["secondary"],
+})
+
+# ANSI-styled input prompt (rich can't colour input() directly)
+_PROMPT = f"\033[38;2;250;178;131m>\033[0m "   # orange >
+
+# ── Config paths ──────────────────────────────────────────────────────────────
+CONFIG_DIR  = Path.home() / ".chatRTD"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+# ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "당신은 Windows 자동화 스케줄링 에이전트입니다.\n"
     "사용자의 요청을 분석하여 필요한 도구들을 순서대로 호출하세요.\n"
@@ -36,33 +68,30 @@ SYSTEM_PROMPT = (
     "모든 작업이 완료되면 한국어로 최종 결과를 간결하게 보고하세요."
 )
 
-HELP_TEXT = """
-[bold blue]chatRTD[/bold blue]  [dim]Automation Scheduler v{ver}[/dim]
+# ── Help text ─────────────────────────────────────────────────────────────────
+HELP_TEXT = f"""
+[primary]chatRTD[/primary] [muted]Automation Scheduler v{VERSION}[/muted]
 
-[bold cyan]일반 명령어[/bold cyan]
-  /help              이 도움말
-  /exit  /quit       종료
-  /clear             대화 기록 초기화
+[secondary]Commands[/secondary]
+  [text]/help[/text]              이 도움말
+  [text]/exit  /quit[/text]       종료
+  [text]/clear[/text]             대화 기록 초기화
 
-[bold cyan]도구 & 스킬[/bold cyan]
-  /tools             사용 가능한 도구 목록
-  /skills            스킬 목록
-  /skill <id>        스킬 직접 실행
+[secondary]Tools & Skills[/secondary]
+  [text]/tools[/text]             사용 가능한 도구 목록
+  [text]/skills[/text]            스킬 목록
+  [text]/skill <id>[/text]        스킬 직접 실행
 
-[bold cyan]모델 관리[/bold cyan]
-  /models                                                    등록된 모델 목록
-  /models add <이름> --api-key <키> --base-url <URL> --model <모델명>  모델 등록
-  /models select <이름>                                      활성 모델 전환
-  /models remove <이름>                                      모델 삭제
+[secondary]Model Management[/secondary]
+  [text]/models[/text]                                                   등록된 모델 목록
+  [text]/models add <name> --api-key <k> --base-url <u> --model <m>[/text]  모델 등록
+  [text]/models select <name>[/text]                                     활성 모델 전환
+  [text]/models remove <name>[/text]                                     모델 삭제
 
-[bold cyan]설정[/bold cyan]
-  /config                      현재 설정 확인
-  /config set mcp-url <URL>    MCP 서버 URL 변경
-
-[bold cyan]단일 명령 모드[/bold cyan]
-  chatRTD "메모장에 오늘 날짜 써줘"
-  chatRTD --start-server
-""".format(ver=VERSION)
+[secondary]Config[/secondary]
+  [text]/config[/text]                   현재 설정 확인
+  [text]/config set mcp-url <url>[/text] MCP 서버 URL 변경
+"""
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -82,21 +111,16 @@ def save_cli_config(data: dict) -> None:
 
 
 def get_active_settings(cli_config: dict, overrides: Optional[dict] = None) -> dict:
-    """활성 모델 기준 최종 설정 반환. 우선순위: 인수 override > CLI config > app_config.yaml"""
     overrides = overrides or {}
-
     app = get_llm_settings()
     mcp = get_mcp_settings()
-
-    models = cli_config.get("models", {})
     active_name = cli_config.get("active_model", "")
-    active_cfg = models.get(active_name, {}) if active_name else {}
-
+    active_cfg  = cli_config.get("models", {}).get(active_name, {}) if active_name else {}
     return {
-        "api_key": overrides.get("api_key") or active_cfg.get("api_key") or app.get("api_key", ""),
-        "base_url": overrides.get("base_url") or active_cfg.get("base_url") or app.get("base_url", ""),
-        "model": overrides.get("model") or active_cfg.get("model") or app.get("model", ""),
-        "mcp_url": overrides.get("mcp_url") or cli_config.get("mcp_url") or mcp.get("base_url", "http://localhost:8000/mcp"),
+        "api_key":     overrides.get("api_key")   or active_cfg.get("api_key")   or app.get("api_key", ""),
+        "base_url":    overrides.get("base_url")  or active_cfg.get("base_url")  or app.get("base_url", ""),
+        "model":       overrides.get("model")     or active_cfg.get("model")     or app.get("model", ""),
+        "mcp_url":     overrides.get("mcp_url")   or cli_config.get("mcp_url")   or mcp.get("base_url", "http://localhost:8000/mcp"),
         "active_name": active_name,
     }
 
@@ -104,10 +128,7 @@ def get_active_settings(cli_config: dict, overrides: Optional[dict] = None) -> d
 # ── MCP helpers ───────────────────────────────────────────────────────────────
 
 def _mcp_headers() -> dict:
-    return {
-        "Accept": "application/json, text/event-stream",
-        "Content-Type": "application/json",
-    }
+    return {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
 
 def _mcp_init(mcp_url: str, headers: dict) -> Optional[str]:
@@ -139,29 +160,24 @@ def _parse_sse_result(res: requests.Response) -> Optional[dict]:
 
 def fetch_mcp_tools(mcp_url: str) -> list:
     headers = _mcp_headers()
-    session_id = _mcp_init(mcp_url, headers)
-    if not session_id:
+    sid = _mcp_init(mcp_url, headers)
+    if not sid:
         return []
-    headers["mcp-session-id"] = session_id
+    headers["mcp-session-id"] = sid
     try:
         res = requests.post(
-            mcp_url,
-            json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-            headers=headers,
-            timeout=15,
+            mcp_url, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+            headers=headers, timeout=15,
         )
         if res.status_code == 200:
             result = _parse_sse_result(res)
             if result and "tools" in result:
                 return [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": t["name"],
-                            "description": t.get("description", ""),
-                            "parameters": t.get("inputSchema", {}),
-                        },
-                    }
+                    {"type": "function", "function": {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "parameters": t.get("inputSchema", {}),
+                    }}
                     for t in result["tools"]
                 ]
     except Exception:
@@ -171,20 +187,15 @@ def fetch_mcp_tools(mcp_url: str) -> list:
 
 def call_mcp_tool(mcp_url: str, name: str, arguments: dict) -> dict:
     headers = _mcp_headers()
-    session_id = _mcp_init(mcp_url, headers)
-    if not session_id:
+    sid = _mcp_init(mcp_url, headers)
+    if not sid:
         return {"error": "MCP 서버에 연결할 수 없습니다"}
-    headers["mcp-session-id"] = session_id
+    headers["mcp-session-id"] = sid
     try:
-        requests.post(
-            mcp_url,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers=headers,
-            timeout=2,
-        )
+        requests.post(mcp_url, json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                      headers=headers, timeout=2)
         payload = {
-            "jsonrpc": "2.0",
-            "method": "tools/call",
+            "jsonrpc": "2.0", "method": "tools/call",
             "params": {"name": name, "arguments": arguments},
             "id": int(time.time() * 1000),
         }
@@ -198,16 +209,15 @@ def call_mcp_tool(mcp_url: str, name: str, arguments: dict) -> dict:
         return {"error": str(e)}
 
 
-# ── MCP server subprocess ─────────────────────────────────────────────────────
+# ── Server subprocess ─────────────────────────────────────────────────────────
 
 def start_mcp_server(port: int = 8000) -> Optional[subprocess.Popen]:
-    server_script = _PROJECT_ROOT / "mcp_server.py"
-    if not server_script.exists():
+    script = _PROJECT_ROOT / "mcp_server.py"
+    if not script.exists():
         return None
     proc = subprocess.Popen(
-        [sys.executable, str(server_script), "--transport", "http", "--port", str(port)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        [sys.executable, str(script), "--transport", "http", "--port", str(port)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     for _ in range(15):
         time.sleep(1)
@@ -219,7 +229,7 @@ def start_mcp_server(port: int = 8000) -> Optional[subprocess.Popen]:
     return proc
 
 
-# ── Flag parser ───────────────────────────────────────────────────────────────
+# ── Misc helpers ──────────────────────────────────────────────────────────────
 
 def _parse_flags(args: list) -> dict:
     result: dict = {}
@@ -233,71 +243,99 @@ def _parse_flags(args: list) -> dict:
     return result
 
 
+def _tool_ok(result: dict) -> bool:
+    if "error" in result:
+        return False
+    for item in result.get("content", []):
+        if isinstance(item, dict):
+            try:
+                parsed = json.loads(item.get("text", "{}"))
+                if isinstance(parsed, dict) and parsed.get("success") is False:
+                    return False
+            except Exception:
+                pass
+    return True
+
+
 # ── Main CLI class ─────────────────────────────────────────────────────────────
 
 class ChatRTDCLI:
-    def __init__(self, settings: dict, cli_config: dict):
-        self.console = Console(force_terminal=True)
-        self.settings = settings
-        self.cli_config = cli_config
+    def __init__(self, settings: dict, cli_config: dict) -> None:
+        self.console     = Console(force_terminal=True, theme=_THEME)
+        self.settings    = settings
+        self.cli_config  = cli_config
         self.mcp_url: str = settings["mcp_url"]
-        self.tools: list = []
+        self.tools: list  = []
         self.messages: list = [{"role": "system", "content": SYSTEM_PROMPT}]
         self._init_llm_client()
 
     def _init_llm_client(self) -> None:
-        self.model = self.settings["model"]
+        self.model  = self.settings["model"]
         self.client = OpenAI(
-            api_key=self.settings["api_key"] or "nokey",
-            base_url=self.settings["base_url"],
+            api_key  = self.settings["api_key"] or "nokey",
+            base_url = self.settings["base_url"],
         )
 
     # ── Header ────────────────────────────────────────────────────────────────
 
     def print_header(self) -> None:
-        active_name = self.settings.get("active_name", "")
+        c = self.console
+        active_name   = self.settings.get("active_name", "")
         model_display = f"{active_name} / {self.model}" if active_name else self.model
-        tool_info = f"  Tools : {len(self.tools)} loaded\n" if self.tools else ""
 
-        lines = Text()
-        lines.append(f"  chatRTD  Automation Scheduler  v{VERSION}\n", style="bold blue")
-        lines.append(f"  Server : {self.mcp_url}\n", style="dim")
-        lines.append(f"  Model  : {model_display}\n", style="cyan")
-        if tool_info:
-            lines.append(tool_info, style="dim")
-        lines.append("  /help 도움말  |  Ctrl+C 종료", style="dim")
-
-        self.console.print(Panel(lines, border_style="blue"))
-        self.console.print()
+        c.print()
+        c.print(f"  [primary bold]chatRTD[/primary bold]  [muted]Automation Scheduler  v{VERSION}[/muted]")
+        c.print(f"  [border]{'─' * 46}[/border]")
+        c.print(f"  [muted]server[/muted]  [text]{self.mcp_url}[/text]")
+        c.print(f"  [muted]model [/muted]  [secondary]{model_display}[/secondary]")
+        if self.tools:
+            c.print(f"  [muted]tools [/muted]  [ok]{len(self.tools)} loaded[/ok]")
+        c.print(f"  [border]{'─' * 46}[/border]")
+        c.print(f"  [muted]/help  /models  /tools  Ctrl+C 종료[/muted]")
+        c.print()
 
     # ── Tool loading ──────────────────────────────────────────────────────────
 
     def load_tools(self) -> None:
-        with self.console.status("[dim]MCP 서버 도구 목록 로딩 중...[/dim]", spinner="dots"):
+        with self.console.status(
+            f"[muted]connecting to MCP server...[/muted]", spinner="dots",
+            spinner_style=f"bold {_C['primary']}",
+        ):
             self.tools = fetch_mcp_tools(self.mcp_url)
         if not self.tools:
             self.console.print(
-                "[yellow]⚠[/yellow]  도구를 가져오지 못했습니다. "
-                "MCP 서버가 실행 중인지 확인하세요.\n"
+                f"  [warn]⚠[/warn]  [muted]도구를 가져오지 못했습니다. MCP 서버가 실행 중인지 확인하세요.[/muted]\n"
             )
 
     # ── Chat / tool-calling loop ───────────────────────────────────────────────
 
     def chat(self, user_message: str) -> None:
+        c = self.console
+
+        # ── user message header ──────────────────────────────────────────────
+        c.print()
+        c.print(f"  [muted]You[/muted]  [border]{'─' * 50}[/border]")
+        c.print(f"  {user_message}")
+        c.print()
+
         self.messages.append({"role": "user", "content": user_message})
-        step_count = 0
-        execution_started = False
+        step_count       = 0
+        execution_shown  = False
 
         while True:
-            with self.console.status("[bold cyan]Planning task...[/bold cyan]", spinner="dots"):
+            # ── LLM call ────────────────────────────────────────────────────
+            with c.status(
+                f"[muted]working...[/muted]", spinner="dots",
+                spinner_style=f"bold {_C['primary']}",
+            ):
                 try:
                     response = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=self.messages,
-                        tools=self.tools or None,
+                        model    = self.model,
+                        messages = self.messages,
+                        tools    = self.tools or None,
                     )
                 except Exception as e:
-                    self.console.print(f"[red]LLM 오류: {e}[/red]\n")
+                    c.print(f"  [err]✗  LLM error:[/err] {e}\n")
                     self.messages.pop()
                     return
 
@@ -305,11 +343,10 @@ class ChatRTDCLI:
 
             if msg.tool_calls:
                 self.messages.append(msg)
-                total = len(msg.tool_calls)
 
-                if not execution_started:
-                    self.console.rule("[dim]Task Execution[/dim]", style="dim")
-                    execution_started = True
+                if not execution_shown:
+                    c.print(f"  [border]{'─' * 53}[/border]")
+                    execution_shown = True
 
                 for tc in msg.tool_calls:
                     step_count += 1
@@ -318,61 +355,47 @@ class ChatRTDCLI:
                     except json.JSONDecodeError:
                         args = {}
 
-                    self.console.print(
-                        f"  [[dim]{step_count}/{total}[/dim]]  [cyan]{tc.function.name}[/cyan]"
-                    )
-
-                    t0 = time.time()
+                    t0     = time.time()
                     result = call_mcp_tool(self.mcp_url, tc.function.name, args)
                     elapsed = time.time() - t0
 
-                    is_error = isinstance(result, dict) and "error" in result
-                    if not is_error:
-                        # content 배열 형식 처리
-                        success = True
-                        if isinstance(result, dict) and "content" in result:
-                            for item in result.get("content", []):
-                                if isinstance(item, dict):
-                                    text = item.get("text", "")
-                                    try:
-                                        parsed = json.loads(text)
-                                        if isinstance(parsed, dict):
-                                            success = parsed.get("success", True)
-                                    except Exception:
-                                        pass
-                        self.console.print(
-                            f"         [green]✓[/green]  done   {elapsed:.2f}s"
-                        )
+                    if _tool_ok(result):
+                        status = f"[ok]✓[/ok]  [muted]{elapsed:.2f}s[/muted]"
                     else:
-                        err_msg = str(result.get("error", result))[:100]
-                        self.console.print(
-                            f"         [red]✗[/red]  error  {err_msg}"
-                        )
+                        err = str(result.get("error", result))[:80]
+                        status = f"[err]✗[/err]  [muted]{err}[/muted]"
+
+                    name_col = f"[tool]◆[/tool]  [secondary]{tc.function.name}[/secondary]"
+                    c.print(f"  {name_col:<52}{status}")
 
                     self.messages.append({
-                        "role": "tool",
+                        "role":         "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content":      json.dumps(result, ensure_ascii=False),
                     })
 
             else:
-                if execution_started:
-                    self.console.rule(style="dim")
-                    self.console.print()
+                # ── agent response ───────────────────────────────────────────
+                if execution_shown:
+                    c.print(f"  [border]{'─' * 53}[/border]")
 
                 content = (msg.content or "").strip()
-                self.console.print(f"[bold][report][/bold]  {content}\n")
+                c.print()
+                c.print(f"  [primary]chatRTD[/primary]  [border]{'─' * 46}[/border]")
+                c.print(f"  {content}")
+                c.print()
+
                 self.messages.append({"role": "assistant", "content": content})
                 break
 
     # ── Slash command dispatcher ──────────────────────────────────────────────
 
     def _handle_command(self, cmd: str) -> None:
-        parts = cmd.strip().split()
+        parts   = cmd.strip().split()
         command = parts[0].lower()
 
         if command in ("/exit", "/quit"):
-            self.console.print("[dim]chatRTD를 종료합니다.[/dim]")
+            self.console.print(f"\n  [muted]bye.[/muted]\n")
             sys.exit(0)
 
         elif command == "/help":
@@ -380,7 +403,7 @@ class ChatRTDCLI:
 
         elif command == "/clear":
             self.messages = [self.messages[0]]
-            self.console.print("[green]✓[/green]  대화 기록이 초기화되었습니다.\n")
+            self.console.print(f"  [ok]✓[/ok]  [muted]conversation cleared[/muted]\n")
 
         elif command == "/tools":
             self._cmd_tools()
@@ -389,11 +412,11 @@ class ChatRTDCLI:
             self._cmd_skills()
 
         elif command == "/skill":
-            skill_id = parts[1] if len(parts) > 1 else ""
-            if skill_id:
-                self.chat(f"스킬 '{skill_id}'를 실행해줘")
+            sid = parts[1] if len(parts) > 1 else ""
+            if sid:
+                self.chat(f"스킬 '{sid}'를 실행해줘")
             else:
-                self.console.print("[red]사용법: /skill <skill_id>[/red]")
+                self.console.print(f"  [err]usage:[/err] /skill <skill_id>\n")
 
         elif command == "/models":
             sub = parts[1].lower() if len(parts) > 1 else ""
@@ -414,22 +437,23 @@ class ChatRTDCLI:
 
         else:
             self.console.print(
-                f"[red]알 수 없는 명령어: {command}[/red]  /help 로 도움말 확인\n"
+                f"  [err]unknown command:[/err] {command}  [muted](try /help)[/muted]\n"
             )
 
     # ── /tools ────────────────────────────────────────────────────────────────
 
     def _cmd_tools(self) -> None:
         if not self.tools:
-            self.console.print("[dim]도구 목록이 비어 있습니다.[/dim]")
+            self.console.print(f"  [muted]no tools loaded[/muted]\n")
             return
-        table = Table(show_header=True, header_style="bold cyan", border_style="dim")
-        table.add_column("도구명", style="cyan", min_width=32)
-        table.add_column("설명")
-        for t in self.tools:
-            fn = t["function"]
-            table.add_row(fn["name"], (fn.get("description") or "")[:80])
-        self.console.print(table)
+        t = Table(show_header=True, header_style=f"bold {_C['muted']}",
+                  border_style=_C["border"], show_edge=False, pad_edge=True)
+        t.add_column("tool", style=_C["secondary"], min_width=30)
+        t.add_column("description", style=_C["text"])
+        for tool in self.tools:
+            fn = tool["function"]
+            t.add_row(fn["name"], (fn.get("description") or "")[:72])
+        self.console.print(t)
         self.console.print()
 
     # ── /skills ───────────────────────────────────────────────────────────────
@@ -437,15 +461,16 @@ class ChatRTDCLI:
     def _cmd_skills(self) -> None:
         skills = [t for t in self.tools if "skill" in t["function"]["name"].lower()]
         if not skills:
-            self.console.print("[dim]스킬 도구를 찾을 수 없습니다. /tools 로 전체 목록 확인[/dim]")
+            self.console.print(f"  [muted]no skills found — try /tools[/muted]\n")
             return
-        table = Table(show_header=True, header_style="bold cyan", border_style="dim")
-        table.add_column("스킬 ID", style="cyan", min_width=32)
-        table.add_column("설명")
-        for t in skills:
-            fn = t["function"]
-            table.add_row(fn["name"], (fn.get("description") or "")[:80])
-        self.console.print(table)
+        t = Table(show_header=True, header_style=f"bold {_C['muted']}",
+                  border_style=_C["border"], show_edge=False, pad_edge=True)
+        t.add_column("skill", style=_C["secondary"], min_width=30)
+        t.add_column("description", style=_C["text"])
+        for tool in skills:
+            fn = tool["function"]
+            t.add_row(fn["name"], (fn.get("description") or "")[:72])
+        self.console.print(t)
         self.console.print()
 
     # ── /models ───────────────────────────────────────────────────────────────
@@ -455,96 +480,97 @@ class ChatRTDCLI:
         active = self.cli_config.get("active_model", "")
         if not models:
             self.console.print(
-                "[dim]등록된 모델이 없습니다.\n"
-                "/models add <이름> --api-key <키> --base-url <URL> --model <모델>[/dim]\n"
+                f"  [muted]no models registered.\n"
+                f"  /models add <name> --api-key <k> --base-url <u> --model <m>[/muted]\n"
             )
             return
-        table = Table(show_header=True, header_style="bold cyan", border_style="dim")
-        table.add_column("이름", style="cyan", min_width=12)
-        table.add_column("모델", min_width=22)
-        table.add_column("Base URL", min_width=35)
-        table.add_column("", justify="center", min_width=4)
+        t = Table(show_header=True, header_style=f"bold {_C['muted']}",
+                  border_style=_C["border"], show_edge=False, pad_edge=True)
+        t.add_column("name",     style=_C["primary"],    min_width=12)
+        t.add_column("model",    style=_C["secondary"],  min_width=22)
+        t.add_column("base url", style=_C["text"],       min_width=35)
+        t.add_column("",         justify="center",       min_width=2)
         for name, cfg in models.items():
-            table.add_row(
+            t.add_row(
                 name,
                 cfg.get("model", ""),
                 cfg.get("base_url", "")[:38],
-                "[green]●[/green]" if name == active else "",
+                f"[ok]●[/ok]" if name == active else "",
             )
-        self.console.print(table)
+        self.console.print(t)
         self.console.print()
 
     def _cmd_models_add(self, args: list) -> None:
         if not args:
             self.console.print(
-                "[red]사용법: /models add <이름> --api-key <키> --base-url <URL> --model <모델>[/red]"
+                f"  [err]usage:[/err] /models add <name> --api-key <k> --base-url <u> --model <m>\n"
             )
             return
-        name = args[0]
+        name  = args[0]
         flags = _parse_flags(args[1:])
-        cfg = self.cli_config.setdefault("models", {})
-        cfg[name] = {
-            "api_key": flags.get("api-key", ""),
+        self.cli_config.setdefault("models", {})[name] = {
+            "api_key":  flags.get("api-key",  ""),
             "base_url": flags.get("base-url", ""),
-            "model": flags.get("model", ""),
+            "model":    flags.get("model",    ""),
         }
         if not self.cli_config.get("active_model"):
             self.cli_config["active_model"] = name
         save_cli_config(self.cli_config)
-        self.console.print(f"[green]✓[/green]  모델 [cyan]{name}[/cyan] 등록 완료\n")
+        self.console.print(f"  [ok]✓[/ok]  [primary]{name}[/primary] [muted]registered[/muted]\n")
 
     def _cmd_models_select(self, name: str) -> None:
         if not name:
-            self.console.print("[red]사용법: /models select <이름>[/red]")
+            self.console.print(f"  [err]usage:[/err] /models select <name>\n")
             return
         if name not in self.cli_config.get("models", {}):
-            self.console.print(f"[red]'{name}' 모델이 등록되어 있지 않습니다.[/red]")
+            self.console.print(f"  [err]✗[/err]  [muted]'{name}' not found[/muted]\n")
             return
         self.cli_config["active_model"] = name
         save_cli_config(self.cli_config)
         mcfg = self.cli_config["models"][name]
         self.settings.update({
-            "api_key": mcfg.get("api_key", ""),
-            "base_url": mcfg.get("base_url", ""),
-            "model": mcfg.get("model", ""),
+            "api_key":     mcfg.get("api_key", ""),
+            "base_url":    mcfg.get("base_url", ""),
+            "model":       mcfg.get("model", ""),
             "active_name": name,
         })
         self._init_llm_client()
         self.console.print(
-            f"[green]✓[/green]  Switched to [cyan]{name}[/cyan]  ({self.model})\n"
+            f"  [ok]✓[/ok]  switched to [primary]{name}[/primary]  [muted]({self.model})[/muted]\n"
         )
 
     def _cmd_models_remove(self, name: str) -> None:
         if not name:
-            self.console.print("[red]사용법: /models remove <이름>[/red]")
+            self.console.print(f"  [err]usage:[/err] /models remove <name>\n")
             return
         models = self.cli_config.get("models", {})
         if name not in models:
-            self.console.print(f"[red]'{name}' 모델이 없습니다.[/red]")
+            self.console.print(f"  [err]✗[/err]  [muted]'{name}' not found[/muted]\n")
             return
         del models[name]
         if self.cli_config.get("active_model") == name:
             self.cli_config["active_model"] = next(iter(models), "")
         save_cli_config(self.cli_config)
-        self.console.print(f"[green]✓[/green]  모델 [cyan]{name}[/cyan] 삭제됨\n")
+        self.console.print(f"  [ok]✓[/ok]  [primary]{name}[/primary] [muted]removed[/muted]\n")
 
     # ── /config ───────────────────────────────────────────────────────────────
 
     def _cmd_config_show(self) -> None:
-        active = self.cli_config.get("active_model", "(없음)")
-        mcfg = self.cli_config.get("models", {}).get(active, {})
-        key = mcfg.get("api_key") or self.settings.get("api_key", "")
-        masked_key = (key[:8] + "*" * max(0, len(key) - 8)) if key else "(없음)"
+        active = self.cli_config.get("active_model", "(none)")
+        mcfg   = self.cli_config.get("models", {}).get(active, {})
+        key    = mcfg.get("api_key") or self.settings.get("api_key", "")
+        masked = (key[:8] + "•" * min(8, max(0, len(key) - 8))) if key else "(none)"
 
-        table = Table(show_header=False, border_style="dim", min_width=55)
-        table.add_column("key", style="cyan", min_width=16)
-        table.add_column("value")
-        table.add_row("mcp-url", self.mcp_url)
-        table.add_row("active-model", active)
-        table.add_row("model", mcfg.get("model") or self.settings.get("model", ""))
-        table.add_row("base-url", mcfg.get("base_url") or self.settings.get("base_url", ""))
-        table.add_row("api-key", masked_key)
-        self.console.print(table)
+        t = Table(show_header=False, border_style=_C["border"],
+                  show_edge=False, pad_edge=True, min_width=52)
+        t.add_column("k", style=_C["muted"],      min_width=14)
+        t.add_column("v", style=_C["text"])
+        t.add_row("mcp-url",      self.mcp_url)
+        t.add_row("model-alias",  active)
+        t.add_row("model",        mcfg.get("model")    or self.settings.get("model", ""))
+        t.add_row("base-url",     mcfg.get("base_url") or self.settings.get("base_url", ""))
+        t.add_row("api-key",      masked)
+        self.console.print(t)
         self.console.print()
 
     def _cmd_config_set(self, key: str, value: str) -> None:
@@ -552,9 +578,9 @@ class ChatRTDCLI:
             self.cli_config["mcp_url"] = value
             self.mcp_url = value
             save_cli_config(self.cli_config)
-            self.console.print(f"[green]✓[/green]  mcp-url → {value}\n")
+            self.console.print(f"  [ok]✓[/ok]  mcp-url [muted]→[/muted] {value}\n")
         else:
-            self.console.print(f"[red]알 수 없는 설정 키: {key}[/red]  (지원: mcp-url)\n")
+            self.console.print(f"  [err]✗[/err]  unknown key: {key}  [muted](supported: mcp-url)[/muted]\n")
 
     # ── REPL ──────────────────────────────────────────────────────────────────
 
@@ -568,14 +594,13 @@ class ChatRTDCLI:
 
         while True:
             try:
-                user_input = input("[task] > ").strip()
+                user_input = input(_PROMPT).strip()
             except (KeyboardInterrupt, EOFError):
-                self.console.print("\n[dim]chatRTD를 종료합니다.[/dim]")
+                self.console.print(f"\n  [muted]bye.[/muted]\n")
                 break
 
             if not user_input:
                 continue
-
             if user_input.startswith("/"):
                 self._handle_command(user_input)
             else:
@@ -585,48 +610,41 @@ class ChatRTDCLI:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    # Windows CMD 한글 출력 호환
     if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
         except Exception:
             pass
 
-    parser = argparse.ArgumentParser(
-        prog="chatRTD",
-        description="chatRTD — Windows Automation Scheduler CLI",
-    )
-    parser.add_argument("query", nargs="?", help="실행할 작업 (비대화형 모드)")
-    parser.add_argument("--start-server", action="store_true", help="MCP 서버 자동 시작")
-    parser.add_argument("--server-url", default=None, dest="server_url", help="MCP 서버 URL override")
-    parser.add_argument("--model", default=None, help="모델 이름 override (이 세션만)")
-    parser.add_argument("--api-key", default=None, dest="api_key", help="API 키 override (이 세션만)")
+    parser = argparse.ArgumentParser(prog="chatRTD",
+                                     description="chatRTD — Windows Automation Scheduler CLI")
+    parser.add_argument("query",         nargs="?",        help="실행할 작업 (비대화형 모드)")
+    parser.add_argument("--start-server",action="store_true", help="MCP 서버 자동 시작")
+    parser.add_argument("--server-url",  default=None, dest="server_url")
+    parser.add_argument("--model",       default=None)
+    parser.add_argument("--api-key",     default=None, dest="api_key")
     args = parser.parse_args()
 
     cli_config = load_cli_config()
-
     overrides: dict = {}
-    if args.server_url:
-        overrides["mcp_url"] = args.server_url
-    if args.model:
-        overrides["model"] = args.model
-    if args.api_key:
-        overrides["api_key"] = args.api_key
+    if args.server_url: overrides["mcp_url"] = args.server_url
+    if args.model:      overrides["model"]   = args.model
+    if args.api_key:    overrides["api_key"] = args.api_key
 
     settings = get_active_settings(cli_config, overrides)
 
     server_proc = None
     if args.start_server:
-        console = Console(force_terminal=True)
-        with console.status("[dim]MCP 서버 시작 중...[/dim]", spinner="dots"):
+        con = Console(force_terminal=True, theme=_THEME)
+        with con.status(f"[muted]starting MCP server...[/muted]", spinner="dots",
+                        spinner_style=f"bold {_C['primary']}"):
             server_proc = start_mcp_server()
         if server_proc:
-            console.print("[green]✓[/green]  MCP 서버 시작됨\n")
+            con.print(f"  [ok]✓[/ok]  [muted]MCP server started[/muted]\n")
         else:
-            console.print("[yellow]⚠[/yellow]  MCP 서버 시작 실패 — mcp_server.py 경로 확인\n")
+            con.print(f"  [warn]⚠[/warn]  [muted]failed to start MCP server[/muted]\n")
 
     cli = ChatRTDCLI(settings, cli_config)
-
     try:
         cli.run(single_query=args.query)
     finally:
