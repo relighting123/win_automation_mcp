@@ -8,10 +8,12 @@
 #   git 에 커밋되지 않습니다.
 
 application:
-  # 타겟 애플리케이션 실행 경로 (실제 PC 경로로 수정하세요)
-  executable_path: "C:\\Program Files\\YourApp\\yourapp.exe"
-  # 프로세스 이름 (작업 관리자에서 확인)
-  process_name: "yourapp.exe"
+  # 타겟 애플리케이션 경로(프로그램 실행시 사용)
+  executable_path: "C:\\Program Files\\YourApp\\app.exe"
+  # 애플리케이션 이름 (프로세스 실행 중인지 등을 판단하는 용도)
+  process_name: "app.exe"
+  # 윈도우 제목 정규식 (연결 시 사용)
+  # window_title_re: ".*YourApp.*"
   # pywinauto backend 설정 (uia 권장)
   backend: "uia"
   # 애플리케이션 시작 후 초기화 대기 시간 (초)
@@ -20,25 +22,39 @@ application:
   automation_speed: "fast"
 
 timeouts:
+  # 기본 요소 대기 시간 (초)
   default_wait: 10
+  # 긴 작업 대기 시간 (초)
   long_wait: 60
+  # 짧은 작업 대기 시간 (초)
   short_wait: 3
+  # 재시도 간격 (초)
   retry_interval: 0.1
+  # UI 조작 후 대기 시간 (초)
   ui_delay: 0.1
+  # 포커스 설정 후 대기 시간 (초)
   after_focus_delay: 0.1
 
 retry:
+  # 기본 재시도 횟수
   default_attempts: 3
+  # 연결 재시도 횟수
   connection_attempts: 5
 
 logging:
+  # 로그 레벨 (DEBUG, INFO, WARNING, ERROR)
   level: "INFO"
+  # 로그 파일 경로
   file_path: "logs/automation.log"
+  # 로그 파일 최대 크기 (MB)
   max_size_mb: 10
+  # 로그 파일 보관 개수
   backup_count: 5
 
 server:
+  # FastMCP 서버 이름
   name: "Windows Automation MCP Server"
+  # 서버 버전
   version: "1.0.0"
 
 mcp:
@@ -46,41 +62,41 @@ mcp:
   base_url: "http://localhost:8000/mcp"
 
 automation:
-  # 자동화 모드: auto | semi | manual
+  # 자동화 모드 설정 (auto: 자유 계획 및 개입, semi: 순차 실행 + 상황 개입, manual: 순차 실행 전용)
   mode: "manual"
 
 llm:
-  # LLM provider (openai_compatible 권장)
+  # 기본 provider: OpenAI 호환 API
   provider: "openai_compatible"
   # API base URL (예: https://api.openai.com/v1, https://api.groq.com/openai/v1 등)
-  base_url: "https://api.your-provider.com/v1"
+  base_url: "https://api.groq.com/openai/v1"
   # 사용할 모델 이름
-  model: "your-model-name"
+  model: "openai/gpt-oss-120b"
   # API 키 (또는 .env 의 INTERNAL_LLM_API_KEY / OPENAI_API_KEY 환경변수 사용)
   api_key: ""
 
   profiles:
-    # 단순 실행/파라미터 추출용 경량 모델
+    # 단순 실행/파라미터 추출: 경량 모델
     execution:
       provider: "openai_compatible"
-      base_url: "https://api.your-provider.com/v1"
-      model: "your-model-name"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
       api_key: ""
-    # 계획 수립용 모델
+    # 계획 수립
     planning:
       provider: "openai_compatible"
-      base_url: "https://api.your-provider.com/v1"
-      model: "your-model-name"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
       api_key: ""
-    # 상황/데이터 분석용 모델
+    # 상황/데이터 분석
     analysis:
       provider: "openai_compatible"
-      base_url: "https://api.your-provider.com/v1"
-      model: "your-model-name"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
       api_key: ""
-    # 최종 리포트 생성용 모델
+    # 최종 리포트 생성
     reporting:
       provider: "openai_compatible"
-      base_url: "https://api.your-provider.com/v1"
-      model: "your-model-name"
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
       api_key: ""

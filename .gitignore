@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .env
+config/app_config.yaml
+config/skills.yaml
 .venv
 venv/
 ENV/

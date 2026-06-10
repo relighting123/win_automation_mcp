@@ -1,3 +1,11 @@
+# 스킬 정의 (레거시 단일 파일 형식)
+#
+# 사용 방법:
+#   cp config/skills.yaml.example config/skills.yaml
+#   이후 회사/로컬 환경에 맞게 값을 수정하세요.
+#
+# 신규 스킬은 skills/<skill_name>/skill.yaml 형식을 권장합니다.
+
 skills:
   demo_app_mgmt_tools:
     description: "app_mgmt_tool 계열 도구 사용 예시"
@@ -118,7 +126,7 @@ skills:
     tools:
       - tool: launch_application
         args:
-          executable_path: { mode: "ai", value: "D:\\개발\\폴더\\default.rul" }
+          executable_path: { mode: "ai", value: "C:\\Path\\To\\Your\\default.rul" }
       - tool: wait
         args:
           seconds: 2.0
