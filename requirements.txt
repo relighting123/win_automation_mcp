@@ -22,12 +22,14 @@ typing-extensions>=4.0.0
 
 # UI and LLM
 rich>=13.0.0
+prompt_toolkit>=3.0.0
 streamlit>=1.30.0
 openai>=2.29.0
 groq>=0.5.0
 requests>=2.31.0
 pandas>=3.0.2
 pyperclip>=1.11.0
+oracledb>=2.0.0
 
 # LangGraph and LangChain
 langchain>=0.1.0
