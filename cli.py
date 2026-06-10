@@ -3,6 +3,7 @@
 """chatRTD — Windows Automation Scheduler CLI"""
 
 import argparse
+import asyncio
 import json
 import os
 import subprocess
@@ -87,6 +88,12 @@ HELP_TEXT = f"""
   [text]/models add <name> --api-key <k> --base-url <u> --model <m>[/text]  모델 등록
   [text]/models select <name>[/text]                                     활성 모델 전환
   [text]/models remove <name>[/text]                                     모델 삭제
+
+[secondary]Analyze (automation graph)[/secondary]
+  [text]/analyze <query>[/text]                    semi 모드로 실행 (기본)
+  [text]/analyze auto <query>[/text]               auto 모드 — graph가 스킬 자동 선택
+  [text]/analyze semi <query>[/text]               semi 모드 — 스킬 순서 고정, AI가 인자 추출
+  [text]/analyze manual <skill_id> [query][/text]  manual 모드 — 스킬 고정 실행
 
 [secondary]Config[/secondary]
   [text]/config[/text]                   현재 설정 확인
@@ -427,6 +434,9 @@ class ChatRTDCLI:
             else:
                 self.console.print(f"  [err]usage:[/err] /skill <skill_id>\n")
 
+        elif command == "/analyze":
+            self._cmd_analyze(parts[1:])
+
         elif command == "/models":
             sub = parts[1].lower() if len(parts) > 1 else ""
             if sub == "add":
@@ -481,6 +491,94 @@ class ChatRTDCLI:
             t.add_row(fn["name"], (fn.get("description") or "")[:72])
         self.console.print(t)
         self.console.print()
+
+    # ── /analyze ──────────────────────────────────────────────────────────────
+
+    def _cmd_analyze(self, args: list) -> None:
+        """automation graph 실행. 모드 선택 가능 (기본: semi)"""
+        _MODES = {"auto", "semi", "manual"}
+
+        if not args:
+            self.console.print(
+                f"  [err]usage:[/err] /analyze [auto|semi|manual] <query>\n"
+            )
+            return
+
+        # 첫 번째 토큰이 모드명이면 분리, 아니면 semi 기본값
+        if args[0].lower() in _MODES:
+            mode  = args[0].lower()
+            rest  = args[1:]
+        else:
+            mode  = "semi"
+            rest  = args
+
+        # manual 모드: 첫 토큰을 skill_id로 사용
+        if mode == "manual":
+            if not rest:
+                self.console.print(
+                    f"  [err]usage:[/err] /analyze manual <skill_id> [query]\n"
+                )
+                return
+            skill_ids = [rest[0]]
+            query     = " ".join(rest[1:]) or rest[0]
+        else:
+            skill_ids = []
+            query     = " ".join(rest)
+
+        if not query:
+            self.console.print(f"  [err]✗[/err]  [muted]query가 비어 있습니다.[/muted]\n")
+            return
+
+        c = self.console
+        c.print()
+        c.print(f"  [muted]Analyze[/muted]  [border]{'─' * 48}[/border]")
+        c.print(f"  [muted]mode :[/muted]  [secondary]{mode}[/secondary]")
+        c.print(f"  [muted]query:[/muted]  {query}")
+        c.print()
+
+        try:
+            from graph.automation_graph import run_automation
+            from mcp_client import MCPClient
+        except ImportError as e:
+            c.print(f"  [err]✗  import error:[/err] {e}\n")
+            return
+
+        async def _run():
+            mcp = MCPClient(self.mcp_url)
+            return await run_automation(
+                mcp       = mcp,
+                query     = query,
+                skill_ids = skill_ids,
+                mode      = mode,
+            )
+
+        with c.status(
+            f"[muted]analyzing... ({mode})[/muted]", spinner="dots",
+            spinner_style=f"bold {_C['primary']}",
+        ):
+            try:
+                result = asyncio.run(_run())
+            except Exception as e:
+                c.print(f"  [err]✗  automation error:[/err] {e}\n")
+                return
+
+        report  = result.get("report", "")
+        details = result.get("report_details", {})
+
+        c.print(f"  [primary]chatRTD[/primary]  [border]{'─' * 46}[/border]")
+        c.print(f"  {report}")
+
+        if details:
+            history = details.get("history", [])
+            if history:
+                c.print()
+                c.print(f"  [muted]─ execution log ({'─' * 30})[/muted]")
+                for item in history:
+                    skill   = item.get("skill_id", "")
+                    status  = item.get("status", "")
+                    color   = "ok" if status in ("done", "success") else "err"
+                    c.print(f"  [tool]◆[/tool]  [secondary]{skill:<30}[/secondary] [{color}]{status}[/{color}]")
+        c.print()
 
     # ── /models ───────────────────────────────────────────────────────────────
 
