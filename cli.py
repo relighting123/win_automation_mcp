@@ -211,6 +211,15 @@ def call_mcp_tool(mcp_url: str, name: str, arguments: dict) -> dict:
 
 # ── Server subprocess ─────────────────────────────────────────────────────────
 
+def _is_mcp_running(mcp_url: str) -> bool:
+    """MCP 서버가 이미 실행 중인지 확인."""
+    try:
+        requests.get(mcp_url.rstrip("/mcp").rstrip("/"), timeout=2)
+        return True
+    except Exception:
+        return False
+
+
 def start_mcp_server(port: int = 8000) -> Optional[subprocess.Popen]:
     script = _PROJECT_ROOT / "mcp_server.py"
     if not script.exists():
@@ -618,11 +627,11 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(prog="chatRTD",
                                      description="chatRTD — Windows Automation Scheduler CLI")
-    parser.add_argument("query",         nargs="?",        help="실행할 작업 (비대화형 모드)")
-    parser.add_argument("--start-server",action="store_true", help="MCP 서버 자동 시작")
-    parser.add_argument("--server-url",  default=None, dest="server_url")
-    parser.add_argument("--model",       default=None)
-    parser.add_argument("--api-key",     default=None, dest="api_key")
+    parser.add_argument("query",        nargs="?",  help="실행할 작업 (비대화형 모드)")
+    parser.add_argument("--no-server",  action="store_true", help="MCP 서버 자동 시작 비활성화")
+    parser.add_argument("--server-url", default=None, dest="server_url")
+    parser.add_argument("--model",      default=None)
+    parser.add_argument("--api-key",    default=None, dest="api_key")
     args = parser.parse_args()
 
     cli_config = load_cli_config()
@@ -632,17 +641,23 @@ def main() -> None:
     if args.api_key:    overrides["api_key"] = args.api_key
 
     settings = get_active_settings(cli_config, overrides)
+    mcp_url  = settings["mcp_url"]
 
+    # MCP 서버가 응답 없으면 자동 시작 (--no-server 로 비활성화 가능)
     server_proc = None
-    if args.start_server:
+    if not args.no_server and not _is_mcp_running(mcp_url):
+        try:
+            port = int(mcp_url.split(":")[-1].split("/")[0])
+        except Exception:
+            port = 8000
         con = Console(force_terminal=True, theme=_THEME)
         with con.status(f"[muted]starting MCP server...[/muted]", spinner="dots",
                         spinner_style=f"bold {_C['primary']}"):
-            server_proc = start_mcp_server()
+            server_proc = start_mcp_server(port)
         if server_proc:
-            con.print(f"  [ok]✓[/ok]  [muted]MCP server started[/muted]\n")
+            con.print(f"  [ok]✓[/ok]  [muted]MCP server started (port {port})[/muted]\n")
         else:
-            con.print(f"  [warn]⚠[/warn]  [muted]failed to start MCP server[/muted]\n")
+            con.print(f"  [warn]⚠[/warn]  [muted]MCP server 시작 실패 — mcp_server.py 경로 확인[/muted]\n")
 
     cli = ChatRTDCLI(settings, cli_config)
     try:
