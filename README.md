@@ -53,8 +53,9 @@ win_mcp/
 ├── mcp_server.py           # FastMCP 서버 진입점
 │
 ├── config/
-│   ├── app_config.yaml     # 애플리케이션 설정 (경로, 타임아웃)
-│   └── locator.yaml        # (옵션) UI 요소 locator
+│   ├── app_config.yaml.example  # 애플리케이션 설정 예시 (복사 후 사용)
+│   ├── skills.yaml.example      # 스킬 정의 예시 (복사 후 사용)
+│   └── locator.yaml             # (옵션) UI 요소 locator
 │
 ├── core/
 │   ├── app_launcher.py     # 애플리케이션 실행/종료 관리
@@ -120,6 +121,14 @@ pip install mcp pywinauto pyyaml
 > 별도의 중량급 AI 모델이나 외부 바이너리 설치가 필요 없는 초경량 아키텍처입니다.
 
 ## 설정
+
+로컬/회사 환경 설정 파일은 git에 포함되지 않습니다. example 파일을 복사한 뒤 값을 채워 사용하세요.
+
+```bash
+cp .env.example .env
+cp config/app_config.yaml.example config/app_config.yaml
+cp config/skills.yaml.example config/skills.yaml
+```
 
 ### 1. 애플리케이션 설정 (config/app_config.yaml)
 
@@ -289,8 +298,8 @@ window.child_window(**locator)
 
 ## 새 애플리케이션 적용 가이드
 
-1. **config/app_config.yaml 수정**
-   - 실행 파일 경로 설정
+1. **config/app_config.yaml 설정**
+   - `cp config/app_config.yaml.example config/app_config.yaml` 후 실행 파일 경로 설정
    - 타임아웃 값 조정
 
 
@@ -314,7 +323,7 @@ npx @modelcontextprotocol/inspector
 
 ## LLM/MCP 설정 통합 관리 (`config/app_config.yaml`)
 
-LLM/MCP 연결 정보는 `config/app_config.yaml`에서 공통 관리합니다.
+`config/app_config.yaml.example`을 복사해 `config/app_config.yaml`을 만든 뒤, LLM/MCP 연결 정보를 공통 관리합니다.
 `automation_graph.py`와 `LLM/streamlit_app.py`가 동일 설정을 기본값으로 사용합니다.
 
 ```yaml
