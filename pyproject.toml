@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chatRTD-agent"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "chatRTD — Windows Automation Scheduler CLI"
+
+[project.scripts]
+chatRTD = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli"]
