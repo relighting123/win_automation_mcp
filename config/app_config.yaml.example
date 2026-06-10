@@ -1,9 +1,11 @@
 # Application Configuration for Windows Automation
 # FastMCP + pywinauto 기반 윈도우 자동화 설정
 #
-# 사용 방법:
-#   cp config/app_config.yaml.example config/app_config.yaml
-#   이후 회사/로컬 환경에 맞게 값을 수정하세요.
+# 사용법:
+#   이 파일을 config/app_config.yaml 로 복사한 뒤
+#   실제 값으로 채워 넣으세요.
+#   config/app_config.yaml 은 .gitignore 에 등록되어 있으므로
+#   git 에 커밋되지 않습니다.
 
 application:
   # 타겟 애플리케이션 경로(프로그램 실행시 사용)
@@ -32,7 +34,7 @@ timeouts:
   ui_delay: 0.1
   # 포커스 설정 후 대기 시간 (초)
   after_focus_delay: 0.1
-  
+
 retry:
   # 기본 재시도 횟수
   default_attempts: 3
@@ -66,11 +68,15 @@ automation:
 llm:
   # 기본 provider: OpenAI 호환 API
   provider: "openai_compatible"
+  # API base URL (예: https://api.openai.com/v1, https://api.groq.com/openai/v1 등)
   base_url: "https://api.groq.com/openai/v1"
+  # 사용할 모델 이름
   model: "openai/gpt-oss-120b"
+  # API 키 (또는 .env 의 INTERNAL_LLM_API_KEY / OPENAI_API_KEY 환경변수 사용)
   api_key: ""
+
   profiles:
-    # 단순 실행/파라미터 추출: 경량 Gemma 등
+    # 단순 실행/파라미터 추출: 경량 모델
     execution:
       provider: "openai_compatible"
       base_url: "https://api.groq.com/openai/v1"
