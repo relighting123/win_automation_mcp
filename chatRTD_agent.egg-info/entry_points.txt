@@ -1,0 +1,2 @@
+[console_scripts]
+chatRTD = chatrtd_cli:main

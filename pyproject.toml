@@ -9,7 +9,7 @@ requires-python = ">=3.10"
 description = "chatRTD — Windows Automation Scheduler CLI"
 
 [project.scripts]
-chatRTD = "cli:main"
+chatRTD = "chatrtd_cli:main"
 
 [tool.setuptools]
-py-modules = ["cli"]
+py-modules = ["chatrtd_cli"]
