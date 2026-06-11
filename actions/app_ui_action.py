@@ -541,9 +541,26 @@ class AppUIAction:
         legacy_match_mode: str,
         case_sensitive: bool,
     ) -> Optional[Any]:
-        nodes = [root]
         descendants = self._safe_call(root.descendants, []) or []
+        nodes = [root]
         nodes.extend(descendants)
+
+        logger.info(
+            "[click_app_by_attr] descendants 순회: search_root=%s, descendants=%d, total_nodes=%d, "
+            "auto_id=%s, control_type=%s, title=%s, legacy_value=%s",
+            self._format_window_label(root),
+            len(descendants),
+            len(nodes),
+            auto_id,
+            control_type,
+            title,
+            legacy_value,
+        )
+        if len(descendants) == 0:
+            logger.warning(
+                "[click_app_by_attr] search_root 아래 descendants가 0개입니다: %s",
+                self._format_window_label(root),
+            )
 
         for node in nodes:
             node_auto_id = str(self._safe_call(lambda: node.element_info.automation_id, "") or "")
