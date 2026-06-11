@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from langgraph.graph import StateGraph, END
 from core.state import AgentState
 from graph.nodes import GraphNodes

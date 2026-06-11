@@ -10,8 +10,12 @@ from core.llm_config import (
     get_mcp_settings,
     get_automation_settings,
 )
-from .builder import build_automation_graph
-from .llm_factory import create_chat_llm
+try:
+    from .builder import build_automation_graph
+    from .llm_factory import create_chat_llm
+except ImportError:
+    from graph.builder import build_automation_graph
+    from graph.llm_factory import create_chat_llm
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
