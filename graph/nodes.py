@@ -154,6 +154,8 @@ class GraphNodes:
                 return True
             if decoded_output.get("is_success") is False:
                 return True
+            if decoded_output.get("error") and decoded_output.get("success") is not True:
+                return True
             status = str(decoded_output.get("status", "")).lower()
             result = str(decoded_output.get("result", "")).lower()
             if status in {"error", "failed", "aborted", "timeout"}:
@@ -161,6 +163,18 @@ class GraphNodes:
             if result in {"error", "failed", "timeout"}:
                 return True
         return False
+
+    @staticmethod
+    def _extract_failure_reason(decoded_output: Any) -> str:
+        """도구 실패 메시지를 사람이 읽을 수 있는 문자열로 반환합니다."""
+        if isinstance(decoded_output, dict):
+            for key in ("message", "error", "reason", "result"):
+                value = str(decoded_output.get(key, "")).strip()
+                if value and value.lower() not in {"error", "failed", "timeout"}:
+                    return value
+            if decoded_output.get("error"):
+                return str(decoded_output["error"])
+        return str(decoded_output)
 
     def _apply_step_arg_constraints(
         self,
@@ -379,6 +393,9 @@ class GraphNodes:
                 }
             )
 
+        execution_halted = state.execution_halted
+        halt_reason = state.halt_reason
+
         if next_action == "abort":
             history.append(
                 {
@@ -391,6 +408,8 @@ class GraphNodes:
                     },
                 }
             )
+            execution_halted = True
+            halt_reason = f"상황 체크 중단: {analysis.reason}"
         
         return {
             "check_status": analysis.reason, 
@@ -398,6 +417,8 @@ class GraphNodes:
             "extra_skill": fallback_skill,
             "skill_ids": new_skill_ids,
             "history": history,
+            "execution_halted": execution_halted,
+            "halt_reason": halt_reason,
         }
 
     async def extract(self, state: AgentState):
@@ -475,27 +496,33 @@ class GraphNodes:
         results = list(state.history)
         current_skill_id = state.skill_ids[state.current_index]
         
+        execution_halted = state.execution_halted
+        halt_reason = state.halt_reason
+
         for call in state.enriched_plan:
             logger.info("[Run] %s 실행 시작 (args=%s)", call.tool, call.args)
             out = await self.mcp.call_tool(call.tool, call.args)
             decoded = self._decode_tool_output(out)
-            if self._is_failed_output(decoded):
-                reason = ""
-                if isinstance(decoded, dict):
-                    reason = (
-                        str(decoded.get("message", "")).strip()
-                        or str(decoded.get("error", "")).strip()
-                        or str(decoded.get("result", "")).strip()
-                    )
-                logger.warning("[Run] %s 실패: %s", call.tool, reason or decoded)
-            else:
-                logger.info("[Run] %s 성공", call.tool)
             results.append({
                 "skill": current_skill_id,
-                "tool": call.tool, 
-                "output": out
+                "tool": call.tool,
+                "output": out,
             })
-        return {"history": results}
+
+            if self._is_failed_output(decoded):
+                reason = self._extract_failure_reason(decoded)
+                halt_reason = f"{call.tool} 실패: {reason or 'unknown error'}"
+                execution_halted = True
+                logger.error("[Run] %s 실패 - 이후 단계 중단: %s", call.tool, halt_reason)
+                break
+
+            logger.info("[Run] %s 성공", call.tool)
+
+        return {
+            "history": results,
+            "execution_halted": execution_halted,
+            "halt_reason": halt_reason,
+        }
 
     async def next(self, state: AgentState):
         """다음 스킬로 인덱스 이동"""
@@ -558,17 +585,30 @@ class GraphNodes:
             analysis_res = await self.analyst_llm.ainvoke(analysis_prompt)
             clipboard_analysis = analysis_res.content
 
+        if state.execution_halted:
+            execution_summary["status"] = "halted"
+            execution_summary["halt_reason"] = state.halt_reason
+
         report_details = {
             "execution": execution_summary,
             "clipboard": clipboard_data,
             "clipboard_analysis": clipboard_analysis,
+            "execution_halted": state.execution_halted,
+            "halt_reason": state.halt_reason,
         }
 
+        halt_note = (
+            f"\n중단 사유: {state.halt_reason}\n"
+            "도구 실행 실패로 자동화가 중단되었습니다. 이 사실을 사용자에게 명확히 알려주세요."
+            if state.execution_halted
+            else ""
+        )
         prompt = (
             f"요청: {state.query}\n"
             f"실행 요약: {json.dumps(execution_summary, ensure_ascii=False)}\n"
             f"클립보드 분석: {clipboard_analysis or clipboard_data.get('message', '없음')}\n"
-            f"전체 실행 이력: {history}\n\n"
+            f"전체 실행 이력: {history}\n"
+            f"{halt_note}\n"
             "최종 답변은 한국어로 작성하세요. 반드시 '수행 여부'를 먼저 명시하고, "
             "그 다음 클립보드 데이터(DataFrame) 분석 결과를 자연스럽게 이어서 설명하세요."
         )

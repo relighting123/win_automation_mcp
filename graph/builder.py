@@ -39,12 +39,19 @@ def build_automation_graph(mcp, execution_llm, planner_llm=None, analyst_llm=Non
         ),
     )
     builder.add_edge("extract", "run")
-    builder.add_edge("run", "next")
-    
+    builder.add_conditional_edges(
+        "run",
+        lambda x: "report" if x.execution_halted else "next",
+    )
+
     # 조건부 엣지: 남은 스킬 여부 확인
     builder.add_conditional_edges(
         "next",
-        lambda x: "check_situation" if x.current_index < len(x.skill_ids) else "report"
+        lambda x: (
+            "report"
+            if x.execution_halted or x.current_index >= len(x.skill_ids)
+            else "check_situation"
+        ),
     )
     builder.add_edge("report", END)
     
