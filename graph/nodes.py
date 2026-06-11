@@ -15,6 +15,8 @@ from graph.prompts import (
 )
 from skills.sequence_skill import SequenceSkill
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 logger = logging.getLogger(__name__)
 
 class GraphNodes:
@@ -34,7 +36,7 @@ class GraphNodes:
         
         # 1. Legacy skills.yaml 로드
         try:
-            with open("config/skills.yaml", "r", encoding="utf-8") as f:
+            with open(_PROJECT_ROOT / "config" / "skills.yaml", "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
                 all_skills.update(config.get("skills", {}))
         except Exception as e:
@@ -42,7 +44,7 @@ class GraphNodes:
 
         # 2. 개별 폴더 기반 스킬 로드 (skills/*/skill.yaml)
         try:
-            skills_dir = Path("skills")
+            skills_dir = _PROJECT_ROOT / "skills"
             for skill_folder in skills_dir.iterdir():
                 if skill_folder.is_dir():
                     yaml_path = skill_folder / "skill.yaml"

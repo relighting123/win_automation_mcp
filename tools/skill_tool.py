@@ -11,12 +11,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 
 def _load_skill_definitions(config_path: str = "config/skills.yaml") -> dict:
     """config/skills.yaml + skills/*/skill.yaml 에서 스킬 목록을 수집합니다."""
     skills: dict = {}
 
-    path = Path(config_path)
+    path = _PROJECT_ROOT / config_path
     if path.exists():
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -25,7 +27,7 @@ def _load_skill_definitions(config_path: str = "config/skills.yaml") -> dict:
         except Exception as e:
             logger.warning(f"Skill 설정 로드 실패 ({config_path}): {e}")
 
-    skills_dir = Path("skills")
+    skills_dir = _PROJECT_ROOT / "skills"
     if skills_dir.is_dir():
         for folder in sorted(skills_dir.iterdir()):
             if not folder.is_dir():
