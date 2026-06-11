@@ -130,7 +130,9 @@ skills:
     tools:
       - tool: launch_application
         args:
-          executable_path: { mode: "ai", value: "C:\\Path\\To\\Your\\default.rul" }
+          # .rul 등 실행 대상 파일 (executable_path / argument_path / file_path 모두 가능)
+          argument_path: { mode: "ai", value: "C:\\Path\\To\\Your\\default.rul" }
+          # 데이터 파일 실행 시 연결할 프로그램은 app_config executable_path가 자동 사용됨
       - tool: wait
         args:
           seconds: 2.0

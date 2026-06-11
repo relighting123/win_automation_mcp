@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from core.app_launcher import get_launcher
 from core.app_session import AppSession
+from core.launch_paths import LAUNCH_TARGET_KEYS, resolve_launch_paths
 from errors.automation_error import ConnectionError
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 async def launch_application(
     executable_path: Optional[str] = None,
+    argument_path: Optional[str] = None,
+    exec_path: Optional[str] = None,
+    file_path: Optional[str] = None,
     connect_path: Optional[str] = None,
     window_title: Optional[str] = None,
     window_title_re: Optional[str] = None,
@@ -29,29 +33,45 @@ async def launch_application(
     대상 Windows 애플리케이션 또는 데이터 파일을 실행합니다.
 
     지정된 경로의 애플리케이션(.exe)을 실행하거나, 데이터 파일(.rul, .txt 등)을 관련 프로그램으로 엽니다.
-    경로를 지정하지 않으면 설정 파일에 정의된 기본 애플리케이션 경로를 사용합니다.
+    실행 대상 경로가 없을 때만 app_config의 executable_path를 사용합니다.
 
     Args:
         executable_path: 실행할 파일 경로 (.exe 또는 연동된 데이터 파일)
-        connect_path: (데이터 파일 실행 시) 연결할 실제 실행 파일 경로
+        argument_path: executable_path 별칭 (automation graph/스킬 YAML 호환)
+        exec_path: executable_path 별칭
+        file_path: executable_path 별칭 (.rul 등 데이터 파일)
+        connect_path: (데이터 파일 실행 시) 연결할 실제 실행 파일 경로 (미지정 시 app_config exe 사용)
         window_title: (데이터 파일 실행 시) 연결할 윈도우 제목
         window_title_re: (데이터 파일 실행 시) 연결할 윈도우 제목 정규식
         wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
     """
-    logger.info(
-        f"[Tool] launch_application 호출: path={executable_path}, connect_path={connect_path}, "
-        f"title={window_title}, title_re={window_title_re}, wait={wait_for_window}"
-    )
+    raw_args = {
+        "executable_path": executable_path,
+        "argument_path": argument_path,
+        "exec_path": exec_path,
+        "file_path": file_path,
+        "connect_path": connect_path,
+        "window_title": window_title,
+        "window_title_re": window_title_re,
+        "wait_for_window": wait_for_window,
+    }
 
     try:
         launcher = get_launcher()
-        # 입력된 경로가 있으면 사용하고, 없으면 설정된 기본 경로 사용
-        target_path = executable_path or launcher._session.config.get("application", {}).get("executable_path")
+        config_exe = launcher._session.config.get("application", {}).get("executable_path")
+        target_path, resolved_connect_path, _ = resolve_launch_paths(raw_args, config_exe)
+
+        logger.info(
+            "[Tool] launch_application 호출: target=%s, connect_path=%s, aliases=%s",
+            target_path,
+            resolved_connect_path,
+            {k: raw_args.get(k) for k in LAUNCH_TARGET_KEYS if raw_args.get(k)},
+        )
 
         launcher.launch(
             path=target_path,
             wait_for_ready=wait_for_window,
-            connect_path=connect_path,
+            connect_path=resolved_connect_path,
             title=window_title,
             title_re=window_title_re,
         )

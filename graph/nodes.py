@@ -14,6 +14,7 @@ from graph.prompts import (
     ALLOWED_PATHS
 )
 from skills.sequence_skill import SequenceSkill
+from core.launch_paths import resolve_launch_paths
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -162,6 +163,10 @@ class GraphNodes:
                 return True
         return False
 
+    def _is_path_arg_name(self, arg_name: str) -> bool:
+        lowered = arg_name.lower()
+        return any(token in lowered for token in ["path", "file", "executable"])
+
     def _apply_step_arg_constraints(
         self,
         step_args: Dict[str, Any],
@@ -179,14 +184,27 @@ class GraphNodes:
                 if current_val is None:
                     normalized[arg_name] = arg_meta.get("value")
 
-                is_path_arg = any(k in arg_name.lower() for k in ["path", "file", "executable"])
-                if is_path_arg and ALLOWED_PATHS and normalized.get(arg_name) not in ALLOWED_PATHS:
-                    logger.warning(
-                        "가이드에 없는 경로 감지: '%s'. 기본값 '%s'로 대체합니다.",
-                        normalized.get(arg_name),
-                        arg_meta.get("value"),
-                    )
-                    normalized[arg_name] = arg_meta.get("value")
+                if self._is_path_arg_name(arg_name) and ALLOWED_PATHS:
+                    candidate = normalized.get(arg_name)
+                    if candidate and candidate not in ALLOWED_PATHS:
+                        logger.warning(
+                            "가이드에 없는 경로 감지: '%s'. 기본값 '%s'로 대체합니다.",
+                            candidate,
+                            arg_meta.get("value"),
+                        )
+                        normalized[arg_name] = arg_meta.get("value")
+        return normalized
+
+    def _normalize_launch_tool_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """launch_application 호출 인자의 경로 별칭을 canonical key로 통합합니다."""
+        try:
+            from core.app_session import AppSession
+
+            config_exe = AppSession.get_instance().config.get("application", {}).get("executable_path")
+        except Exception:
+            config_exe = None
+
+        _, _, normalized = resolve_launch_paths(args, config_exe)
         return normalized
 
     def _build_calls_from_steps(
@@ -208,6 +226,8 @@ class GraphNodes:
                 args.update(llm_call.args)
 
             args = self._apply_step_arg_constraints(args, step.get("args", {}))
+            if tool_name == "launch_application":
+                args = self._normalize_launch_tool_args(args)
             final_calls.append(ToolCall(tool=tool_name, args=args))
 
         if llm_calls is not None and len(llm_calls) > len(final_calls):
@@ -420,6 +440,8 @@ class GraphNodes:
                 args: Dict[str, Any] = {}
                 for arg_name, arg_meta in step["args"].items():
                     args[arg_name] = arg_meta.get("value")
+                if step["tool"] == "launch_application":
+                    args = self._normalize_launch_tool_args(args)
                 manual_calls.append(ToolCall(tool=step["tool"], args=args))
             return {"enriched_plan": manual_calls, "tool_sequence": tool_sequence}
 

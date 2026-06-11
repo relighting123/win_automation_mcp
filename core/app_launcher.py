@@ -60,11 +60,10 @@ class AppLauncher:
         **kwargs
     ) -> AppSession:
         """
-        애플리케이션 실행 (설정 파일의 경로를 최우선으로 사용하도록 하드코딩됨)
         애플리케이션 실행
-        
+
         Args:
-            path: 실행 파일 경로 (없으면 설정에서 가져옴)
+            path: 실행 파일 또는 데이터 파일 경로 (없으면 app_config에서 가져옴)
             args: 명령행 인자
             wait_for_ready: 애플리케이션 준비 대기 여부
             **kwargs: pywinauto start() 추가 인자
