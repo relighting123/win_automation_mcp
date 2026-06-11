@@ -10,7 +10,22 @@ active_window:
     uia_control_type: "Window"
   elements:
     submit_button:
+      path: "top"
       auto_id: "btnSubmit"
       control_id: "1001"
       uia_control_type: "Button"
       description: "예시 제출 버튼"
+  child_windows:
+    find:
+      window:
+        title: "Find"
+        control_id: "2000"
+        auto_id: "FindDlg"
+        uia_control_type: "Window"
+      elements:
+        close:
+          path: "top/child_windows/find"
+          auto_id: "Close"
+          control_id: "2002"
+          uia_control_type: "Button"
+          description: "Find child window 닫기(X)"
