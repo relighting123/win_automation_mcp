@@ -90,7 +90,7 @@ class AppUIAction:
         
         return None
 
-    def ensure_focus(self) -> AppUIActionResult:
+    def ensure_focus(self, *, invalidate_cache: bool = False) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
         try:
             # 애플리케이션 실행 중인지 확인하고, 아니면 실행 (Auto-Launch)
@@ -103,6 +103,9 @@ class AppUIAction:
                 except Exception as e:
                     return AppUIActionResult(result="error", message=f"애플리케이션 연결 실패: {e}")
 
+            if invalidate_cache:
+                self._session.cached_window = None
+
             wrapper = self._pick_target_window()
             if wrapper is None:
                 # 마지막 수단: top_window() 시도
@@ -114,37 +117,12 @@ class AppUIAction:
             if wrapper is None:
                 return AppUIActionResult(result="error", message="포커스를 줄 수 있는 앱 윈도우를 찾지 못했습니다")
 
-            # 윈도우 상태 확인 및 복구
-            is_minimized = self._safe_call(lambda: wrapper.is_minimized(), False)
-            if is_minimized:
-                logger.info("윈도우가 최소화되어 있어 복구를 시도합니다.")
-                wrapper.restore()
-                time.sleep(self._session.config.get("timeouts", {}).get("ui_delay", 0.5))
-
-            # 윈도우를 최상단으로 가져오고 포커스 설정
-            try:
-                # 1. 일반적인 포커스 시도
-                wrapper.set_focus()
-                
-                # 2. 추가적인 강제 활성화 (최소화되어 있지 않아도 뒤에 숨어있을 수 있음)
-                # draw_outline은 호출 비용이 커서 기본 포커스 경로에서는 사용하지 않습니다.
-            except Exception as e:
-                logger.warning(f"set_focus 실패: {e}. 대안을 시도합니다.")
-                try:
-                    # win32 backend의 경우 더 강력한 활성화 시도
-                    wrapper.maximize()
-                    wrapper.restore()
-                except Exception:
-                    pass
-            
-            # 윈도우 활성화 대기
-            time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.5))
-            
-            # 윈도우가 가시적인지 재확인
-            if not self._safe_call(lambda: wrapper.is_visible(), False):
-                logger.warning("포커스 시도 후에도 윈도우가 가시적이지 않습니다.")
-                # 한 번 더 restore 시도
-                self._safe_call(wrapper.restore, None)
+            activated = self._activate_window(wrapper)
+            if not activated:
+                logger.warning(
+                    "포커스 활성화가 완전히 확인되지 않았습니다. title=%s",
+                    self._safe_call(wrapper.window_text, ""),
+                )
 
             return AppUIActionResult(
                 result="success",
@@ -364,6 +342,98 @@ class AppUIAction:
             logger.debug("대상 윈도우 선택 실패: %s", e)
             return None
 
+    def _get_wrapper_handle(self, wrapper: Any) -> Optional[int]:
+        """wrapper에서 HWND를 추출합니다."""
+        for accessor in (
+            lambda: wrapper.handle,
+            lambda: wrapper.element_info.handle,
+        ):
+            try:
+                handle = accessor()
+                if handle:
+                    return int(handle)
+            except Exception:
+                continue
+        return None
+
+    def _is_wrapper_foreground(self, wrapper: Any) -> bool:
+        """대상 윈도우(또는 동일 프로세스)가 foreground인지 확인합니다."""
+        try:
+            import win32gui
+            import win32process
+
+            fg_hwnd = win32gui.GetForegroundWindow()
+            if not fg_hwnd:
+                return False
+
+            wrapper_hwnd = self._get_wrapper_handle(wrapper)
+            if wrapper_hwnd and fg_hwnd == wrapper_hwnd:
+                return True
+
+            _, fg_pid = win32process.GetWindowThreadProcessId(fg_hwnd)
+            target_pid = getattr(self._session.app, "process", None)
+            return bool(target_pid and fg_pid == target_pid)
+        except Exception as e:
+            logger.debug("foreground 확인 실패: %s", e)
+            return False
+
+    def _activate_window(self, wrapper: Any, *, max_attempts: int = 3) -> bool:
+        """윈도우를 앞으로 가져오고 foreground 전환을 재시도합니다."""
+        after_focus_delay = self._session.config.get("timeouts", {}).get("after_focus_delay", 0.5)
+        ui_delay = self._session.config.get("timeouts", {}).get("ui_delay", 0.5)
+
+        for attempt in range(1, max_attempts + 1):
+            is_minimized = self._safe_call(lambda: wrapper.is_minimized(), False)
+            if is_minimized:
+                logger.info("윈도우가 최소화되어 있어 복구를 시도합니다.")
+                self._safe_call(wrapper.restore, None)
+                time.sleep(ui_delay)
+
+            try:
+                wrapper.set_focus()
+            except Exception as e:
+                logger.warning("set_focus 실패 (attempt=%d): %s", attempt, e)
+                try:
+                    wrapper.maximize()
+                    wrapper.restore()
+                except Exception:
+                    pass
+
+            time.sleep(after_focus_delay)
+
+            if self._is_wrapper_foreground(wrapper):
+                self._session.cached_window = wrapper
+                return True
+
+            logger.info(
+                "foreground 전환 미확인 (attempt=%d/%d). title=%s",
+                attempt,
+                max_attempts,
+                self._safe_call(wrapper.window_text, ""),
+            )
+
+        if not self._safe_call(lambda: wrapper.is_visible(), False):
+            logger.warning("포커스 시도 후에도 윈도우가 가시적이지 않습니다.")
+            self._safe_call(wrapper.restore, None)
+
+        self._session.cached_window = wrapper
+        return self._is_wrapper_foreground(wrapper)
+
+    def _iter_process_top_windows(self) -> list[Any]:
+        """연결된 프로세스의 top-level 윈도우 목록을 반환합니다."""
+        if not self._session.is_connected:
+            return []
+
+        windows: list[Any] = []
+        for w in self._session.app.windows():
+            wrapper = self._safe_call(lambda: w.wrapper_object(), None) or w
+            if not self._verify_process_path(wrapper):
+                continue
+            if not self._safe_call(lambda: wrapper.exists(), False):
+                continue
+            windows.append(wrapper)
+        return windows
+
     def _is_keyword_match(
         self,
         candidate_values: List[str],
@@ -491,7 +561,13 @@ class AppUIAction:
             deduped.append(normalized)
         return deduped
 
-    def _list_candidate_child_windows(self, root: Any, *, include_descendants: bool = False) -> list[Any]:
+    def _list_candidate_child_windows(
+        self,
+        root: Any,
+        *,
+        include_descendants: bool = False,
+        require_visible: bool = True,
+    ) -> list[Any]:
         """속성 클릭 시 탐색 루트로 사용할 child window 후보를 반환합니다."""
         candidates: list[Any] = []
         raw_children = self._safe_call(root.children, []) or []
@@ -504,7 +580,7 @@ class AppUIAction:
             wrapper = self._safe_call(lambda: child.wrapper_object(), None) or child
             if not self._safe_call(lambda: wrapper.exists(), False):
                 continue
-            if not self._safe_call(lambda: wrapper.is_visible(), False):
+            if require_visible and not self._safe_call(lambda: wrapper.is_visible(), False):
                 continue
 
             node_id = str(self._safe_call(lambda: wrapper.element_info.handle, None) or "")
@@ -542,6 +618,8 @@ class AppUIAction:
         child_window_auto_id: Optional[str],
         child_window_match_mode: str,
         case_sensitive: bool,
+        top_window_override: Optional[Any] = None,
+        allow_invisible_children: bool = False,
     ) -> tuple[Optional[Any], str]:
         """
         click_app_by_attr 탐색 루트를 결정합니다.
@@ -549,9 +627,7 @@ class AppUIAction:
         - child: top의 child window에서 탐색
         - auto: child title이 있으면 child 우선, 없으면 top 사용
         """
-        top_window = self._session.cached_window
-        if top_window is not None and not self._safe_call(lambda: top_window.exists(), False):
-            top_window = None
+        top_window = top_window_override
         if top_window is None:
             top_window = self._pick_target_window() or self._session.get_top_window()
         if top_window is None:
@@ -560,7 +636,10 @@ class AppUIAction:
         target_mode = (window_target or "auto").strip().lower()
         child_title = (child_window_title or "").strip()
         child_auto_id = (child_window_auto_id or "").strip()
-        children = self._list_candidate_child_windows(top_window)
+        children = self._list_candidate_child_windows(
+            top_window,
+            require_visible=not allow_invisible_children,
+        )
 
         def child_matches_filters(child: Any) -> bool:
             title_ok = True
@@ -627,9 +706,46 @@ class AppUIAction:
                 if child_matches_filters(child):
                     return child
 
-            descendants = self._list_candidate_child_windows(top_window, include_descendants=True)
+            descendants = self._list_candidate_child_windows(
+                top_window,
+                include_descendants=True,
+                require_visible=not allow_invisible_children,
+            )
             for child in descendants:
                 if child_matches_filters(child):
+                    return child
+            return None
+
+        def pick_child_with_visibility_fallback() -> Optional[Any]:
+            matched = pick_child_by_title()
+            if matched is not None:
+                return matched
+            if allow_invisible_children:
+                return None
+
+            invisible_children = self._list_candidate_child_windows(
+                top_window,
+                require_visible=False,
+            )
+            for child in invisible_children:
+                if child_matches_filters(child):
+                    logger.info(
+                        "가시성 필터 없이 child window 매칭: title=%s",
+                        self._safe_call(child.window_text, ""),
+                    )
+                    return child
+
+            invisible_descendants = self._list_candidate_child_windows(
+                top_window,
+                include_descendants=True,
+                require_visible=False,
+            )
+            for child in invisible_descendants:
+                if child_matches_filters(child):
+                    logger.info(
+                        "가시성 필터 없이 descendant child 매칭: title=%s",
+                        self._safe_call(child.window_text, ""),
+                    )
                     return child
             return None
 
@@ -637,7 +753,7 @@ class AppUIAction:
             return top_window, "top"
 
         if target_mode == "child":
-            matched_child = pick_child_by_title()
+            matched_child = pick_child_with_visibility_fallback()
             if matched_child is not None:
                 return matched_child, f"child(title={child_title}, auto_id={child_auto_id or '-'})"
             if child_title or child_auto_id:
@@ -648,7 +764,7 @@ class AppUIAction:
             return None, "child_not_found(no_children)"
 
         # auto mode
-        matched_child = pick_child_by_title()
+        matched_child = pick_child_with_visibility_fallback()
         if matched_child is not None:
             return matched_child, f"auto->child(title={child_title}, auto_id={child_auto_id or '-'})"
         if child_title or child_auto_id:
@@ -1279,10 +1395,6 @@ class AppUIAction:
         속성 기반으로 특정 요소를 찾아 클릭합니다.
         auto_id/control_type/title/legacy_value 중 하나 이상을 입력받아 대상을 식별합니다.
         """
-        focus_result = self.ensure_focus()
-        if not focus_result.is_success:
-            return AppUIActionResult(result="error", message=focus_result.message)
-
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
             return AppUIActionResult(
@@ -1327,18 +1439,30 @@ class AppUIAction:
             actual_timeout = timeout if timeout is not None else 5.0
             start = time.monotonic()
             target = None
+            search_root = None
             search_root_info = "none"
             while True:
-                search_root, search_root_info = self._resolve_attr_search_root(
-                    window_target=window_target,
-                    child_window_title=child_window_title,
-                    child_window_auto_id=child_window_auto_id,
-                    child_window_match_mode=child_window_match_mode,
-                    case_sensitive=case_sensitive,
-                )
-                if search_root is None:
-                    target = None
-                else:
+                focus_result = self.ensure_focus(invalidate_cache=True)
+                if not focus_result.is_success:
+                    return AppUIActionResult(result="error", message=focus_result.message)
+
+                top_windows = self._iter_process_top_windows()
+                if not top_windows:
+                    picked = self._pick_target_window() or self._session.get_top_window()
+                    top_windows = [picked] if picked is not None else []
+
+                for top_window in top_windows:
+                    search_root, search_root_info = self._resolve_attr_search_root(
+                        window_target=window_target,
+                        child_window_title=child_window_title,
+                        child_window_auto_id=child_window_auto_id,
+                        child_window_match_mode=child_window_match_mode,
+                        case_sensitive=case_sensitive,
+                        top_window_override=top_window,
+                    )
+                    if search_root is None:
+                        continue
+
                     target = self._find_first_matching_node(
                         root=search_root,
                         auto_id=auto_id,
@@ -1349,6 +1473,8 @@ class AppUIAction:
                         legacy_match_mode=legacy_match_mode,
                         case_sensitive=case_sensitive,
                     )
+                    if target is not None:
+                        break
 
                 if target is not None:
                     break
@@ -1374,6 +1500,10 @@ class AppUIAction:
                     ),
                 )
             
+            if search_root is not None:
+                self._safe_call(search_root.set_focus, None)
+                time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2))
+
             # 하이라이트 표시
             if draw_outline:
                 try:
