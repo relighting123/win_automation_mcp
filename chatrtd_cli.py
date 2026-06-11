@@ -355,7 +355,15 @@ class ChatRTDCLI:
         self.mcp_url: str = settings["mcp_url"]
         self.tools: list  = []
         self.messages: list = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self._automation_mcp = None
         self._init_llm_client()
+
+    def _get_automation_mcp(self):
+        """automation graph 실행용 MCP 클라이언트를 재사용합니다."""
+        if self._automation_mcp is None:
+            from core.mcp_client import MCPClient
+            self._automation_mcp = MCPClient(self.mcp_url)
+        return self._automation_mcp
 
     def _init_llm_client(self) -> None:
         self.model  = self.settings["model"]
