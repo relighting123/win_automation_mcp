@@ -12,4 +12,8 @@ description = "chatRTD — Windows Automation Scheduler CLI"
 chatRTD = "chatrtd_cli:main"
 
 [tool.setuptools]
-py-modules = ["chatrtd_cli"]
+py-modules = ["chatrtd_cli", "mcp_client", "mcp_server"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "graph*", "skills*", "tools*", "actions*", "errors*"]

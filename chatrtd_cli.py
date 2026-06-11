@@ -655,7 +655,7 @@ class ChatRTDCLI:
 
         try:
             from graph.automation_graph import run_automation
-            from mcp_client import MCPClient
+            from core.mcp_client import MCPClient
         except ImportError as e:
             c.print(f"  [err]✗  import error:[/err] {e}\n")
             return
