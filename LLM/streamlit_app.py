@@ -72,7 +72,7 @@ st.sidebar.markdown("""
 ### How to use
 1. MCP 서버를 실행하세요 (`python mcp_server.py`)
 2. 사내 OpenAI 호환 API 설정(URL, Key, Model)을 입력하세요.
-3. 원하는 작업을 입력하세요. (예: '메모장에 오늘 날짜 써줘')
+3. 원하는 작업을 입력하세요. (예: '스케줄링 업무 요청, 문의 해주세요')
 """)
 
 @st.cache_data(ttl=600)  # 10분간 캐시 유지

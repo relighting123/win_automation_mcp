@@ -384,7 +384,7 @@ class ChatRTDCLI:
         body = Text()
         body.append("▌ ", style=f"bold {_C['secondary']}")
         body.append("무엇이든 지시하세요… ", style=_C["muted"])
-        body.append('"메모장에 hello 써줘"', style=_C["border"])
+        body.append('"스케줄링 업무 요청, 문의 해주세요"', style=_C["border"])
         body.append("\n  ", style="")
         body.append("Schedule", style=f"bold {_C['secondary']}")
         body.append("  ", style="")
