@@ -242,14 +242,14 @@ def main() -> int:
         help="top window 목록만 출력하고 종료",
     )
     parser.add_argument(
-        "--print-all-descendants",
+        "--no-print-descendants",
         action="store_true",
-        help="선택 top window의 root+descendants 전체를 콘솔에 출력",
+        help="descendants dump 콘솔 출력 생략 (기본: 전체 출력)",
     )
     parser.add_argument(
-        "--include-root",
+        "--exclude-root",
         action="store_true",
-        help="--print-all-descendants 시 top window(root)도 목록에 포함",
+        help="descendants dump 시 top window(root) 제외 (기본: root 포함)",
     )
     parser.add_argument(
         "--json-out",
@@ -316,14 +316,15 @@ def main() -> int:
         wrapper = _to_wrapper(target_window)
         print(f"선택된 window: {_format_window_summary(wrapper, -1)}")
 
-        records = collect_all_descendant_records(target_window, include_root=args.include_root)
-        if args.print_all_descendants or args.json_out:
+        include_root = not args.exclude_root
+        records = collect_all_descendant_records(target_window, include_root=include_root)
+        if not args.no_print_descendants:
             print_descendant_records(records)
-            if args.json_out:
-                out_path = Path(args.json_out)
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-                print(f"JSON 저장: {out_path}")
+        if args.json_out:
+            out_path = Path(args.json_out)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"JSON 저장: {out_path}")
 
         if args.dump_only:
             return 0
