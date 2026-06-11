@@ -31,6 +31,8 @@ TARGET_TYPES = {
     "treeitem",
 }
 
+CHILD_SEARCH_ROOT_TYPES = {"window", "pane", "document", "group", "custom", "dialog"}
+
 
 def _to_wrapper(window_spec: Any) -> Any:
     if hasattr(window_spec, "wrapper_object"):
@@ -79,6 +81,59 @@ def _format_window_summary(wrapper: Any, index: int) -> str:
     )
 
 
+def _node_identity(node: Any) -> str:
+    """중복 제거용 노드 식별자."""
+    runtime_id = _safe_call(lambda: tuple(node.element_info.runtime_id or ()), None)
+    if runtime_id:
+        return f"runtime:{runtime_id}"
+    handle = _safe_call(lambda: node.element_info.handle, None) or _safe_call(lambda: node.handle, None)
+    if handle:
+        return f"hwnd:{handle}"
+    return f"obj:{id(node)}"
+
+
+def _list_child_search_roots(wrapper: Any) -> List[Any]:
+    """
+    Inspect에서 보이는 Find 같은 child window를 별도 search root로 수집합니다.
+    click_app_by_attr의 child window 탐색과 동일하게 visible 필터는 쓰지 않습니다.
+    """
+    candidates: List[Any] = []
+    raw_nodes = list(_safe_call(lambda: wrapper.children(), []) or [])
+    raw_nodes.extend(_safe_call(lambda: wrapper.descendants(), []) or [])
+
+    seen_ids: set[str] = set()
+    for child in raw_nodes:
+        node = _to_wrapper(child)
+        if not _safe_call(lambda: node.exists(), False):
+            continue
+
+        node_id = _node_identity(node)
+        if node_id in seen_ids:
+            continue
+
+        uia_type = _get_uia_control_type(node).lower()
+        if uia_type and uia_type not in CHILD_SEARCH_ROOT_TYPES:
+            continue
+
+        seen_ids.add(node_id)
+        candidates.append(node)
+    return candidates
+
+
+def _search_root_label(wrapper: Any, *, kind: str, index: int = 0) -> str:
+    title = _get_window_text(wrapper) or "-"
+    auto_id = _get_auto_id(wrapper) or "-"
+    return f"{kind}[{index}](title={title}, auto_id={auto_id})"
+
+
+def iter_search_roots(top_wrapper: Any) -> List[tuple[str, Any]]:
+    """top + child window(Find 등) 각각을 search root로 반환합니다."""
+    roots: List[tuple[str, Any]] = [(_search_root_label(top_wrapper, kind="top"), top_wrapper)]
+    for index, child in enumerate(_list_child_search_roots(top_wrapper)):
+        roots.append((_search_root_label(child, kind="child", index=index), child))
+    return roots
+
+
 def iter_search_nodes(wrapper: Any, *, include_root: bool = True) -> List[Any]:
     """
     click_app_by_attr와 동일하게 search_root + descendants() 노드를 반환합니다.
@@ -91,9 +146,10 @@ def iter_search_nodes(wrapper: Any, *, include_root: bool = True) -> List[Any]:
     return nodes
 
 
-def node_to_record(wrapper: Any, *, index: int) -> Dict[str, Any]:
+def node_to_record(wrapper: Any, *, index: int, search_root: str = "top") -> Dict[str, Any]:
     return {
         "index": index,
+        "search_root": search_root,
         "title": _get_window_text(wrapper),
         "auto_id": _get_auto_id(wrapper),
         "control_id": _get_control_id(wrapper),
@@ -103,10 +159,27 @@ def node_to_record(wrapper: Any, *, index: int) -> Dict[str, Any]:
 
 
 def collect_all_descendant_records(window_spec: Any, *, include_root: bool = True) -> List[Dict[str, Any]]:
-    """선택한 top window의 root(옵션) + descendants 전체를 레코드로 반환합니다."""
-    wrapper = _to_wrapper(window_spec)
-    nodes = iter_search_nodes(wrapper, include_root=include_root)
-    return [node_to_record(node, index=i) for i, node in enumerate(nodes)]
+    """
+    선택한 top window와 그 아래 child window(Find 등) 각각에서
+    root+descendants 노드를 수집합니다. Inspect 트리와의 차이를 줄이기 위함입니다.
+    """
+    top_wrapper = _to_wrapper(window_spec)
+    records: List[Dict[str, Any]] = []
+    seen_nodes: set[str] = set()
+    global_index = 0
+
+    for search_root, root_wrapper in iter_search_roots(top_wrapper):
+        nodes = iter_search_nodes(root_wrapper, include_root=include_root)
+        logger.info("search_root=%s nodes=%d", search_root, len(nodes))
+        for node in nodes:
+            node_id = _node_identity(node)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
+            records.append(node_to_record(node, index=global_index, search_root=search_root))
+            global_index += 1
+
+    return records
 
 
 def print_descendant_records(records: List[Dict[str, Any]], *, window_label: str = "") -> None:
@@ -114,7 +187,8 @@ def print_descendant_records(records: List[Dict[str, Any]], *, window_label: str
     print(f"{prefix}descendants dump: total_nodes={len(records)}")
     for record in records:
         print(
-            f"  [{record['index']}] title={record['title'] or '-'}, "
+            f"  [{record['index']}] search_root={record.get('search_root', '-')}, "
+            f"title={record['title'] or '-'}, "
             f"auto_id={record['auto_id'] or '-'}, "
             f"control_id={record['control_id'] or '-'}, "
             f"uia_type={record['uia_control_type'] or '-'}, "
@@ -156,40 +230,47 @@ def extract_elements(
     include_without_auto_id: bool = False,
     all_types: bool = False,
 ) -> Dict[str, Any]:
-    """주요 UI 요소 추출 (descendants 순회)"""
-    wrapper = _to_wrapper(window_spec)
+    """top 및 child search root별 descendants에서 주요 UI 요소를 추출합니다."""
+    top_wrapper = _to_wrapper(window_spec)
     elements: Dict[str, Any] = {}
+    seen_nodes: set[str] = set()
 
-    descendants = _safe_call(wrapper.descendants, []) or []
-    logger.info("descendants count (wrapper.descendants only): %d", len(descendants))
-    logger.info("search nodes count (root+descendants): %d", len(iter_search_nodes(wrapper)))
+    for search_root, root_wrapper in iter_search_roots(top_wrapper):
+        descendants = _safe_call(root_wrapper.descendants, []) or []
+        logger.info("extract search_root=%s descendants=%d", search_root, len(descendants))
 
-    for child in descendants:
-        uia_type = _get_uia_control_type(child)
-        auto_id = _get_auto_id(child)
-        control_id = _get_control_id(child)
-        name = _get_window_text(child)
+        for child in descendants:
+            node_id = _node_identity(child)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
 
-        if not all_types and uia_type.lower() not in TARGET_TYPES:
-            continue
-        if not auto_id and not control_id and not include_without_auto_id:
-            continue
+            uia_type = _get_uia_control_type(child)
+            auto_id = _get_auto_id(child)
+            control_id = _get_control_id(child)
+            name = _get_window_text(child)
 
-        element_key = (
-            auto_id
-            or (f"control_id_{control_id}" if control_id else "")
-            or f"{uia_type.lower()}_{name or len(elements)}"
-        ).lower().replace(" ", "_")
-        if element_key in elements:
-            element_key = f"{element_key}_{len(elements)}"
+            if not all_types and uia_type.lower() not in TARGET_TYPES:
+                continue
+            if not auto_id and not control_id and not include_without_auto_id:
+                continue
 
-        elements[element_key] = {
-            "auto_id": auto_id,
-            "control_id": control_id,
-            "title": name,
-            "uia_control_type": uia_type,
-            "description": f"{name} ({uia_type})" if name else uia_type,
-        }
+            element_key = (
+                auto_id
+                or (f"control_id_{control_id}" if control_id else "")
+                or f"{uia_type.lower()}_{name or len(elements)}"
+            ).lower().replace(" ", "_")
+            if element_key in elements:
+                element_key = f"{element_key}_{len(elements)}"
+
+            elements[element_key] = {
+                "auto_id": auto_id,
+                "control_id": control_id,
+                "title": name,
+                "uia_control_type": uia_type,
+                "search_root": search_root,
+                "description": f"{name} ({uia_type})" if name else uia_type,
+            }
 
     return elements
 
