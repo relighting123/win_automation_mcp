@@ -75,8 +75,8 @@ class AppUIAction:
         """
         try:
             if not self._session.is_connected:
-                logger.info("세션이 연결되지 않아 연결을 시도합니다.")
-                self._session.connect()
+                logger.info("세션이 연결되지 않아 애플리케이션 실행/연결을 시도합니다.")
+                self._launcher.ensure_running()
             
             if not self._session.is_connected:
                 return None
@@ -260,9 +260,9 @@ class AppUIAction:
             if fg_hwnd:
                 _, fg_pid = win32process.GetWindowThreadProcessId(fg_hwnd)
                 
-                # 세션 연결 시도 (아직 안 되어 있다면)
+                # 세션 연결 시도 (아직 안 되어 있다면, 없으면 실행)
                 if not self._session.is_connected:
-                    self._safe_call(self._session.connect, None)
+                    self._safe_call(self._launcher.ensure_running, None)
                 
                 if self._session.is_connected:
                     target_pid = getattr(self._session.app, 'process', None)
@@ -289,7 +289,7 @@ class AppUIAction:
 
         try:
             if not self._session.is_connected:
-                self._session.connect()
+                self._launcher.ensure_running()
             
             app_config = self._session.config.get("application", {})
             target_proc_name = app_config.get("process_name", "").lower()
