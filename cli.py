@@ -71,7 +71,7 @@ SYSTEM_PROMPT = (
 
 # ── Help text ─────────────────────────────────────────────────────────────────
 HELP_TEXT = f"""
-[primary]chatRTD[/primary] [muted]Automation Scheduler v{VERSION}[/muted]
+[secondary]chat[/secondary][primary]RTD[/primary] [muted]Automation Scheduler v{VERSION}[/muted]
 
 [secondary]Commands[/secondary]
   [text]/help[/text]              이 도움말
@@ -300,7 +300,7 @@ class ChatRTDCLI:
         model_display = f"{active_name} / {self.model}" if active_name else self.model
 
         c.print()
-        c.print(f"  [primary bold]chatRTD[/primary bold]  [muted]Automation Scheduler  v{VERSION}[/muted]")
+        c.print(f"  [secondary bold]chat[/secondary bold][primary bold]RTD[/primary bold]  [muted]Automation Scheduler  v{VERSION}[/muted]")
         c.print(f"  [border]{'─' * 46}[/border]")
         c.print(f"  [muted]server[/muted]  [text]{self.mcp_url}[/text]")
         c.print(f"  [muted]model [/muted]  [secondary]{model_display}[/secondary]")
@@ -397,7 +397,7 @@ class ChatRTDCLI:
 
                 content = (msg.content or "").strip()
                 c.print()
-                c.print(f"  [primary]chatRTD[/primary]  [border]{'─' * 46}[/border]")
+                c.print(f"  [secondary]chat[/secondary][primary]RTD[/primary]  [border]{'─' * 46}[/border]")
                 c.print(f"  {content}")
                 c.print()
 
@@ -565,7 +565,7 @@ class ChatRTDCLI:
         report  = result.get("report", "")
         details = result.get("report_details", {})
 
-        c.print(f"  [primary]chatRTD[/primary]  [border]{'─' * 46}[/border]")
+        c.print(f"  [secondary]chat[/secondary][primary]RTD[/primary]  [border]{'─' * 46}[/border]")
         c.print(f"  {report}")
 
         if details:
