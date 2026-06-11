@@ -5,9 +5,12 @@
 active_window:
   window:
     title: "Target Application"
-    control_type: "Window"
+    control_id: "0"
+    auto_id: "MainWindow"
+    uia_control_type: "Window"
   elements:
     submit_button:
       auto_id: "btnSubmit"
-      control_type: "Button"
+      control_id: "1001"
+      uia_control_type: "Button"
       description: "예시 제출 버튼"
