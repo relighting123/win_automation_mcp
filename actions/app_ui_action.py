@@ -361,11 +361,9 @@ class AppUIAction:
         auto_id = str(self._safe_call(lambda: wrapper.element_info.automation_id, "") or "").strip()
         control_type = str(self._safe_call(lambda: wrapper.element_info.control_type, "") or "").strip()
         class_name = str(self._safe_call(lambda: wrapper.element_info.class_name, "") or "").strip()
-        parts = [f"title={title or '-'}"]
+        parts = [f"title={title or '-'}", f"auto_id={auto_id or '-'}"]
         if len(title_candidates) > 1:
             parts.append(f"alt_titles={title_candidates[1:3]}")
-        if auto_id:
-            parts.append(f"auto_id={auto_id}")
         if control_type:
             parts.append(f"type={control_type}")
         if class_name:
