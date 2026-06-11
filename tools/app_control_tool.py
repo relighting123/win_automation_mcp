@@ -172,6 +172,7 @@ def click_app_by_attr(
     case_sensitive: bool = False,
     window_target: str = "auto",
     child_window_title: Optional[str] = None,
+    child_window_auto_id: Optional[str] = None,
     child_window_match_mode: str = "contains",
     button: str = "left",
     clicks: int = 1,
@@ -195,11 +196,21 @@ def click_app_by_attr(
       - child: child 윈도우 기준 탐색
     child_window_title:
       - window_target=child 또는 auto에서 child 윈도우 제목 필터
+    child_window_auto_id:
+      - child 윈도우 AutomationId 필터 (title과 함께 사용 가능)
     child_window_match_mode:
       - exact: child_window_title 완전 일치
       - contains: child_window_title 포함 일치
     draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
     """
+    logger.info(
+        "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+        auto_id,
+        title,
+        child_window_title,
+        child_window_auto_id,
+        window_target,
+    )
     action = get_app_ui_action()
 
     result = action.click_element_by_attr(
@@ -212,6 +223,7 @@ def click_app_by_attr(
         case_sensitive=case_sensitive,
         window_target=window_target,
         child_window_title=child_window_title,
+        child_window_auto_id=child_window_auto_id,
         child_window_match_mode=child_window_match_mode,
         button=button,
         clicks=clicks,
@@ -220,7 +232,14 @@ def click_app_by_attr(
         draw_outline=draw_outline,
         outline_colour=outline_colour
     )
-    return json.dumps(result.to_dict(), ensure_ascii=False)
+    payload = result.to_dict()
+    logger.info(
+        "[Tool] click_app_by_attr 결과: success=%s, result=%s, message=%s",
+        payload.get("is_success"),
+        payload.get("result"),
+        payload.get("message"),
+    )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def highlight_app_by_attr(

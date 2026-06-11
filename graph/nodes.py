@@ -476,8 +476,20 @@ class GraphNodes:
         current_skill_id = state.skill_ids[state.current_index]
         
         for call in state.enriched_plan:
-            logger.info(f"[Run] {call.tool} 실행 중... (Args: {call.args})")
+            logger.info("[Run] %s 실행 시작 (args=%s)", call.tool, call.args)
             out = await self.mcp.call_tool(call.tool, call.args)
+            decoded = self._decode_tool_output(out)
+            if self._is_failed_output(decoded):
+                reason = ""
+                if isinstance(decoded, dict):
+                    reason = (
+                        str(decoded.get("message", "")).strip()
+                        or str(decoded.get("error", "")).strip()
+                        or str(decoded.get("result", "")).strip()
+                    )
+                logger.warning("[Run] %s 실패: %s", call.tool, reason or decoded)
+            else:
+                logger.info("[Run] %s 성공", call.tool)
             results.append({
                 "skill": current_skill_id,
                 "tool": call.tool, 
