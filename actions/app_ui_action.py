@@ -642,6 +642,33 @@ class AppUIAction:
             summaries.append(f"{label} [type={control_type}, auto_id={auto_id or '-'}]")
         return summaries
 
+    def _matches_child_window_spec(
+        self,
+        node: Any,
+        *,
+        child_title: str,
+        child_auto_id: str,
+        child_window_match_mode: str,
+        case_sensitive: bool,
+    ) -> bool:
+        """노드가 child_window_title/auto_id 조건과 일치하는지 확인합니다."""
+        title_ok = True
+        auto_id_ok = True
+        if child_title:
+            title_ok = any(
+                self._is_attr_match(
+                    actual=candidate_title,
+                    expected=child_title,
+                    match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                )
+                for candidate_title in self._get_node_title_candidates(node)
+            )
+        if child_auto_id:
+            node_auto_id = str(self._safe_call(lambda: node.element_info.automation_id, "") or "")
+            auto_id_ok = node_auto_id == child_auto_id
+        return title_ok and auto_id_ok
+
     def _resolve_attr_search_root(
         self,
         *,
@@ -679,22 +706,30 @@ class AppUIAction:
         )
 
         def child_matches_filters(child: Any) -> bool:
-            title_ok = True
-            auto_id_ok = True
-            if child_title:
-                title_ok = any(
-                    self._is_attr_match(
-                        actual=candidate_title,
-                        expected=child_title,
-                        match_mode=child_window_match_mode,
-                        case_sensitive=case_sensitive,
-                    )
-                    for candidate_title in self._get_node_title_candidates(child)
+            return self._matches_child_window_spec(
+                child,
+                child_title=child_title,
+                child_auto_id=child_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            )
+
+        if target_mode in {"child", "auto"} and (child_title or child_auto_id):
+            if self._matches_child_window_spec(
+                top_window,
+                child_title=child_title,
+                child_auto_id=child_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                logger.info(
+                    "[click_app_by_attr] top window가 child_window_title과 일치하여 child 탐색을 건너뜁니다: %s",
+                    self._format_window_label(top_window),
                 )
-            if child_auto_id:
-                node_auto_id = str(self._safe_call(lambda: child.element_info.automation_id, "") or "")
-                auto_id_ok = node_auto_id == child_auto_id
-            return title_ok and auto_id_ok
+                return (
+                    top_window,
+                    f"top_as_child(title={child_title}, auto_id={child_auto_id or '-'})",
+                )
 
         def pick_child_by_direct_api() -> Optional[Any]:
             if not child_title and not child_auto_id:
