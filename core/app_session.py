@@ -212,13 +212,33 @@ class AppSession:
             return 3
         return int(val)
     
+    def _find_locator_in_tree(self, tree: Dict[str, Any], element_name: str) -> Optional[Dict[str, Any]]:
+        elements = tree.get("elements", {})
+        if element_name in elements:
+            return elements[element_name]
+
+        for child_tree in tree.get("child_windows", {}).values():
+            found = self._find_locator_in_tree(child_tree, element_name)
+            if found is not None:
+                return found
+        return None
+
+    def _list_locator_names_in_tree(self, tree: Dict[str, Any], *, prefix: str = "") -> list[str]:
+        names: list[str] = []
+        for key in tree.get("elements", {}):
+            names.append(f"{prefix}{key}" if prefix else key)
+        for child_key, child_tree in tree.get("child_windows", {}).items():
+            child_prefix = f"{child_key}." if not prefix else f"{prefix}{child_key}."
+            names.extend(self._list_locator_names_in_tree(child_tree, prefix=child_prefix))
+        return names
+
     def get_locator(self, window_name: str, element_name: str) -> Dict[str, Any]:
         """
         locator 정보 반환
         
         Args:
             window_name: 윈도우 이름 (예: "active_window")
-            element_name: 요소 이름 (예: "submit_button")
+            element_name: 요소 이름 (예: "submit_button", child 내부 요소도 이름으로 검색)
         
         Returns:
             locator 딕셔너리 (auto_id, control_type 등)
@@ -226,15 +246,14 @@ class AppSession:
         from errors.automation_error import ElementNotFoundError
         
         window_locators = self._locators.get(window_name, {})
-        elements = window_locators.get("elements", {})
-        
-        if element_name not in elements:
-            raise ElementNotFoundError(
-                element_name=f"{window_name}.{element_name}",
-                details={"available_elements": list(elements.keys())}
-            )
-        
-        return elements[element_name]
+        found = self._find_locator_in_tree(window_locators, element_name)
+        if found is not None:
+            return found
+
+        raise ElementNotFoundError(
+            element_name=f"{window_name}.{element_name}",
+            details={"available_elements": self._list_locator_names_in_tree(window_locators)},
+        )
     
     def get_window_locator(self, window_name: str) -> Dict[str, Any]:
         """
