@@ -113,7 +113,7 @@ SYSTEM_PROMPT = (
 
 # ── Help text ─────────────────────────────────────────────────────────────────
 HELP_TEXT = f"""
-[primary]chatRTD[/primary] [muted]Automation Scheduler v{VERSION}[/muted]
+[secondary]chat[/secondary][primary]RTD[/primary] [muted]Automation Scheduler v{VERSION}[/muted]
 
 [secondary]Commands[/secondary]
   [text]/help[/text]              이 도움말
@@ -371,9 +371,8 @@ class ChatRTDCLI:
         """openCODE-style embossed block wordmark (chat + RTD, split at letter boundary)."""
         logo = Text()
         for i, line in enumerate(_LOGO_ART):
-            tone = _C["logo_dim"] if i < 2 else _C["logo_mid"] if i < 4 else _C["logo_hi"]
-            logo.append(line[:_LOGO_SPLIT], style=tone)
-            logo.append(line[_LOGO_SPLIT:] + "\n", style=_C["secondary"] if i >= 3 else tone)
+            logo.append(line[:_LOGO_SPLIT], style=_C["primary"])
+            logo.append(line[_LOGO_SPLIT:] + "\n", style=_C["secondary"])
         return Align.center(logo)
 
     def _status_strip(self) -> Table:
@@ -515,7 +514,7 @@ class ChatRTDCLI:
 
                 content = (msg.content or "").strip()
                 c.print()
-                c.print(f"  [primary]chatRTD[/primary]  [border]{'─' * 46}[/border]")
+                c.print(f"  [secondary]chat[/secondary][primary]RTD[/primary]  [border]{'─' * 46}[/border]")
                 c.print(f"  {content}")
                 c.print()
 
@@ -683,7 +682,7 @@ class ChatRTDCLI:
         report  = result.get("report", "")
         details = result.get("report_details", {})
 
-        c.print(f"  [primary]chatRTD[/primary]  [border]{'─' * 46}[/border]")
+        c.print(f"  [secondary]chat[/secondary][primary]RTD[/primary]  [border]{'─' * 46}[/border]")
         c.print(f"  {report}")
 
         if details:
