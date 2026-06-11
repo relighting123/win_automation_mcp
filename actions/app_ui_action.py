@@ -342,6 +342,21 @@ class AppUIAction:
             logger.debug("대상 윈도우 선택 실패: %s", e)
             return None
 
+    def _format_window_label(self, wrapper: Any) -> str:
+        """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
+        title = str(self._safe_call(wrapper.window_text, "") or "").strip()
+        auto_id = str(self._safe_call(lambda: wrapper.element_info.automation_id, "") or "").strip()
+        control_type = str(self._safe_call(lambda: wrapper.element_info.control_type, "") or "").strip()
+        handle = self._get_wrapper_handle(wrapper)
+        parts = [f"title={title or '-'}"]
+        if auto_id:
+            parts.append(f"auto_id={auto_id}")
+        if control_type:
+            parts.append(f"type={control_type}")
+        if handle:
+            parts.append(f"hwnd={handle}")
+        return ", ".join(parts)
+
     def _get_wrapper_handle(self, wrapper: Any) -> Optional[int]:
         """wrapper에서 HWND를 추출합니다."""
         for accessor in (
@@ -632,6 +647,11 @@ class AppUIAction:
             top_window = self._pick_target_window() or self._session.get_top_window()
         if top_window is None:
             return None, "none"
+
+        logger.info(
+            "[click_app_by_attr] top window: %s",
+            self._format_window_label(top_window),
+        )
 
         target_mode = (window_target or "auto").strip().lower()
         child_title = (child_window_title or "").strip()
@@ -1441,6 +1461,7 @@ class AppUIAction:
             target = None
             search_root = None
             search_root_info = "none"
+            scanned_top_labels: list[str] = []
             while True:
                 focus_result = self.ensure_focus(invalidate_cache=True)
                 if not focus_result.is_success:
@@ -1451,7 +1472,19 @@ class AppUIAction:
                     picked = self._pick_target_window() or self._session.get_top_window()
                     top_windows = [picked] if picked is not None else []
 
+                top_labels = [self._format_window_label(w) for w in top_windows]
+                scanned_top_labels = top_labels
+                logger.info(
+                    "[click_app_by_attr] 순회 top window 목록 (%d개): %s",
+                    len(top_labels),
+                    top_labels,
+                )
+
                 for top_window in top_windows:
+                    logger.info(
+                        "[click_app_by_attr] top window 순회 시작: %s",
+                        self._format_window_label(top_window),
+                    )
                     search_root, search_root_info = self._resolve_attr_search_root(
                         window_target=window_target,
                         child_window_title=child_window_title,
@@ -1461,7 +1494,18 @@ class AppUIAction:
                         top_window_override=top_window,
                     )
                     if search_root is None:
+                        logger.info(
+                            "[click_app_by_attr] search_root 없음: top=%s, info=%s",
+                            self._format_window_label(top_window),
+                            search_root_info,
+                        )
                         continue
+
+                    logger.info(
+                        "[click_app_by_attr] search_root=%s (from top=%s)",
+                        search_root_info,
+                        self._format_window_label(top_window),
+                    )
 
                     target = self._find_first_matching_node(
                         root=search_root,
@@ -1484,7 +1528,8 @@ class AppUIAction:
 
             if target is None:
                 logger.warning(
-                    "[click_app_by_attr] 실패: search_root=%s, auto_id=%s, title=%s, child_window_title=%s",
+                    "[click_app_by_attr] 실패: top_windows=%s, search_root=%s, auto_id=%s, title=%s, child_window_title=%s",
+                    scanned_top_labels,
                     search_root_info,
                     auto_id,
                     title,
@@ -1496,7 +1541,8 @@ class AppUIAction:
                         "요소를 찾지 못했습니다: "
                         f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}, "
                         f"window_target={window_target}, child_window_title={child_window_title}, "
-                        f"child_window_auto_id={child_window_auto_id}, search_root={search_root_info}"
+                        f"child_window_auto_id={child_window_auto_id}, top_windows={scanned_top_labels}, "
+                        f"search_root={search_root_info}"
                     ),
                 )
             
