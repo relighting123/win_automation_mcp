@@ -154,6 +154,61 @@ class GraphNodes:
                 return True
         return False
 
+    def _apply_step_arg_constraints(
+        self,
+        step_args: Dict[str, Any],
+        arg_meta_map: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """스킬 메타데이터 기준으로 fixed/ai 인자를 정규화합니다."""
+        normalized = dict(step_args)
+        for arg_name, arg_meta in arg_meta_map.items():
+            if arg_meta.get("mode") == "fixed":
+                normalized[arg_name] = arg_meta.get("value")
+                continue
+
+            if arg_meta.get("mode") == "ai":
+                current_val = normalized.get(arg_name)
+                if current_val is None:
+                    normalized[arg_name] = arg_meta.get("value")
+
+                is_path_arg = any(k in arg_name.lower() for k in ["path", "file", "executable"])
+                if is_path_arg and ALLOWED_PATHS and normalized.get(arg_name) not in ALLOWED_PATHS:
+                    logger.warning(
+                        "가이드에 없는 경로 감지: '%s'. 기본값 '%s'로 대체합니다.",
+                        normalized.get(arg_name),
+                        arg_meta.get("value"),
+                    )
+                    normalized[arg_name] = arg_meta.get("value")
+        return normalized
+
+    def _build_calls_from_steps(
+        self,
+        steps_metadata: List[Dict[str, Any]],
+        llm_calls: Optional[List[ToolCall]] = None,
+    ) -> List[ToolCall]:
+        """skills.yaml에 정의된 모든 도구를 순서대로 실행하도록 호출 목록을 구성합니다."""
+        llm_pool = list(llm_calls or [])
+        final_calls: List[ToolCall] = []
+
+        for step in steps_metadata:
+            tool_name = step["tool"]
+            match_idx = next((idx for idx, call in enumerate(llm_pool) if call.tool == tool_name), None)
+            llm_call = llm_pool.pop(match_idx) if match_idx is not None else None
+
+            args: Dict[str, Any] = {}
+            if llm_call:
+                args.update(llm_call.args)
+
+            args = self._apply_step_arg_constraints(args, step.get("args", {}))
+            final_calls.append(ToolCall(tool=tool_name, args=args))
+
+        if llm_calls is not None and len(llm_calls) > len(final_calls):
+            skipped = [call.tool for call in llm_pool]
+            if skipped:
+                logger.warning("스킬 순서 밖의 LLM 도구 호출은 무시됩니다: %s", skipped)
+
+        return final_calls
+
     def _collect_execution_summary(self, history: List[Dict[str, Any]]) -> Dict[str, Any]:
         """실행 이력에서 성공/실패/스킵 정보를 집계합니다."""
         failed_steps: List[Dict[str, Any]] = []
@@ -390,40 +445,22 @@ class GraphNodes:
             "allowed_tool_names": json.dumps(tool_sequence, ensure_ascii=False),
             "tools_info": tools_info
         })
-        
-        # [Post-process] Fixed 값 강제 적용 및 AI 값 검증
-        final_calls = []
-        remaining_steps = list(steps_metadata)
 
-        for i, call in enumerate(enriched.calls):
-            # 도구 순서에 맞춰 메타데이터 적용 (수동/준자동 모드 대응)
-            # 동일한 도구가 여러 번 있을 경우 순차적으로 매칭하기 위해 매칭된 단계는 제외함
-            matching_idx = next((idx for idx, s in enumerate(remaining_steps) if s["tool"] == call.tool), None)
-            
-            if matching_idx is not None:
-                matching_step = remaining_steps.pop(matching_idx)
-                new_args = dict(call.args)
-                for arg_name, arg_meta in matching_step["args"].items():
-                    if arg_meta["mode"] == "fixed":
-                        new_args[arg_name] = arg_meta["value"]
-                    elif arg_meta["mode"] == "ai":
-                        # [검증] 가이드에 정의된 경로가 있는 경우, AI가 추출한 값이 목록에 있는지 확인
-                        current_val = new_args.get(arg_name)
-                        # 경로 관련 인자이고 허용 목록이 있는 경우 강제 검증
-                        is_path_arg = any(k in arg_name.lower() for k in ["path", "file", "executable"])
-                        if is_path_arg and ALLOWED_PATHS:
-                            if current_val not in ALLOWED_PATHS:
-                                logger.warning(f"가이드에 없는 경로 감지: '{current_val}'. 기본값 '{arg_meta['value']}'로 대체합니다.")
-                                new_args[arg_name] = arg_meta["value"]
-                call.args = new_args
-            final_calls.append(call)
-            
-        valid_calls = [call for call in final_calls if call.tool in tool_sequence]
-        if len(valid_calls) < len(enriched.calls):
+        llm_calls = [call for call in enriched.calls if call.tool in tool_sequence]
+        if len(llm_calls) < len(enriched.calls):
             removed = [call.tool for call in enriched.calls if call.tool not in tool_sequence]
             logger.warning(f"스킬 '{current_skill_id}'에 정의되지 않은 도구 호출이 제외되었습니다: {removed}")
 
-        return {"enriched_plan": valid_calls, "tool_sequence": tool_sequence}
+        final_calls = self._build_calls_from_steps(steps_metadata, llm_calls)
+        if len(llm_calls) < len(tool_sequence):
+            logger.warning(
+                "스킬 '%s': LLM이 %d개 도구만 반환해 YAML 정의 %d단계 전체를 보강합니다.",
+                current_skill_id,
+                len(llm_calls),
+                len(tool_sequence),
+            )
+
+        return {"enriched_plan": final_calls, "tool_sequence": tool_sequence}
 
     async def run(self, state: AgentState):
         """추출된 파라미터로 MCP 도구 순차 실행"""
