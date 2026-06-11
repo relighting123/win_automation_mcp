@@ -11,17 +11,49 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _load_skill_definitions(config_path: str = "config/skills.yaml") -> dict:
+    """config/skills.yaml + skills/*/skill.yaml 에서 스킬 목록을 수집합니다."""
+    skills: dict = {}
+
+    path = Path(config_path)
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+                skills.update(config.get("skills", {}))
+        except Exception as e:
+            logger.warning(f"Skill 설정 로드 실패 ({config_path}): {e}")
+
+    skills_dir = Path("skills")
+    if skills_dir.is_dir():
+        for folder in sorted(skills_dir.iterdir()):
+            if not folder.is_dir():
+                continue
+            yaml_path = folder / "skill.yaml"
+            if not yaml_path.exists():
+                continue
+            skill_id = folder.name
+            try:
+                with open(yaml_path, "r", encoding="utf-8") as f:
+                    folder_cfg = yaml.safe_load(f) or {}
+            except Exception as e:
+                logger.warning(f"스킬 YAML 로드 실패 ({yaml_path}): {e}")
+                continue
+
+            entry = skills.setdefault(skill_id, {})
+            entry.setdefault("description", folder_cfg.get("description", skill_id))
+
+    return skills
+
+
 def register_skill_tools(mcp: "FastMCP", config_path: str = "config/skills.yaml") -> None:
     """YAML 설정을 읽어 모든 스킬을 MCP Tool로 동적 등록"""
-    path = Path(config_path)
-    if not path.exists():
-        logger.warning(f"Skill 설정을 찾을 수 없어 등록을 건너뜁니다: {config_path}")
-        return
-
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-            skills = config.get("skills", {})
+        skills = _load_skill_definitions(config_path)
+        if not skills:
+            logger.warning("등록할 스킬이 없습니다.")
+            return
 
         for skill_id, skill_info in skills.items():
             description = skill_info.get("description", f"{skill_id} skill")

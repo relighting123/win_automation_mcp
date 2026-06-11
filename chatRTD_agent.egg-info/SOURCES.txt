@@ -1,0 +1,8 @@
+README.md
+chatrtd_cli.py
+pyproject.toml
+chatRTD_agent.egg-info/PKG-INFO
+chatRTD_agent.egg-info/SOURCES.txt
+chatRTD_agent.egg-info/dependency_links.txt
+chatRTD_agent.egg-info/entry_points.txt
+chatRTD_agent.egg-info/top_level.txt

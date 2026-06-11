@@ -107,7 +107,11 @@ skills:
         args:
           seconds: 1.0
 
-  # demo_full_flow_tools 및 demo_mixed_args는 각각 skills/ 폴더로 이동되었습니다.
+  # demo_full_flow_tools, demo_mixed_args, query_oracle_db 등은 skills/ 폴더에 정의됩니다.
+  # skills/<name>/skill.yaml 이 있으면 자동 등록됩니다.
+
+  query_oracle_db:
+    description: "Oracle DB에서 SELECT 쿼리를 실행하고 결과를 반환"
 
   analyze_copied_table:
     description: "Ctrl+C로 복사된 데이터를 DataFrame으로 변환해 분석 리포트에 반영"

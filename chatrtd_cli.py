@@ -14,10 +14,26 @@ from typing import Optional
 
 import requests
 from openai import OpenAI
+from rich.align import Align
 from rich.console import Console
+from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
+
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.formatted_text import ANSI
+
+    _HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    _HAS_PROMPT_TOOLKIT = False
+
+    class Completer:  # type: ignore[no-redef]
+        pass
+
+    Completion = PromptSession = ANSI = None  # type: ignore[misc, assignment]
 
 # ── Project root on sys.path ─────────────────────────────────────────────────
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -37,10 +53,36 @@ _C = {
     "text":      "#e0e0e0",   # light        — normal text
     "muted":     "#6a6a6a",   # mid-gray     — dim / labels
     "border":    "#4b4c5c",   # dark-gray    — borders / rules
+    "surface":   "#222228",   # input bar bg — opencode-style strip
+    "logo_dim":  "#3a3a3a",   # logo shadow
+    "logo_mid":  "#8a8a8a",   # logo mid-tone
+    "logo_hi":   "#d4d4d4",   # logo highlight
     "success":   "#7fd88f",   # green
     "error":     "#e06c75",   # red
     "warning":   "#f5a742",   # amber
 }
+
+_HEADER_W = 64
+
+_LOGO_CHAT = [
+    " ██████╗ ██╗  ██╗ █████╗ ████████╗",
+    " ██╔════╝ ██║  ██║██╔══██╗╚══██╔══╝",
+    " ██║      ███████║███████║   ██║   ",
+    " ██║      ██╔══██║██╔══██║   ██║   ",
+    " ╚██████╗ ██║  ██║██║  ██║   ██║   ",
+    "  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ",
+]
+_LOGO_RTD = [
+    " ██████╗ ████████╗ ██████╗ ",
+    " ██╔══██╗╚══██╔══╝██╔══██╗",
+    " ██████╔╝   ██║   ██║  ██║",
+    " ██╔══██╗   ██║   ██║  ██║",
+    " ██║  ██║   ██║   ██████╔╝",
+    " ╚═╝  ╚═╝   ╚═╝   ╚═════╝ ",
+]
+_LOGO_GAP = "   "
+_LOGO_SPLIT = len(_LOGO_CHAT[0]) + len(_LOGO_GAP)
+_LOGO_ART = [c + _LOGO_GAP + r for c, r in zip(_LOGO_CHAT, _LOGO_RTD)]
 
 _THEME = Theme({
     "primary":   _C["primary"],
@@ -55,7 +97,7 @@ _THEME = Theme({
 })
 
 # ANSI-styled input prompt (rich can't colour input() directly)
-_PROMPT = f"\033[38;2;250;178;131m>\033[0m "   # orange >
+_PROMPT = f"\033[38;2;92;156;245m▌\033[0m "   # blue bar — matches status strip
 
 # ── Config paths ──────────────────────────────────────────────────────────────
 CONFIG_DIR  = Path.home() / ".chatRTD"
@@ -99,6 +141,36 @@ HELP_TEXT = f"""
   [text]/config[/text]                   현재 설정 확인
   [text]/config set mcp-url <url>[/text] MCP 서버 URL 변경
 """
+
+_SLASH_COMMANDS: list[tuple[str, str]] = [
+    ("/help",           "이 도움말"),
+    ("/exit",           "종료"),
+    ("/quit",           "종료"),
+    ("/clear",          "대화 기록 초기화"),
+    ("/tools",          "사용 가능한 도구 목록"),
+    ("/skills",         "스킬 목록"),
+    ("/skill",          "스킬 직접 실행  (/skill <id>)"),
+    ("/models",         "등록된 모델 목록"),
+    ("/models add",     "모델 등록"),
+    ("/models select",  "활성 모델 전환"),
+    ("/models remove",  "모델 삭제"),
+    ("/analyze",        "자동화 실행 (semi 모드)"),
+    ("/analyze auto",   "auto 모드 — 스킬 자동 선택"),
+    ("/analyze semi",   "semi 모드 — 스킬 순서 고정"),
+    ("/analyze manual", "manual 모드 — 스킬 고정 실행"),
+    ("/config",         "현재 설정 확인"),
+    ("/config set",     "설정 변경  (/config set mcp-url <url>)"),
+]
+
+
+class _SlashCommandCompleter(Completer):
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+        for cmd, desc in _SLASH_COMMANDS:
+            if cmd.startswith(text):
+                yield Completion(cmd, start_position=-len(text), display_meta=desc)
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -292,22 +364,67 @@ class ChatRTDCLI:
             base_url = self.settings["base_url"],
         )
 
-    # ── Header ────────────────────────────────────────────────────────────────
+    # ── Header (openCODE-style) ───────────────────────────────────────────────
+
+    @staticmethod
+    def _block_logo() -> Align:
+        """openCODE-style embossed block wordmark (chat + RTD, split at letter boundary)."""
+        logo = Text()
+        for i, line in enumerate(_LOGO_ART):
+            logo.append(line[:_LOGO_SPLIT], style=_C["primary"])
+            logo.append(line[_LOGO_SPLIT:] + "\n", style=_C["secondary"])
+        return Align.center(logo)
+
+    def _status_strip(self) -> Table:
+        active_name   = self.settings.get("active_name", "")
+        model_label   = active_name or self.model.split("/")[-1]
+        tool_count    = len(self.tools)
+        mcp_host      = self.mcp_url.replace("http://", "").replace("https://", "")
+
+        body = Text()
+        body.append("▌ ", style=f"bold {_C['secondary']}")
+        body.append("무엇이든 지시하세요… ", style=_C["muted"])
+        body.append('"메모장에 hello 써줘"', style=_C["border"])
+        body.append("\n  ", style="")
+        body.append("Schedule", style=f"bold {_C['secondary']}")
+        body.append("  ", style="")
+        body.append(model_label, style=_C["text"])
+        body.append("  ", style="")
+        if tool_count:
+            body.append(f"{tool_count} tools", style=_C["muted"])
+            body.append("  ", style="")
+            body.append(mcp_host, style=_C["muted"])
+        else:
+            body.append("MCP offline", style=_C["warning"])
+        body.append("  ", style="")
+        body.append(f"v{VERSION}", style=_C["muted"])
+
+        strip = Table(show_header=False, box=None, pad_edge=False,
+                      padding=(1, 2), width=_HEADER_W, style=f"on {_C['surface']}")
+        strip.add_row(body)
+        return strip
+
+    @staticmethod
+    def _shortcut_footer() -> Text:
+        foot = Text()
+        foot.append("/help", style=_C["text"])
+        foot.append(" help     ", style=_C["muted"])
+        foot.append("/models", style=_C["text"])
+        foot.append(" models     ", style=_C["muted"])
+        foot.append("/tools", style=_C["text"])
+        foot.append(" tools     ", style=_C["muted"])
+        foot.append("ctrl+c", style=_C["text"])
+        foot.append(" exit", style=_C["muted"])
+        return foot
 
     def print_header(self) -> None:
         c = self.console
-        active_name   = self.settings.get("active_name", "")
-        model_display = f"{active_name} / {self.model}" if active_name else self.model
-
         c.print()
-        c.print(f"  [secondary bold]chat[/secondary bold][primary bold]RTD[/primary bold]  [muted]Automation Scheduler  v{VERSION}[/muted]")
-        c.print(f"  [border]{'─' * 46}[/border]")
-        c.print(f"  [muted]server[/muted]  [text]{self.mcp_url}[/text]")
-        c.print(f"  [muted]model [/muted]  [secondary]{model_display}[/secondary]")
-        if self.tools:
-            c.print(f"  [muted]tools [/muted]  [ok]{len(self.tools)} loaded[/ok]")
-        c.print(f"  [border]{'─' * 46}[/border]")
-        c.print(f"  [muted]/help  /models  /tools  Ctrl+C 종료[/muted]")
+        c.print(Align.center(self._block_logo()))
+        c.print()
+        c.print(Align.center(self._status_strip()))
+        c.print()
+        c.print(Align.right(self._shortcut_footer(), width=_HEADER_W))
         c.print()
 
     # ── Tool loading ──────────────────────────────────────────────────────────
@@ -691,6 +808,32 @@ class ChatRTDCLI:
 
     # ── REPL ──────────────────────────────────────────────────────────────────
 
+    def _print_slash_commands(self, prefix: str = "/") -> None:
+        needle = prefix if prefix.startswith("/") else f"/{prefix}"
+        matches = [(c, d) for c, d in _SLASH_COMMANDS if c.startswith(needle)]
+        if not matches:
+            self.console.print(f"  [muted]'{prefix}' 와 일치하는 명령이 없습니다.[/muted]\n")
+            return
+        t = Table(show_header=True, header_style=f"bold {_C['muted']}",
+                  border_style=_C["border"], show_edge=False, pad_edge=True)
+        t.add_column("command", style=_C["secondary"], min_width=22)
+        t.add_column("description", style=_C["text"])
+        for cmd, desc in matches:
+            t.add_row(cmd, desc)
+        self.console.print()
+        self.console.print(t)
+        self.console.print()
+
+    def _read_user_input(self) -> str:
+        if _HAS_PROMPT_TOOLKIT:
+            if not hasattr(self, "_prompt_session"):
+                self._prompt_session = PromptSession(
+                    completer=_SlashCommandCompleter(),
+                    complete_while_typing=True,
+                )
+            return self._prompt_session.prompt(ANSI(_PROMPT)).strip()
+        return input(_PROMPT).strip()
+
     def run(self, single_query: Optional[str] = None) -> None:
         self.load_tools()
         self.print_header()
@@ -701,12 +844,15 @@ class ChatRTDCLI:
 
         while True:
             try:
-                user_input = input(_PROMPT).strip()
+                user_input = self._read_user_input()
             except (KeyboardInterrupt, EOFError):
                 self.console.print(f"\n  [muted]bye.[/muted]\n")
                 break
 
             if not user_input:
+                continue
+            if user_input == "/":
+                self._print_slash_commands()
                 continue
             if user_input.startswith("/"):
                 self._handle_command(user_input)

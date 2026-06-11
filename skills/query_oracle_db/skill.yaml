@@ -1,0 +1,8 @@
+description: "Oracle DB에서 SELECT 쿼리를 실행하고 결과를 반환"
+tools:
+  - tool: query_oracle_db
+    args:
+      sql: { mode: "ai" }
+      db: { mode: "ai" }
+      max_rows: { mode: "ai", value: 100 }
+      bind_params: { mode: "ai" }
