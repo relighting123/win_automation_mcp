@@ -131,7 +131,7 @@ if __name__ == "__main__":
 
         mcp_client = MCPClient(base_url=mcp_settings["base_url"])
         my_skills = ["demo_mixed_args"]
-        my_query = "메모장에 안녕써줘"
+        my_query = "스케줄링 업무 요청, 문의 해주세요"
         
         report_payload = await run_automation(
             mcp=mcp_client,
