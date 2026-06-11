@@ -107,6 +107,12 @@ async def run_automation(
         analysis_settings=analysis_settings,
         reporting_settings=reporting_settings,
     )
+
+    # 그래프 중간 extract 단계에서 tools/list가 다시 나가지 않도록 선로드
+    if hasattr(mcp, "warmup") and callable(getattr(mcp, "warmup")):
+        await mcp.warmup()
+    elif hasattr(mcp, "list_tools") and callable(getattr(mcp, "list_tools")):
+        await mcp.list_tools()
     
     # 그래프 실행
     final = await agent.graph.ainvoke({

@@ -29,6 +29,14 @@ class GraphNodes:
         # 하위 호환: 기존 코드가 self.llm을 참조할 수 있도록 유지
         self.llm = self.execution_llm
         self._skills_cache: Optional[Dict[str, Any]] = None
+        self._mcp_tools_cache: Optional[List[Dict[str, Any]]] = None
+
+    async def _get_mcp_tools(self, refresh: bool = False) -> List[Dict[str, Any]]:
+        """MCP 도구 목록을 그래프 실행 동안 캐시합니다."""
+        if self._mcp_tools_cache is not None and not refresh:
+            return self._mcp_tools_cache
+        self._mcp_tools_cache = await self.mcp.list_tools(refresh=refresh)
+        return self._mcp_tools_cache
 
     def _get_skills_config(self) -> Dict[str, Any]:
         """skills.yaml 및 skills/ 디렉토리에서 스킬 설정들을 로드합니다."""
@@ -377,7 +385,7 @@ class GraphNodes:
 
         structured_llm = self.execution_llm.with_structured_output(ToolCalls, method="function_calling", strict=False)
         
-        all_tools = await self.mcp.list_tools()
+        all_tools = await self._get_mcp_tools()
         skill_tools = [t for t in all_tools if t['name'] in tool_sequence]
         tools_info = json.dumps(skill_tools, indent=2, ensure_ascii=False)
         

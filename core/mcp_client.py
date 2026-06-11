@@ -181,9 +181,11 @@ class MCPClient:
 
     async def list_tools(self, refresh: bool = False) -> List[Dict[str, Any]]:
         """사용 가능한 도구 목록 조회 (캐시 적용)."""
-        if self._tools_cache and not refresh:
+        if self._tools_cache is not None and not refresh:
+            logger.debug("[MCP] tools/list 캐시 사용 (%d개)", len(self._tools_cache))
             return self._tools_cache
 
+        logger.info("[MCP] tools/list 요청 (refresh=%s)", refresh)
         client = await self._get_client()
         try:
             result = await self._post_jsonrpc(client, method="tools/list")
@@ -194,6 +196,10 @@ class MCPClient:
         tools = result.get("tools", [])
         self._tools_cache = tools if isinstance(tools, list) else []
         return self._tools_cache
+
+    async def warmup(self) -> None:
+        """세션 초기화 및 도구 목록을 미리 로드합니다."""
+        await self.list_tools()
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """특정 도구 실행."""
