@@ -291,6 +291,12 @@ class AppSession:
         
         self._state = SessionState.CONNECTING
         logger.info("애플리케이션 연결 시도")
+
+        failure_details = {
+            "process": process,
+            "path": path or kwargs.get("connect_path") or self._config.get("application", {}).get("executable_path"),
+            "title": title,
+        }
         
         try:
             self._app = Application(backend=self._backend)
@@ -302,30 +308,38 @@ class AppSession:
                     self._state = SessionState.CONNECTED
                     self._bring_to_front()
                     return self
-                else:
-                    self.disconnect()
-                    logger.warning("연결된 프로세스의 실행 파일 경로가 설정과 일치하지 않아 연결을 해제합니다.")
-                
+
+                self.disconnect()
+                logger.warning(
+                    "연결된 프로세스의 실행 파일 경로가 설정과 일치하지 않아 연결을 해제합니다."
+                )
+                raise ConnectionError(
+                    message="연결된 프로세스의 실행 파일 경로가 설정과 일치하지 않습니다",
+                    details=failure_details,
+                )
+
+            self.disconnect()
+            raise ConnectionError(
+                message="실행 중인 애플리케이션을 찾을 수 없습니다",
+                details={
+                    **failure_details,
+                    "available_windows_hints": self._get_available_windows_hints(),
+                },
+            )
+
+        except ConnectionError:
+            self._state = SessionState.DISCONNECTED
+            raise
         except Exception as e:
             self._state = SessionState.ERROR
             logger.error(f"애플리케이션 연결 실패: {e}")
-            
-            # 실패 시 현재 열려있는 윈도우 목록을 가져와서 힌트 제공
-            available_windows = []
-            try:
-                from pywinauto import Desktop
-                available_windows = [w.window_text() for w in Desktop(backend=self._backend).windows() if w.window_text()]
-            except Exception:
-                pass
 
             raise ConnectionError(
                 message="애플리케이션 연결 실패",
                 cause=e,
                 details={
-                    "process": process,
-                    "path": path,
-                    "title": title,
-                    "available_windows_hints": available_windows[:20]
+                    **failure_details,
+                    "available_windows_hints": self._get_available_windows_hints(),
                 }
             )
     
@@ -477,6 +491,18 @@ class AppSession:
         locator = self.get_window_locator(window_name)
         return self.get_window(**locator)
     
+    def _get_available_windows_hints(self) -> list:
+        """연결 실패 시 디버깅용으로 열려 있는 윈도우 제목 목록을 반환합니다."""
+        try:
+            from pywinauto import Desktop
+            return [
+                w.window_text()
+                for w in Desktop(backend=self._backend).windows()
+                if w.window_text()
+            ][:20]
+        except Exception:
+            return []
+
     def _try_connect(self, process=None, path=None, title=None, **kwargs) -> bool:
         """다양한 전략으로 연결 시도"""
         strategies = []
