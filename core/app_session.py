@@ -372,9 +372,13 @@ class AppSession:
             
             # 실행 파일 여부 확인 (exe, bat, cmd 등)
             is_executable = exe_path.lower().endswith(('.exe', '.bat', '.cmd', '.msi'))
-            
+
+            # pywinauto Application.start()가 모르는 인자 제거
+            _TOOL_ONLY_KEYS = {"connect_path", "title", "title_re"}
+            start_kwargs = {k: v for k, v in kwargs.items() if k not in _TOOL_ONLY_KEYS}
+
             if is_executable:
-                self._app.start(exe_path, **kwargs)
+                self._app.start(exe_path, **start_kwargs)
             else:
                 # [수정] .rul, .txt 등 데이터 파일인 경우 시스템 연결 앱으로 실행
                 import os
