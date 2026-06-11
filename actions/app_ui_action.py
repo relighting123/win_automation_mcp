@@ -694,14 +694,11 @@ class AppUIAction:
         main_wrapper = target_windows[0]
         summary_window = {
             "title": self._safe_call(main_wrapper.window_text, "") or "",
-            "control_type": self._safe_call(lambda: main_wrapper.element_info.control_type, "") or "",
-            "rect": self._rect_to_dict(self._safe_call(main_wrapper.rectangle, None)),
         }
 
-        # 2. 모든 타겟 윈도우의 자식 요소 수집
+        # 2. 모든 타겟 윈도우의 자식 요소 수집 (title/auto_id만 반환, 좌표는 keyword 매칭 시에만 계산)
         global_idx = 0
         for wrapper in target_windows:
-            win_title = self._safe_call(wrapper.window_text, "Unknown Window")
             nodes = [wrapper]
             descendants = self._safe_call(wrapper.descendants, []) or []
             nodes.extend(descendants)
@@ -715,36 +712,34 @@ class AppUIAction:
 
                 title = self._safe_call(node.window_text, "") or ""
                 auto_id = self._safe_call(lambda: node.element_info.automation_id, "") or ""
-                control_type = self._safe_call(lambda: node.element_info.control_type, "") or ""
-                rect = self._safe_call(node.rectangle, None)
-                rect_dict = self._rect_to_dict(rect)
-                
-                # 내부 로직용 데이터 (좌표 포함)
-                comp = {
+                if not title and not auto_id:
+                    continue
+
+                components.append({
                     "index": global_idx,
                     "title": title,
                     "auto_id": auto_id,
-                    "control_type": control_type,
-                    "window": win_title,
-                    "x": rect_dict.get("center_x"),
-                    "y": rect_dict.get("center_y"),
-                }
-                components.append(comp)
+                })
 
-                if target_keyword and self._is_keyword_match(
-                    candidate_values=[title, auto_id, control_type],
-                    keyword=target_keyword,
-                    match_mode=match_mode,
-                    case_sensitive=case_sensitive,
-                ):
-                    keyword_hits.append({
-                        "index": global_idx,
-                        "title": title,
-                        "auto_id": auto_id,
-                        "x": rect_dict.get("center_x"),
-                        "y": rect_dict.get("center_y"),
-                        "source": "uia"
-                    })
+                if target_keyword:
+                    control_type = self._safe_call(lambda: node.element_info.control_type, "") or ""
+                    if self._is_keyword_match(
+                        candidate_values=[title, auto_id, control_type],
+                        keyword=target_keyword,
+                        match_mode=match_mode,
+                        case_sensitive=case_sensitive,
+                    ):
+                        rect = self._safe_call(node.rectangle, None)
+                        rect_dict = self._rect_to_dict(rect)
+                        keyword_hits.append({
+                            "index": global_idx,
+                            "title": title,
+                            "auto_id": auto_id,
+                            "control_type": control_type,
+                            "x": rect_dict.get("center_x"),
+                            "y": rect_dict.get("center_y"),
+                            "source": "uia",
+                        })
                 
                 global_idx += 1
             
@@ -861,7 +856,10 @@ class AppUIAction:
         ocr_timeout: Optional[float] = 2.0,
     ) -> dict:
         """
-        현재 앱 상태/구성요소를 반환하고, keyword 기반 좌표를 함께 제공합니다.
+        현재 앱 상태/구성요소를 반환합니다.
+
+        components에는 title과 auto_id만 포함되며,
+        keyword가 지정된 경우에만 keyword_hits 좌표를 계산합니다.
         """
         focus_result = self.ensure_focus()
         screen_flags = self.get_screen_state_flags()
