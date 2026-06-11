@@ -9,7 +9,9 @@ from scripts.generate_locators import (
     collect_all_descendant_records,
     extract_elements,
     iter_search_nodes,
+    make_locator_key,
     node_to_record,
+    resolve_target_windows,
 )
 
 
@@ -81,6 +83,20 @@ class GenerateLocatorsTest(unittest.TestCase):
         top = _MockTop()
         elements = extract_elements(top, all_types=True, include_without_auto_id=True)
         self.assertEqual(len(elements), 3)
+
+    def test_make_locator_key_from_title(self):
+        top = _MockTop(title="ezDFS2 Login", control_type="Window", control_id=1, automation_id="LoginWnd")
+        self.assertEqual(make_locator_key(top, 0), "ezdfs2_login")
+
+    def test_resolve_target_windows_default_all(self):
+        wins = [_MockTop(title="Main"), _MockTop(title="Login")]
+        resolved = resolve_target_windows(wins, window_index=None, title_contains=None, single_window=False)
+        self.assertEqual(len(resolved), 2)
+
+    def test_resolve_target_windows_single_mode(self):
+        wins = [_MockTop(title="Main"), _MockTop(title="Login")]
+        resolved = resolve_target_windows(wins, window_index=None, title_contains=None, single_window=True)
+        self.assertEqual(len(resolved), 1)
 
 
 if __name__ == "__main__":

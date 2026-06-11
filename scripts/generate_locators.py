@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -108,8 +109,9 @@ def collect_all_descendant_records(window_spec: Any, *, include_root: bool = Tru
     return [node_to_record(node, index=i) for i, node in enumerate(nodes)]
 
 
-def print_descendant_records(records: List[Dict[str, Any]]) -> None:
-    print(f"descendants dump: total_nodes={len(records)}")
+def print_descendant_records(records: List[Dict[str, Any]], *, window_label: str = "") -> None:
+    prefix = f"{window_label} " if window_label else ""
+    print(f"{prefix}descendants dump: total_nodes={len(records)}")
     for record in records:
         print(
             f"  [{record['index']}] title={record['title'] or '-'}, "
@@ -118,6 +120,23 @@ def print_descendant_records(records: List[Dict[str, Any]]) -> None:
             f"uia_type={record['uia_control_type'] or '-'}, "
             f"visible={record['visible']}"
         )
+
+
+def make_locator_key(wrapper: Any, index: int) -> str:
+    """locator.yaml 키 이름을 window title/auto_id 기준으로 생성합니다."""
+    title = _get_window_text(wrapper)
+    if title:
+        slug = re.sub(r"[^\w가-힣]+", "_", title, flags=re.UNICODE).strip("_").lower()
+        if slug:
+            return slug[:48]
+
+    auto_id = _get_auto_id(wrapper)
+    if auto_id:
+        slug = re.sub(r"[^\w]+", "_", auto_id.lower()).strip("_")
+        if slug:
+            return slug[:48]
+
+    return f"top_{index}"
 
 
 def extract_window_info(window_spec: Any) -> Dict[str, Any]:
@@ -175,8 +194,8 @@ def extract_elements(
     return elements
 
 
-def update_locator_yaml(window_type: str, window_info: Dict[str, Any], elements: Dict[str, Any]) -> Path:
-    """locator.yaml 업데이트"""
+def update_locator_yaml_entries(entries: Dict[str, Dict[str, Any]]) -> Path:
+    """locator.yaml에 여러 top window 항목을 저장합니다."""
     locator_path = project_root / "config" / "locator.yaml"
     if locator_path.exists():
         with open(locator_path, "r", encoding="utf-8") as f:
@@ -184,10 +203,8 @@ def update_locator_yaml(window_type: str, window_info: Dict[str, Any], elements:
     else:
         data = {}
 
-    data[window_type] = {
-        "window": window_info,
-        "elements": elements,
-    }
+    for window_type, payload in entries.items():
+        data[window_type] = payload
 
     locator_path.parent.mkdir(parents=True, exist_ok=True)
     with open(locator_path, "w", encoding="utf-8") as f:
@@ -218,12 +235,36 @@ def _pick_target_window(windows: list[Any], *, window_index: Optional[int], titl
     return windows[0]
 
 
+def resolve_target_windows(
+    windows: list[Any],
+    *,
+    window_index: Optional[int],
+    title_contains: Optional[str],
+    single_window: bool,
+) -> list[Any]:
+    """기본은 모든 top window, --single/--window-index/--title-contains 시 1개만 선택."""
+    if window_index is not None or title_contains or single_window:
+        return [
+            _pick_target_window(
+                windows,
+                window_index=window_index,
+                title_contains=title_contains,
+            )
+        ]
+    return list(windows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate UI Locators for the target application")
     parser.add_argument(
         "--type",
         default="active_window",
-        help="저장할 윈도우 키 이름 (기본: active_window)",
+        help="단일 window 모드에서 locator.yaml 키 이름 (기본: active_window)",
+    )
+    parser.add_argument(
+        "--single",
+        action="store_true",
+        help="첫 visible top window 1개만 처리 (기본: 모든 top window)",
     )
     parser.add_argument(
         "--window-index",
@@ -308,37 +349,67 @@ def main() -> int:
             print("ERROR: 대상 애플리케이션 윈도우가 없습니다.")
             return 1
 
-        target_window = _pick_target_window(
+        target_windows = resolve_target_windows(
             windows,
             window_index=args.window_index,
             title_contains=args.title_contains,
+            single_window=args.single,
         )
-        wrapper = _to_wrapper(target_window)
-        print(f"선택된 window: {_format_window_summary(wrapper, -1)}")
+        single_mode = len(target_windows) == 1 and (
+            args.single or args.window_index is not None or bool(args.title_contains)
+        )
+        print(f"처리 대상 top window: {len(target_windows)}개")
 
         include_root = not args.exclude_root
-        records = collect_all_descendant_records(target_window, include_root=include_root)
-        if not args.no_print_descendants:
-            print_descendant_records(records)
+        yaml_entries: Dict[str, Dict[str, Any]] = {}
+        json_payload: List[Dict[str, Any]] = []
+
+        for i, target_window in enumerate(target_windows):
+            wrapper = _to_wrapper(target_window)
+            window_label = _format_window_summary(wrapper, i)
+            print(f"\n===== top window {i} =====")
+            print(window_label)
+
+            records = collect_all_descendant_records(target_window, include_root=include_root)
+            if not args.no_print_descendants:
+                print_descendant_records(records, window_label=f"[{i}]")
+
+            locator_key = args.type if single_mode else make_locator_key(wrapper, i)
+            json_payload.append(
+                {
+                    "locator_key": locator_key,
+                    "window": extract_window_info(target_window),
+                    "records": records,
+                }
+            )
+
+            if args.dump_only:
+                continue
+
+            elements = extract_elements(
+                target_window,
+                include_without_auto_id=args.include_no_auto_id,
+                all_types=args.all_types,
+            )
+            print(f"[{i}] yaml elements 추출: {len(elements)}개 (키={locator_key}, 필터 적용됨)")
+            yaml_entries[locator_key] = {
+                "window": extract_window_info(target_window),
+                "elements": elements,
+            }
+
         if args.json_out:
             out_path = Path(args.json_out)
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+            out_path.write_text(json.dumps(json_payload, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"JSON 저장: {out_path}")
 
         if args.dump_only:
             return 0
 
-        window_info = extract_window_info(target_window)
-        elements = extract_elements(
-            target_window,
-            include_without_auto_id=args.include_no_auto_id,
-            all_types=args.all_types,
-        )
-        print(f"yaml elements 추출: {len(elements)}개 (필터 적용됨)")
-
-        locator_path = update_locator_yaml(args.type, window_info, elements)
-        print(f"SUCCESS: {args.type} -> {locator_path}")
+        locator_path = update_locator_yaml_entries(yaml_entries)
+        print(f"SUCCESS: {len(yaml_entries)}개 window -> {locator_path}")
+        for key in yaml_entries:
+            print(f"  - {key}")
         return 0
 
     except Exception as e:
