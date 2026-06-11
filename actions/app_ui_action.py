@@ -498,7 +498,7 @@ class AppUIAction:
         if include_descendants:
             descendants = self._safe_call(root.descendants, []) or []
             raw_children.extend(descendants)
-        allowed_control_types = {"window", "pane", "document", "group", "custom"}
+        allowed_control_types = {"window", "pane", "document", "group", "custom", "dialog"}
         seen_ids: set[str] = set()
         for child in raw_children:
             wrapper = self._safe_call(lambda: child.wrapper_object(), None) or child
@@ -522,11 +522,24 @@ class AppUIAction:
             candidates.append(wrapper)
         return candidates
 
+    def _summarize_child_window_candidates(self, root: Any, limit: int = 8) -> list[str]:
+        """child window 탐색 실패 시 디버깅용 후보 제목 목록을 반환합니다."""
+        summaries: list[str] = []
+        children = self._list_candidate_child_windows(root, include_descendants=True)
+        for child in children[:limit]:
+            titles = self._get_node_title_candidates(child)
+            control_type = str(self._safe_call(lambda: child.element_info.control_type, "") or "")
+            auto_id = str(self._safe_call(lambda: child.element_info.automation_id, "") or "")
+            label = titles[0] if titles else "(no title)"
+            summaries.append(f"{label} [type={control_type}, auto_id={auto_id or '-'}]")
+        return summaries
+
     def _resolve_attr_search_root(
         self,
         *,
         window_target: str,
         child_window_title: Optional[str],
+        child_window_auto_id: Optional[str],
         child_window_match_mode: str,
         case_sensitive: bool,
     ) -> tuple[Optional[Any], str]:
@@ -546,66 +559,78 @@ class AppUIAction:
 
         target_mode = (window_target or "auto").strip().lower()
         child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
         children = self._list_candidate_child_windows(top_window)
 
+        def child_matches_filters(child: Any) -> bool:
+            title_ok = True
+            auto_id_ok = True
+            if child_title:
+                title_ok = any(
+                    self._is_attr_match(
+                        actual=candidate_title,
+                        expected=child_title,
+                        match_mode=child_window_match_mode,
+                        case_sensitive=case_sensitive,
+                    )
+                    for candidate_title in self._get_node_title_candidates(child)
+                )
+            if child_auto_id:
+                node_auto_id = str(self._safe_call(lambda: child.element_info.automation_id, "") or "")
+                auto_id_ok = node_auto_id == child_auto_id
+            return title_ok and auto_id_ok
+
         def pick_child_by_direct_api() -> Optional[Any]:
-            if not child_title:
+            if not child_title and not child_auto_id:
                 return None
 
-            # 사용자가 요청한 pywinauto 기본 방식(top_window.child_window(title=...))을 우선 시도
-            direct_wrapper = self._safe_call(
-                lambda: top_window.child_window(title=child_title).wrapper_object(),
-                None,
-            )
-            if direct_wrapper is not None and self._safe_call(lambda: direct_wrapper.exists(), False):
-                return direct_wrapper
+            criteria: dict[str, str] = {}
+            if child_title and child_window_match_mode == "exact":
+                criteria["title"] = child_title
+            if child_auto_id:
+                criteria["auto_id"] = child_auto_id
+            if criteria:
+                direct_wrapper = self._safe_call(
+                    lambda: top_window.child_window(**criteria).wrapper_object(),
+                    None,
+                )
+                if direct_wrapper is not None and self._safe_call(lambda: direct_wrapper.exists(), False):
+                    return direct_wrapper
 
-            # contains/case-insensitive 대응을 위해 title_re 경로도 보강
-            pattern = re.escape(child_title)
-            if child_window_match_mode == "contains":
-                pattern = f".*{pattern}.*"
-            else:
-                pattern = f"^{pattern}$"
-            if not case_sensitive:
-                pattern = f"(?i){pattern}"
+            if child_title:
+                pattern = re.escape(child_title)
+                if child_window_match_mode == "contains":
+                    pattern = f".*{pattern}.*"
+                else:
+                    pattern = f"^{pattern}$"
+                if not case_sensitive:
+                    pattern = f"(?i){pattern}"
 
-            regex_wrapper = self._safe_call(
-                lambda: top_window.child_window(title_re=pattern).wrapper_object(),
-                None,
-            )
-            if regex_wrapper is not None and self._safe_call(lambda: regex_wrapper.exists(), False):
-                return regex_wrapper
+                regex_wrapper = self._safe_call(
+                    lambda: top_window.child_window(title_re=pattern).wrapper_object(),
+                    None,
+                )
+                if regex_wrapper is not None and self._safe_call(lambda: regex_wrapper.exists(), False):
+                    if not child_auto_id or child_matches_filters(regex_wrapper):
+                        return regex_wrapper
 
             return None
 
         def pick_child_by_title() -> Optional[Any]:
-            if not child_title:
+            if not child_title and not child_auto_id:
                 return None
             direct_matched = pick_child_by_direct_api()
             if direct_matched is not None:
                 return direct_matched
 
             for child in children:
-                for candidate_title in self._get_node_title_candidates(child):
-                    if self._is_attr_match(
-                        actual=candidate_title,
-                        expected=child_title,
-                        match_mode=child_window_match_mode,
-                        case_sensitive=case_sensitive,
-                    ):
-                        return child
+                if child_matches_filters(child):
+                    return child
 
-            # direct child에서 못 찾으면 descendants까지 확장 탐색
             descendants = self._list_candidate_child_windows(top_window, include_descendants=True)
             for child in descendants:
-                for candidate_title in self._get_node_title_candidates(child):
-                    if self._is_attr_match(
-                        actual=candidate_title,
-                        expected=child_title,
-                        match_mode=child_window_match_mode,
-                        case_sensitive=case_sensitive,
-                    ):
-                        return child
+                if child_matches_filters(child):
+                    return child
             return None
 
         if target_mode == "top":
@@ -614,9 +639,10 @@ class AppUIAction:
         if target_mode == "child":
             matched_child = pick_child_by_title()
             if matched_child is not None:
-                return matched_child, f"child(title={child_title})"
-            if child_title:
-                return None, f"child_not_found(title={child_title})"
+                return matched_child, f"child(title={child_title}, auto_id={child_auto_id or '-'})"
+            if child_title or child_auto_id:
+                candidates = self._summarize_child_window_candidates(top_window)
+                return None, f"child_not_found(title={child_title}, auto_id={child_auto_id}, candidates={candidates})"
             if children:
                 return children[0], "child(first_visible)"
             return None, "child_not_found(no_children)"
@@ -624,7 +650,16 @@ class AppUIAction:
         # auto mode
         matched_child = pick_child_by_title()
         if matched_child is not None:
-            return matched_child, f"auto->child(title={child_title})"
+            return matched_child, f"auto->child(title={child_title}, auto_id={child_auto_id or '-'})"
+        if child_title or child_auto_id:
+            candidates = self._summarize_child_window_candidates(top_window)
+            logger.warning(
+                "child window 미발견: title=%s, auto_id=%s, candidates=%s",
+                child_title or "-",
+                child_auto_id or "-",
+                candidates,
+            )
+            return None, f"child_not_found(title={child_title}, auto_id={child_auto_id}, candidates={candidates})"
         return top_window, "auto->top"
 
     def _click_with_preferred_action(
@@ -1231,6 +1266,7 @@ class AppUIAction:
         case_sensitive: bool = False,
         window_target: str = "auto",
         child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
         child_window_match_mode: str = "contains",
         button: str = "left",
         clicks: int = 1,
@@ -1278,6 +1314,15 @@ class AppUIAction:
                 message="검색 조건(auto_id, control_type, title, legacy_value)이 하나 이상 필요합니다.",
             )
 
+        logger.info(
+            "[click_app_by_attr] 시작: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+            auto_id,
+            title,
+            child_window_title,
+            child_window_auto_id,
+            window_target,
+        )
+
         try:
             actual_timeout = timeout if timeout is not None else 5.0
             start = time.monotonic()
@@ -1287,6 +1332,7 @@ class AppUIAction:
                 search_root, search_root_info = self._resolve_attr_search_root(
                     window_target=window_target,
                     child_window_title=child_window_title,
+                    child_window_auto_id=child_window_auto_id,
                     child_window_match_mode=child_window_match_mode,
                     case_sensitive=case_sensitive,
                 )
@@ -1311,12 +1357,20 @@ class AppUIAction:
                 time.sleep(0.2)
 
             if target is None:
+                logger.warning(
+                    "[click_app_by_attr] 실패: search_root=%s, auto_id=%s, title=%s, child_window_title=%s",
+                    search_root_info,
+                    auto_id,
+                    title,
+                    child_window_title,
+                )
                 return AppUIActionResult(
                     result="error",
                     message=(
                         "요소를 찾지 못했습니다: "
                         f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}, "
-                        f"window_target={window_target}, child_window_title={child_window_title}, search_root={search_root_info}"
+                        f"window_target={window_target}, child_window_title={child_window_title}, "
+                        f"child_window_auto_id={child_window_auto_id}, search_root={search_root_info}"
                     ),
                 )
             
@@ -1327,11 +1381,22 @@ class AppUIAction:
                 except Exception as e:
                     logger.warning(f"테두리 그리기 실패: {e}")
             
+            matched_auto_id = str(self._safe_call(lambda: target.element_info.automation_id, "") or "")
+            matched_title = str(self._safe_call(target.window_text, "") or "")
+            matched_type = str(self._safe_call(lambda: target.element_info.control_type, "") or "")
             click_method = self._click_with_preferred_action(
                 target,
                 button=button,
                 clicks=clicks,
                 double=double,
+            )
+            logger.info(
+                "[click_app_by_attr] 성공: matched(title=%s, auto_id=%s, type=%s), method=%s, search_root=%s",
+                matched_title,
+                matched_auto_id,
+                matched_type,
+                click_method,
+                search_root_info,
             )
             return AppUIActionResult(
                 result="success",
@@ -1339,11 +1404,13 @@ class AppUIAction:
                     "요소 클릭 성공: "
                     f"auto_id={auto_id}, control_type={control_type}, title={title}, legacy_value={legacy_value}, "
                     f"window_target={window_target}, child_window_title={child_window_title}, "
+                    f"child_window_auto_id={child_window_auto_id}, matched_title={matched_title}, "
+                    f"matched_auto_id={matched_auto_id}, matched_control_type={matched_type}, "
                     f"search_root={search_root_info}, method={click_method}"
                 ),
             )
         except Exception as e:
-            logger.error(f"속성 기반 요소 클릭 실패: {e}")
+            logger.error("[click_app_by_attr] 예외: %s", e)
             return AppUIActionResult(result="error", message=f"요소 클릭 실패: {e}")
 
     def highlight_element_by_attr(
