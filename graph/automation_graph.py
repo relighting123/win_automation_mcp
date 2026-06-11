@@ -3,7 +3,7 @@ import asyncio
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from mcp_client import MCPClient
+from core.mcp_client import MCPClient
 from core.llm_config import (
     get_llm_profile_settings,
     get_llm_settings,
