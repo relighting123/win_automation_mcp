@@ -17,3 +17,7 @@ tool_calling_dataset.jsonl
 
 # 실제 설정 파일 (API 키, 프로그램 경로 등 민감 정보 포함)
 config/app_config.yaml
+
+# 스킬별 실제 설정 파일 (.example 파일은 추적됨)
+skills/edit_source_by_find_replace/skill.yaml
+skills/edit_source_by_find_replace/skill.md
