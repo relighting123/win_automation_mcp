@@ -136,14 +136,13 @@ async def click_app_by_keyword(
         component_limit=300
     )
 
-    components = analysis.get("components", [])
+    uia_hits = (analysis.get("keyword_hits", {}) or {}).get("uia", []) or []
+    target_type = element_type.lower()
     matches = []
-    for comp in components:
-        comp_type = str(comp.get("control_type", "")).lower()
-        target_type = element_type.lower()
-        if (target_type == "any") or (target_type in comp_type):
-            if any(kw_hit.get("index") == comp.get("index") for kw_hit in analysis.get("keyword_hits", {}).get("uia", [])):
-                matches.append(comp)
+    for hit in uia_hits:
+        hit_type = str(hit.get("control_type", "")).lower()
+        if target_type == "any" or target_type in hit_type:
+            matches.append(hit)
 
     if not matches:
         ocr_hits = (analysis.get("keyword_hits", {}) or {}).get("ocr", []) or []
@@ -273,6 +272,9 @@ async def describe_current_state(
 ) -> str:
     """
     현재 애플리케이션의 화면 상태와 UI 구성요소 목록을 가져옵니다.
+
+    components에는 각 요소의 title과 auto_id만 포함됩니다.
+    keyword가 지정된 경우 keyword_hits에 매칭 결과가 추가됩니다.
     """
     logger.info(f"[Tool] describe_current_state 호출: keyword={keyword}")
     action = get_app_ui_action()
@@ -284,26 +286,14 @@ async def describe_current_state(
         component_limit=component_limit,
     )
     
-    # [Token Optimization] LLM용 결과 데이터 경량화
-    if include_components and "components" in result:
-        compact_components = []
-        for c in result["components"]:
-            compact_components.append({
-                "idx": c["index"],
-                "t": c["title"],
-                "id": c["auto_id"],
-                "type": c["control_type"],
-                "win": c["window"]
-            })
-        result["components"] = compact_components
-    
-    # keyword_hits에서도 LLM용 좌표 정보 제거
+    # keyword_hits에서 LLM용 좌표/내부 필드 제거
     if "keyword_hits" in result:
         for source in ["uia", "ocr"]:
             for hit in result["keyword_hits"].get(source, []):
                 hit.pop("x", None)
                 hit.pop("y", None)
-                
+                hit.pop("control_type", None)
+
     return json.dumps(result, ensure_ascii=False)
 
 
