@@ -344,15 +344,32 @@ class AppUIAction:
 
     def _format_window_label(self, wrapper: Any) -> str:
         """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
-        title = str(self._safe_call(wrapper.window_text, "") or "").strip()
+        title_candidates = self._get_node_title_candidates(wrapper)
+        title = title_candidates[0] if title_candidates else ""
+
+        handle = self._get_wrapper_handle(wrapper)
+        if not title and handle:
+            try:
+                import win32gui
+
+                win32_title = str(win32gui.GetWindowText(handle) or "").strip()
+                if win32_title:
+                    title = win32_title
+            except Exception:
+                pass
+
         auto_id = str(self._safe_call(lambda: wrapper.element_info.automation_id, "") or "").strip()
         control_type = str(self._safe_call(lambda: wrapper.element_info.control_type, "") or "").strip()
-        handle = self._get_wrapper_handle(wrapper)
+        class_name = str(self._safe_call(lambda: wrapper.element_info.class_name, "") or "").strip()
         parts = [f"title={title or '-'}"]
+        if len(title_candidates) > 1:
+            parts.append(f"alt_titles={title_candidates[1:3]}")
         if auto_id:
             parts.append(f"auto_id={auto_id}")
         if control_type:
             parts.append(f"type={control_type}")
+        if class_name:
+            parts.append(f"class={class_name}")
         if handle:
             parts.append(f"hwnd={handle}")
         return ", ".join(parts)
