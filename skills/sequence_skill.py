@@ -10,6 +10,8 @@ from tools.tool_registry import get_skill_tool_registry
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 class SequenceSkill(BaseSkill):
     """
     YAML 정의를 기반으로 여러 단계를 실행하는 범용 시퀀스 스킬
@@ -23,7 +25,7 @@ class SequenceSkill(BaseSkill):
 
     def _load_config(self):
         # 1. 개별 폴더 기반 스킬 확인 (New Structure)
-        folder_path = Path("skills") / self.skill_name
+        folder_path = _PROJECT_ROOT / "skills" / self.skill_name
         folder_yaml = folder_path / "skill.yaml"
         folder_md = folder_path / "skill.md"
         
@@ -41,9 +43,13 @@ class SequenceSkill(BaseSkill):
             return
 
         # 2. 레거시 중앙 집중식 설정 확인 (Legacy Structure)
-        path = Path(self.config_path)
+        path = _PROJECT_ROOT / self.config_path
         if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+            raise FileNotFoundError(
+                f"Skill '{self.skill_name}' not found: "
+                f"no folder at skills/{self.skill_name}/skill.yaml "
+                f"and no legacy config at {self.config_path}"
+            )
             
         with open(path, "r", encoding="utf-8") as f:
             full_config = yaml.safe_load(f)
