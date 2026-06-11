@@ -1,9 +1,10 @@
 import argparse
+import json
 import logging
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -47,18 +48,22 @@ def _get_window_text(wrapper: Any) -> str:
     return str(_safe_call(wrapper.window_text, "") or "").strip()
 
 
-def _get_control_type(wrapper: Any) -> str:
-    value = _safe_call(wrapper.control_type, None)
+def _get_uia_control_type(wrapper: Any) -> str:
+    """UIA ControlType (예: Button, Edit). element_info.control_type 속성만 사용합니다."""
+    return str(_safe_call(lambda: wrapper.element_info.control_type, "") or "").strip()
+
+
+def _get_control_id(wrapper: Any) -> str:
+    """UIA/Win32 ControlId (숫자 ID). wrapper.control_type()가 아닌 element_info.control_id 입니다."""
+    value = _safe_call(lambda: wrapper.element_info.control_id, None)
     if value is None:
-        value = _safe_call(lambda: wrapper.element_info.control_type, "")
-    return str(value or "").strip()
+        return ""
+    return str(value).strip()
 
 
 def _get_auto_id(wrapper: Any) -> str:
-    value = _safe_call(wrapper.automation_id, None)
-    if value is None:
-        value = _safe_call(lambda: wrapper.element_info.automation_id, "")
-    return str(value or "").strip()
+    """AutomationId (UIA auto_id)."""
+    return str(_safe_call(lambda: wrapper.element_info.automation_id, "") or "").strip()
 
 
 def _format_window_summary(wrapper: Any, index: int) -> str:
@@ -66,10 +71,53 @@ def _format_window_summary(wrapper: Any, index: int) -> str:
     return (
         f"[{index}] title={_get_window_text(wrapper) or '-'}, "
         f"auto_id={_get_auto_id(wrapper) or '-'}, "
-        f"type={_get_control_type(wrapper) or '-'}, "
+        f"control_id={_get_control_id(wrapper) or '-'}, "
+        f"uia_type={_get_uia_control_type(wrapper) or '-'}, "
         f"hwnd={handle or '-'}, "
         f"visible={_safe_call(wrapper.is_visible, False)}"
     )
+
+
+def iter_search_nodes(wrapper: Any, *, include_root: bool = True) -> List[Any]:
+    """
+    click_app_by_attr와 동일하게 search_root + descendants() 노드를 반환합니다.
+    """
+    nodes: List[Any] = []
+    if include_root:
+        nodes.append(wrapper)
+    descendants = _safe_call(wrapper.descendants, []) or []
+    nodes.extend(descendants)
+    return nodes
+
+
+def node_to_record(wrapper: Any, *, index: int) -> Dict[str, Any]:
+    return {
+        "index": index,
+        "title": _get_window_text(wrapper),
+        "auto_id": _get_auto_id(wrapper),
+        "control_id": _get_control_id(wrapper),
+        "uia_control_type": _get_uia_control_type(wrapper),
+        "visible": bool(_safe_call(wrapper.is_visible, False)),
+    }
+
+
+def collect_all_descendant_records(window_spec: Any, *, include_root: bool = True) -> List[Dict[str, Any]]:
+    """선택한 top window의 root(옵션) + descendants 전체를 레코드로 반환합니다."""
+    wrapper = _to_wrapper(window_spec)
+    nodes = iter_search_nodes(wrapper, include_root=include_root)
+    return [node_to_record(node, index=i) for i, node in enumerate(nodes)]
+
+
+def print_descendant_records(records: List[Dict[str, Any]]) -> None:
+    print(f"descendants dump: total_nodes={len(records)}")
+    for record in records:
+        print(
+            f"  [{record['index']}] title={record['title'] or '-'}, "
+            f"auto_id={record['auto_id'] or '-'}, "
+            f"control_id={record['control_id'] or '-'}, "
+            f"uia_type={record['uia_control_type'] or '-'}, "
+            f"visible={record['visible']}"
+        )
 
 
 def extract_window_info(window_spec: Any) -> Dict[str, Any]:
@@ -77,38 +125,51 @@ def extract_window_info(window_spec: Any) -> Dict[str, Any]:
     wrapper = _to_wrapper(window_spec)
     return {
         "title": _get_window_text(wrapper),
-        "control_type": _get_control_type(wrapper),
+        "control_id": _get_control_id(wrapper),
         "auto_id": _get_auto_id(wrapper),
+        "uia_control_type": _get_uia_control_type(wrapper),
     }
 
 
-def extract_elements(window_spec: Any, *, include_without_auto_id: bool = False) -> Dict[str, Any]:
+def extract_elements(
+    window_spec: Any,
+    *,
+    include_without_auto_id: bool = False,
+    all_types: bool = False,
+) -> Dict[str, Any]:
     """주요 UI 요소 추출 (descendants 순회)"""
     wrapper = _to_wrapper(window_spec)
     elements: Dict[str, Any] = {}
 
     descendants = _safe_call(wrapper.descendants, []) or []
-    logger.info("descendants count: %d", len(descendants))
+    logger.info("descendants count (wrapper.descendants only): %d", len(descendants))
+    logger.info("search nodes count (root+descendants): %d", len(iter_search_nodes(wrapper)))
 
     for child in descendants:
-        c_type = _get_control_type(child)
+        uia_type = _get_uia_control_type(child)
         auto_id = _get_auto_id(child)
+        control_id = _get_control_id(child)
         name = _get_window_text(child)
 
-        if c_type.lower() not in TARGET_TYPES:
+        if not all_types and uia_type.lower() not in TARGET_TYPES:
             continue
-        if not auto_id and not include_without_auto_id:
+        if not auto_id and not control_id and not include_without_auto_id:
             continue
 
-        element_key = (auto_id or f"{c_type.lower()}_{name or len(elements)}").lower().replace(" ", "_")
+        element_key = (
+            auto_id
+            or (f"control_id_{control_id}" if control_id else "")
+            or f"{uia_type.lower()}_{name or len(elements)}"
+        ).lower().replace(" ", "_")
         if element_key in elements:
             element_key = f"{element_key}_{len(elements)}"
 
         elements[element_key] = {
             "auto_id": auto_id,
-            "control_type": c_type,
+            "control_id": control_id,
             "title": name,
-            "description": f"{name} ({c_type})" if name else c_type,
+            "uia_control_type": uia_type,
+            "description": f"{name} ({uia_type})" if name else uia_type,
         }
 
     return elements
@@ -181,9 +242,34 @@ def main() -> int:
         help="top window 목록만 출력하고 종료",
     )
     parser.add_argument(
+        "--print-all-descendants",
+        action="store_true",
+        help="선택 top window의 root+descendants 전체를 콘솔에 출력",
+    )
+    parser.add_argument(
+        "--include-root",
+        action="store_true",
+        help="--print-all-descendants 시 top window(root)도 목록에 포함",
+    )
+    parser.add_argument(
+        "--json-out",
+        default=None,
+        help="descendants dump를 JSON 파일로 저장 (예: /tmp/descendants.json)",
+    )
+    parser.add_argument(
         "--include-no-auto-id",
         action="store_true",
-        help="auto_id 없는 컨트롤도 포함",
+        help="auto_id/control_id 없는 컨트롤도 yaml elements에 포함",
+    )
+    parser.add_argument(
+        "--all-types",
+        action="store_true",
+        help="Button/Edit 등 필터 없이 모든 UIA 타입을 yaml elements에 포함",
+    )
+    parser.add_argument(
+        "--dump-only",
+        action="store_true",
+        help="descendants dump만 출력하고 locator.yaml 은 갱신하지 않음",
     )
     args = parser.parse_args()
 
@@ -230,9 +316,25 @@ def main() -> int:
         wrapper = _to_wrapper(target_window)
         print(f"선택된 window: {_format_window_summary(wrapper, -1)}")
 
+        records = collect_all_descendant_records(target_window, include_root=args.include_root)
+        if args.print_all_descendants or args.json_out:
+            print_descendant_records(records)
+            if args.json_out:
+                out_path = Path(args.json_out)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+                print(f"JSON 저장: {out_path}")
+
+        if args.dump_only:
+            return 0
+
         window_info = extract_window_info(target_window)
-        elements = extract_elements(target_window, include_without_auto_id=args.include_no_auto_id)
-        print(f"추출된 요소: {len(elements)}개")
+        elements = extract_elements(
+            target_window,
+            include_without_auto_id=args.include_no_auto_id,
+            all_types=args.all_types,
+        )
+        print(f"yaml elements 추출: {len(elements)}개 (필터 적용됨)")
 
         locator_path = update_locator_yaml(args.type, window_info, elements)
         print(f"SUCCESS: {args.type} -> {locator_path}")
