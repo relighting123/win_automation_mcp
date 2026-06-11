@@ -30,3 +30,5 @@ class AgentState(BaseModel):
     tool_sequence: List[str] = Field(default_factory=list) # 현재 스킬의 도구 순서
     report: str = ""  # 최종 자연어 분석 결과
     report_details: Dict[str, Any] = Field(default_factory=dict)  # 구조화된 최종 리포트
+    execution_halted: bool = False  # 도구 실패 시 이후 단계 중단 여부
+    halt_reason: str = ""  # 중단 사유
