@@ -865,6 +865,62 @@ class AppUIAction:
             return None, f"child_not_found(title={child_title}, auto_id={child_auto_id}, candidates={candidates})"
         return top_window, "auto->top"
 
+    def _iter_attr_search_roots(
+        self,
+        *,
+        window_target: str,
+        child_window_title: Optional[str],
+        child_window_auto_id: Optional[str],
+        child_window_match_mode: str,
+        case_sensitive: bool,
+        top_window_override: Optional[Any] = None,
+        allow_invisible_children: bool = False,
+    ) -> list[tuple[Optional[Any], str]]:
+        """
+        click_app_by_attr가 순회할 search root 목록을 반환합니다.
+
+        top.descendants()만으로는 Find 같은 child window 내부 컨트롤(Close)이
+        빠질 수 있어, top 모드에서는 top + child window 각각을 search root로 봅니다.
+        child_window_title/auto_id가 지정된 경우에는 해당 child만 탐색합니다.
+        """
+        target_mode = (window_target or "auto").strip().lower()
+        child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
+        child_scoped = target_mode == "child" or (
+            target_mode == "auto" and bool(child_title or child_auto_id)
+        )
+
+        if child_scoped:
+            root, info = self._resolve_attr_search_root(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                top_window_override=top_window_override,
+                allow_invisible_children=allow_invisible_children,
+            )
+            return [(root, info)]
+
+        top_window = top_window_override
+        if top_window is None:
+            top_window = self._pick_target_window() or self._session.get_top_window()
+        if top_window is None:
+            return [(None, "none")]
+
+        prefix = "top" if target_mode == "top" else "auto->top"
+        roots: list[tuple[Any, str]] = [(top_window, prefix)]
+        child_roots = self._list_candidate_child_windows(
+            top_window,
+            include_descendants=True,
+            require_visible=False,
+        )
+        for index, child in enumerate(child_roots):
+            label = self._format_window_label(child)
+            child_prefix = "child" if target_mode == "top" else "auto->child"
+            roots.append((child, f"{child_prefix}[{index}]({label})"))
+        return roots
+
     def _click_with_preferred_action(
         self,
         target: Any,
@@ -1552,7 +1608,7 @@ class AppUIAction:
                         "[click_app_by_attr] top window 순회 시작: %s",
                         self._format_window_label(top_window),
                     )
-                    search_root, search_root_info = self._resolve_attr_search_root(
+                    search_roots = self._iter_attr_search_roots(
                         window_target=window_target,
                         child_window_title=child_window_title,
                         child_window_auto_id=child_window_auto_id,
@@ -1560,30 +1616,33 @@ class AppUIAction:
                         case_sensitive=case_sensitive,
                         top_window_override=top_window,
                     )
-                    if search_root is None:
+                    for search_root, search_root_info in search_roots:
+                        if search_root is None:
+                            logger.info(
+                                "[click_app_by_attr] search_root 없음: top=%s, info=%s",
+                                self._format_window_label(top_window),
+                                search_root_info,
+                            )
+                            continue
+
                         logger.info(
-                            "[click_app_by_attr] search_root 없음: top=%s, info=%s",
-                            self._format_window_label(top_window),
+                            "[click_app_by_attr] search_root=%s (from top=%s)",
                             search_root_info,
+                            self._format_window_label(top_window),
                         )
-                        continue
 
-                    logger.info(
-                        "[click_app_by_attr] search_root=%s (from top=%s)",
-                        search_root_info,
-                        self._format_window_label(top_window),
-                    )
-
-                    target = self._find_first_matching_node(
-                        root=search_root,
-                        auto_id=auto_id,
-                        control_type=control_type,
-                        title=title,
-                        title_match_mode=title_match_mode,
-                        legacy_value=legacy_value,
-                        legacy_match_mode=legacy_match_mode,
-                        case_sensitive=case_sensitive,
-                    )
+                        target = self._find_first_matching_node(
+                            root=search_root,
+                            auto_id=auto_id,
+                            control_type=control_type,
+                            title=title,
+                            title_match_mode=title_match_mode,
+                            legacy_value=legacy_value,
+                            legacy_match_mode=legacy_match_mode,
+                            case_sensitive=case_sensitive,
+                        )
+                        if target is not None:
+                            break
                     if target is not None:
                         break
 
