@@ -6,6 +6,7 @@ from unittest.mock import patch
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+from core.app_session import AppSession
 from skills.sequence_skill import SequenceSkill
 
 
@@ -41,6 +42,37 @@ class SequenceSkillArgsTest(unittest.TestCase):
         skill = self._make_skill([])
         with self.assertRaises(ValueError):
             skill._normalize_step_args({"tool": "launch_application", "args": "bad"})
+
+    def test_parse_step_maps_file_path_alias_for_launch(self) -> None:
+        skill = self._make_skill(
+            [
+                {
+                    "tool": "launch_application",
+                    "args": {
+                        "file_path": { "mode": "fixed", "value": r"D:\Rules\assign.rul" },
+                    },
+                }
+            ]
+        )
+        with patch.object(
+            AppSession,
+            "get_instance",
+            return_value=type(
+                "Session",
+                (),
+                {
+                    "config": {
+                        "application": {
+                            "executable_path": r"C:\Apps\Tool.exe",
+                            "connect_path": r"C:\Apps\Tool.exe",
+                        }
+                    }
+                },
+            )(),
+        ):
+            parsed = skill._parse_step(skill.steps[0], {})
+        self.assertEqual(parsed["args"]["executable_path"], r"D:\Rules\assign.rul")
+        self.assertEqual(parsed["args"]["connect_path"], r"C:\Apps\Tool.exe")
 
 
 if __name__ == "__main__":

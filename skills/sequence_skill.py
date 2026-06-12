@@ -5,6 +5,8 @@ import logging
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from core.app_session import AppSession
+from core.launch_paths import pick_launch_target, resolve_launch_paths
 from skills.base_skill import BaseSkill
 from tools.tool_registry import get_skill_tool_registry
 
@@ -155,6 +157,19 @@ class SequenceSkill(BaseSkill):
                     final_args[k] = self._render_template(v.get("value"), runtime_kwargs)
             else:
                 final_args[k] = self._render_template(v, runtime_kwargs)
+
+        if tool_name == "launch_application" and (
+            pick_launch_target(final_args) or final_args.get("connect_path")
+        ):
+            try:
+                app_config = AppSession.get_instance().config.get("application", {})
+                _, _, final_args = resolve_launch_paths(
+                    final_args,
+                    app_config.get("executable_path"),
+                    app_config.get("connect_path"),
+                )
+            except Exception as e:
+                logger.warning("launch_application 인자 정규화 실패: %s", e)
 
         return {
             "tool": tool_name,
