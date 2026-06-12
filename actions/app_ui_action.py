@@ -68,27 +68,97 @@ class AppUIAction:
         self._session = session or AppSession.get_instance()
         self._launcher = get_launcher()
 
-    def _get_app_window_region(self) -> Optional[Tuple[int, int, int, int]]:
+    def _wrapper_to_region(self, wrapper: Any) -> Optional[Tuple[int, int, int, int]]:
+        """wrapper의 화면 영역(left, top, width, height)을 반환합니다."""
+        if wrapper is None:
+            return None
+        try:
+            rect = wrapper.rectangle()
+            return (rect.left, rect.top, rect.width(), rect.height())
+        except Exception as e:
+            logger.debug("wrapper 영역 획득 실패: %s", e)
+            return None
+
+    def _get_app_window_region(self, wrapper: Optional[Any] = None) -> Optional[Tuple[int, int, int, int]]:
         """
         현재 연결된 애플리케이션의 메인 윈도우 영역(left, top, width, height)을 반환합니다.
         연결되지 않은 경우 연결을 시도합니다.
         """
         try:
+            if wrapper is not None:
+                return self._wrapper_to_region(wrapper)
+
             if not self._session.is_connected:
                 logger.info("세션이 연결되지 않아 애플리케이션 실행/연결을 시도합니다.")
                 self._launcher.ensure_running()
-            
+
             if not self._session.is_connected:
                 return None
 
-            wrapper = self._pick_target_window()
-            if wrapper is not None:
-                rect = wrapper.rectangle()
-                return (rect.left, rect.top, rect.width(), rect.height())
+            picked = self._pick_target_window()
+            return self._wrapper_to_region(picked)
         except Exception as e:
             logger.debug(f"윈도우 영역 획득 실패: {e}")
-        
+
         return None
+
+    def _iter_rgb_search_targets(
+        self,
+        *,
+        window_target: str = "auto",
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+    ) -> list[tuple[str, Any, Tuple[int, int, int, int]]]:
+        """
+        RGB 탐색에 사용할 (label, wrapper, region) 목록을 반환합니다.
+
+        - auto + child 미지정: 기존과 동일하게 pick된 top window 1개
+        - top: 프로세스 top window + child window(Find 등) 영역 순회
+        - child/auto+child: child_window_title/auto_id로 좁힌 영역
+        """
+        target_mode = (window_target or "auto").strip().lower()
+        child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
+        legacy_single = target_mode == "auto" and not child_title and not child_auto_id
+
+        if legacy_single:
+            wrapper = self._pick_target_window() or self._session.get_top_window()
+            region = self._wrapper_to_region(wrapper)
+            if wrapper is not None and region is not None:
+                return [("auto->single", wrapper, region)]
+            return []
+
+        targets: list[tuple[str, Any, Tuple[int, int, int, int]]] = []
+        top_windows = self._iter_process_top_windows()
+        if not top_windows:
+            picked = self._pick_target_window()
+            top_windows = [picked] if picked is not None else []
+
+        for top_window in top_windows:
+            top_label = self._format_window_label(top_window)
+            search_roots = self._iter_attr_search_roots(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                top_window_override=top_window,
+            )
+            for search_root, search_root_info in search_roots:
+                if search_root is None:
+                    logger.info(
+                        "[rgb] search_root 없음: top=%s, info=%s",
+                        top_label,
+                        search_root_info,
+                    )
+                    continue
+                region = self._wrapper_to_region(search_root)
+                if region is None:
+                    continue
+                targets.append((f"{search_root_info} (top={top_label})", search_root, region))
+        return targets
 
     def ensure_focus(self, *, invalidate_cache: bool = False) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
@@ -1257,72 +1327,135 @@ class AppUIAction:
             
             return AppUIActionResult(result="error", message=f"텍스트 입력 실패: {e}")
 
+    def _find_rgb_in_region(
+        self,
+        *,
+        rgb: Tuple[int, int, int],
+        region: Tuple[int, int, int, int],
+        tolerance: int,
+        step: int,
+        screenshot: Any,
+    ) -> Optional[Tuple[int, int]]:
+        pixels = np.array(screenshot)
+        target_pixels = pixels[:, :, :3]
+        diff = np.abs(target_pixels.astype(np.int16) - np.array(rgb, dtype=np.int16))
+        mask = np.all(diff <= tolerance, axis=-1)
+
+        if step > 1:
+            reduced_mask = np.zeros_like(mask)
+            reduced_mask[::step, ::step] = mask[::step, ::step]
+            mask = reduced_mask
+
+        coords = np.where(mask)
+        if coords[0].size == 0:
+            return None
+
+        y_idx, x_idx = coords[0][0], coords[1][0]
+        final_x = int(x_idx) + region[0]
+        final_y = int(y_idx) + region[1]
+        return final_x, final_y
+
     def find_rgb_position(
         self,
         rgb: Tuple[int, int, int],
         tolerance: int = 5,
         step: int = 1,
         timeout: Optional[float] = None,
+        *,
+        window_target: str = "auto",
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        focus_search_root: bool = True,
     ) -> AppUIActionResult:
         """화면에서 RGB 픽셀 위치를 찾습니다."""
         pyautogui, error_result = self._get_pyautogui()
         if error_result:
             return error_result
 
+        target_mode = (window_target or "auto").strip().lower()
+        if target_mode not in {"auto", "top", "child"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 window_target: {window_target} (auto|top|child)",
+            )
+
         tolerance = max(0, tolerance)
         step = max(1, step)
         start = time.monotonic()
 
-        region = self._get_app_window_region()
-        if region is None:
-            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.")
+        search_targets = self._iter_rgb_search_targets(
+            window_target=window_target,
+            child_window_title=child_window_title,
+            child_window_auto_id=child_window_auto_id,
+            child_window_match_mode=child_window_match_mode,
+            case_sensitive=case_sensitive,
+        )
+        if not search_targets:
+            return AppUIActionResult(
+                result="error",
+                message="RGB 탐색 대상 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.",
+            )
+
+        searched_labels = [label for label, _, _ in search_targets]
+        logger.info(
+            "[rgb] 탐색 대상 %d개: window_target=%s, child_window_title=%s, targets=%s",
+            len(search_targets),
+            window_target,
+            child_window_title,
+            searched_labels,
+        )
 
         while True:
-            screenshot = pyautogui.screenshot(region=region)
-            
-            # [Optimization] numpy를 사용하여 픽셀 탐색 속도 대폭 향상
-            pixels = np.array(screenshot)
-            
-            # tolerance 내의 모든 픽셀을 한 번에 마스킹
-            # pixels shape: (height, width, channels)
-            # rgb: (r, g, b)
-            # channels가 4개(RGBA)인 경우 처음 3개만 사용
-            target_pixels = pixels[:, :, :3]
-            
-            # 각 채널별 차이 계산
-            # numpy 브로드캐스팅을 활용하여 (H, W, 3) - (3,) 연산 수행
-            diff = np.abs(target_pixels.astype(np.int16) - np.array(rgb, dtype=np.int16))
-            
-            # 모든 채널(axis=-1)이 tolerance 이내인 픽셀 찾기
-            mask = np.all(diff <= tolerance, axis=-1)
-            
-            # step 적용 (Slicing)
-            if step > 1:
-                # y, x 순서로 step 적용된 mask 생성
-                reduced_mask = np.zeros_like(mask)
-                reduced_mask[::step, ::step] = mask[::step, ::step]
-                mask = reduced_mask
+            for label, wrapper, region in search_targets:
+                if focus_search_root:
+                    self._safe_call(wrapper.set_focus, None)
+                    time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
 
-            # 일치하는 좌표 찾기
-            coords = np.where(mask)
-            if coords[0].size > 0:
-                # 첫 번째 일치하는 점 선택 (y, x 순서)
-                y_idx, x_idx = coords[0][0], coords[1][0]
-                
-                # 리전이 있는 경우 절대 좌표로 변환
-                final_x = int(x_idx) + (region[0] if region else 0)
-                final_y = int(y_idx) + (region[1] if region else 0)
-                
-                logger.info(f"RGB {rgb} 발견: ({final_x}, {final_y}) (numpy 최적화 적용)")
-                return AppUIActionResult(result="success", x=final_x, y=final_y)
+                screenshot = pyautogui.screenshot(region=region)
+                matched = self._find_rgb_in_region(
+                    rgb=rgb,
+                    region=region,
+                    tolerance=tolerance,
+                    step=step,
+                    screenshot=screenshot,
+                )
+                if matched is None:
+                    continue
+
+                final_x, final_y = matched
+                logger.info(
+                    "RGB %s 발견: (%s, %s), search_root=%s",
+                    rgb,
+                    final_x,
+                    final_y,
+                    label,
+                )
+                return AppUIActionResult(
+                    result="success",
+                    x=final_x,
+                    y=final_y,
+                    message=f"RGB 발견: search_root={label}",
+                )
 
             if timeout is None:
-                logger.warning(f"RGB {rgb}를 찾을 수 없습니다.")
-                return AppUIActionResult(result="not_found", message="RGB 위치를 찾을 수 없습니다")
-            if timeout is not None and time.monotonic() - start > timeout:
-                logger.warning(f"RGB {rgb} 탐색 시간 초과 ({timeout}s)")
-                return AppUIActionResult(result="timeout", message="RGB 위치 탐색 시간 초과")
-            
+                logger.warning(
+                    "RGB %s를 찾을 수 없습니다. search_targets=%s",
+                    rgb,
+                    searched_labels,
+                )
+                return AppUIActionResult(
+                    result="not_found",
+                    message=f"RGB 위치를 찾을 수 없습니다. search_targets={searched_labels}",
+                )
+            if time.monotonic() - start > timeout:
+                logger.warning("RGB %s 탐색 시간 초과 (%ss)", rgb, timeout)
+                return AppUIActionResult(
+                    result="timeout",
+                    message=f"RGB 위치 탐색 시간 초과. search_targets={searched_labels}",
+                )
+
             time.sleep(0.1)
 
     def click_position(
