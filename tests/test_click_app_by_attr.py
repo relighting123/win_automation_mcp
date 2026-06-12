@@ -1,7 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
@@ -49,6 +49,15 @@ class _MockNode:
 
     def wrapper_object(self):
         return self
+
+    def draw_outline(self, colour: str = "red"):
+        self._last_outline_colour = colour
+
+    def set_focus(self):
+        return None
+
+    def click_input(self, button="left"):
+        return None
 
 
 class _MockFind(_MockNode):
@@ -156,6 +165,52 @@ class ClickAppByAttrChildRootsTest(unittest.TestCase):
         root, label = roots[0]
         self.assertIsNotNone(root)
         self.assertIn("child", label)
+
+
+class ClickAppByAttrOutlineTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.session = MagicMock()
+        self.session.config = {"timeouts": {"ui_delay": 0.01, "after_focus_delay": 0.01}}
+        self.action = AppUIAction(session=self.session)
+        self.top = _MockMainWithFind()
+
+    def _run_click(self, **kwargs):
+        defaults = {
+            "auto_id": "Close",
+            "window_target": "top",
+            "draw_outline": True,
+            "timeout": 0.1,
+        }
+        defaults.update(kwargs)
+        with patch.object(self.action, "ensure_focus", return_value=MagicMock(result="success", is_success=True)):
+            with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
+                return self.action.click_element_by_attr(**defaults)
+
+    def test_invalid_outline_scope_returns_error(self) -> None:
+        result = self._run_click(outline_scope="invalid")
+        self.assertEqual(result.result, "error")
+        self.assertIn("outline_scope", result.message or "")
+
+    def test_outline_scope_search_highlights_roots_only(self) -> None:
+        result = self._run_click(outline_scope="search")
+        self.assertEqual(result.result, "success")
+        self.assertEqual(getattr(self.top, "_last_outline_colour", None), "green")
+        close_node = self.top.find._cached_descendants[1]
+        self.assertIsNone(getattr(close_node, "_last_outline_colour", None))
+
+    def test_outline_scope_all_highlights_roots_and_target(self) -> None:
+        result = self._run_click(outline_scope="all", outline_colour="red", search_outline_colour="green")
+        self.assertEqual(result.result, "success")
+        self.assertEqual(getattr(self.top, "_last_outline_colour", None), "green")
+        close_node = self.top.find._cached_descendants[1]
+        self.assertEqual(getattr(close_node, "_last_outline_colour", None), "red")
+
+    def test_outline_scope_target_highlights_matched_element_only(self) -> None:
+        result = self._run_click(outline_scope="target")
+        self.assertEqual(result.result, "success")
+        self.assertIsNone(getattr(self.top, "_last_outline_colour", None))
+        close_node = self.top.find._cached_descendants[1]
+        self.assertEqual(getattr(close_node, "_last_outline_colour", None), "red")
 
 
 if __name__ == "__main__":

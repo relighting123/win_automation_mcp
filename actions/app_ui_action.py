@@ -485,6 +485,24 @@ class AppUIAction:
             scope or "-",
         )
 
+    def _safe_draw_outline(
+        self,
+        node: Any,
+        *,
+        colour: str,
+        label: str = "",
+    ) -> None:
+        try:
+            node.draw_outline(colour=colour)
+            logger.info(
+                "[outline] %s colour=%s node=%s",
+                label or "highlight",
+                colour,
+                self._format_search_window_log(node),
+            )
+        except Exception as e:
+            logger.warning("outline 실패 (%s): %s", label or "highlight", e)
+
     def _format_window_label(self, wrapper: Any) -> str:
         """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
         info = self._get_window_search_identity(wrapper)
@@ -1751,10 +1769,17 @@ class AppUIAction:
         timeout: Optional[float] = None,
         draw_outline: bool = False,
         outline_colour: str = "red",
+        search_outline_colour: str = "green",
+        outline_scope: str = "all",
     ) -> AppUIActionResult:
         """
         속성 기반으로 특정 요소를 찾아 클릭합니다.
         auto_id/control_type/title/legacy_value 중 하나 이상을 입력받아 대상을 식별합니다.
+
+        draw_outline=True 시 outline_scope에 따라 테두리 표시:
+          - search: 순회 중인 search_root(창)만
+          - target: 찾은 요소만
+          - all: search_root + target (기본)
         """
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
@@ -1787,6 +1812,16 @@ class AppUIAction:
                 message="검색 조건(auto_id, control_type, title, legacy_value)이 하나 이상 필요합니다.",
             )
 
+        outline_scope = (outline_scope or "all").strip().lower()
+        if outline_scope not in {"search", "target", "all"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all)",
+            )
+        outline_search = draw_outline and outline_scope in {"search", "all"}
+        outline_target = draw_outline and outline_scope in {"target", "all"}
+        outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
+
         logger.info(
             "[click_app_by_attr] 시작: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
             auto_id,
@@ -1802,6 +1837,8 @@ class AppUIAction:
             target = None
             search_root = None
             search_root_info = "none"
+            matched_search_root = None
+            matched_search_root_info = "none"
             scanned_top_labels: list[str] = []
             while True:
                 focus_result = self.ensure_focus(invalidate_cache=True)
@@ -1853,6 +1890,14 @@ class AppUIAction:
                             self._format_search_window_log(top_window),
                         )
 
+                        if outline_search:
+                            self._safe_draw_outline(
+                                search_root,
+                                colour=search_outline_colour,
+                                label=f"search_root={search_root_info}",
+                            )
+                            time.sleep(outline_pause)
+
                         target = self._find_first_matching_node(
                             root=search_root,
                             auto_id=auto_id,
@@ -1864,6 +1909,8 @@ class AppUIAction:
                             case_sensitive=case_sensitive,
                         )
                         if target is not None:
+                            matched_search_root = search_root
+                            matched_search_root_info = search_root_info
                             break
                     if target is not None:
                         break
@@ -1894,20 +1941,24 @@ class AppUIAction:
                     ),
                 )
             
+            search_root = matched_search_root
+            search_root_info = matched_search_root_info
+
+            matched_auto_id = str(self._safe_call(lambda: target.element_info.automation_id, "") or "")
+            matched_title = str(self._safe_call(target.window_text, "") or "")
+            matched_type = str(self._safe_call(lambda: target.element_info.control_type, "") or "")
+
             if search_root is not None:
                 self._safe_call(search_root.set_focus, None)
                 time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2))
 
-            # 하이라이트 표시
-            if draw_outline:
-                try:
-                    target.draw_outline(colour=outline_colour)
-                except Exception as e:
-                    logger.warning(f"테두리 그리기 실패: {e}")
-            
-            matched_auto_id = str(self._safe_call(lambda: target.element_info.automation_id, "") or "")
-            matched_title = str(self._safe_call(target.window_text, "") or "")
-            matched_type = str(self._safe_call(lambda: target.element_info.control_type, "") or "")
+            if outline_target:
+                self._safe_draw_outline(
+                    target,
+                    colour=outline_colour,
+                    label=f"target(title={matched_title}, search_root={search_root_info})",
+                )
+                time.sleep(outline_pause)
             click_method = self._click_with_preferred_action(
                 target,
                 button=button,
