@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from PIL import Image
+
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -57,6 +59,69 @@ class _IdentityWindow:
 
     def window_text(self):
         return self._title
+
+
+class RgbPixelScanTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.action = AppUIAction(session=MagicMock())
+
+    def test_find_rgb_in_region_exact_match(self) -> None:
+        image = Image.new("RGB", (10, 10), (0, 0, 0))
+        image.putpixel((5, 3), (255, 10, 20))
+        matched = self.action._find_rgb_in_region(
+            rgb=(255, 10, 20),
+            region=(100, 200, 10, 10),
+            tolerance=0,
+            step=1,
+            screenshot=image,
+        )
+        self.assertEqual(matched, (105, 203))
+
+    def test_find_rgb_in_region_with_tolerance(self) -> None:
+        image = Image.new("RGB", (4, 4), (0, 0, 0))
+        image.putpixel((1, 1), (102, 98, 101))
+        matched = self.action._find_rgb_in_region(
+            rgb=(100, 100, 100),
+            region=(0, 0, 4, 4),
+            tolerance=3,
+            step=1,
+            screenshot=image,
+        )
+        self.assertEqual(matched, (1, 1))
+
+    def test_find_rgb_in_region_respects_step(self) -> None:
+        image = Image.new("RGB", (6, 6), (0, 0, 0))
+        image.putpixel((1, 1), (255, 0, 0))
+        matched = self.action._find_rgb_in_region(
+            rgb=(255, 0, 0),
+            region=(0, 0, 6, 6),
+            tolerance=0,
+            step=2,
+            screenshot=image,
+        )
+        self.assertIsNone(matched)
+
+        image.putpixel((2, 2), (255, 0, 0))
+        matched = self.action._find_rgb_in_region(
+            rgb=(255, 0, 0),
+            region=(0, 0, 6, 6),
+            tolerance=0,
+            step=2,
+            screenshot=image,
+        )
+        self.assertEqual(matched, (2, 2))
+
+    def test_find_rgb_in_region_converts_rgba(self) -> None:
+        image = Image.new("RGBA", (3, 3), (0, 0, 0, 255))
+        image.putpixel((2, 0), (0, 128, 255, 200))
+        matched = self.action._find_rgb_in_region(
+            rgb=(0, 128, 255),
+            region=(10, 20, 3, 3),
+            tolerance=0,
+            step=1,
+            screenshot=image,
+        )
+        self.assertEqual(matched, (12, 20))
 
 
 class RgbWindowTargetTest(unittest.TestCase):

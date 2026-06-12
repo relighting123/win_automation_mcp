@@ -1503,24 +1503,32 @@ class AppUIAction:
         step: int,
         screenshot: Any,
     ) -> Optional[Tuple[int, int]]:
-        pixels = np.array(screenshot)
-        target_pixels = pixels[:, :, :3]
-        diff = np.abs(target_pixels.astype(np.int16) - np.array(rgb, dtype=np.int16))
-        mask = np.all(diff <= tolerance, axis=-1)
-
-        if step > 1:
-            reduced_mask = np.zeros_like(mask)
-            reduced_mask[::step, ::step] = mask[::step, ::step]
-            mask = reduced_mask
-
-        coords = np.where(mask)
-        if coords[0].size == 0:
+        """
+        screenshot 픽셀을 (x, y) step 간격으로 순회하며 RGB를 찾습니다.
+        PIL RGB 기준으로 per-channel tolerance를 적용합니다.
+        """
+        if screenshot is None:
             return None
 
-        y_idx, x_idx = coords[0][0], coords[1][0]
-        final_x = int(x_idx) + region[0]
-        final_y = int(y_idx) + region[1]
-        return final_x, final_y
+        try:
+            image = screenshot.convert("RGB") if hasattr(screenshot, "convert") else screenshot
+            width, height = image.size
+            left, top, region_width, region_height = region
+            scan_width = min(width, max(0, region_width))
+            scan_height = min(height, max(0, region_height))
+            if scan_width == 0 or scan_height == 0:
+                return None
+
+            pixel_access = image.load()
+            for y in range(0, scan_height, step):
+                for x in range(0, scan_width, step):
+                    pixel = pixel_access[x, y]
+                    if self._match(pixel[:3], rgb, tolerance):
+                        return left + x, top + y
+            return None
+        except Exception as e:
+            logger.warning("RGB region scan 실패: %s", e)
+            return None
 
     def find_rgb_position(
         self,
