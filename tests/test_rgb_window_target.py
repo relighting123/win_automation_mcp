@@ -106,5 +106,28 @@ class RgbWindowTargetTest(unittest.TestCase):
         self.assertIs(targets[0][1], self.find)
 
 
+    def test_get_desktop_region(self) -> None:
+        fake_pyautogui = MagicMock()
+        fake_pyautogui.size.return_value = MagicMock(width=1920, height=1080)
+        region = self.action._get_desktop_region(fake_pyautogui)
+        self.assertEqual(region, (0, 0, 1920, 1080))
+
+    def test_find_rgb_position_desktop_scope(self) -> None:
+        fake_pyautogui = MagicMock()
+        with patch.object(self.action, "_get_pyautogui", return_value=(fake_pyautogui, None)):
+            with patch.object(self.action, "_get_desktop_region", return_value=(0, 0, 800, 600)):
+                with patch.object(self.action, "_find_rgb_in_region", return_value=(120, 80)):
+                    result = self.action.find_rgb_position(
+                        rgb=(255, 0, 0),
+                        tolerance=0,
+                        search_scope="desktop",
+                    )
+
+        self.assertTrue(result.is_success)
+        self.assertEqual(result.x, 120)
+        self.assertEqual(result.y, 80)
+        fake_pyautogui.screenshot.assert_called_once_with(region=(0, 0, 800, 600))
+
+
 if __name__ == "__main__":
     unittest.main()

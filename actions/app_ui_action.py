@@ -68,6 +68,11 @@ class AppUIAction:
         self._session = session or AppSession.get_instance()
         self._launcher = get_launcher()
 
+    def _get_desktop_region(self, pyautogui: Any) -> Tuple[int, int, int, int]:
+        """전체 PC 화면 영역(left, top, width, height)을 반환합니다."""
+        size = pyautogui.size()
+        return (0, 0, int(size.width), int(size.height))
+
     def _wrapper_to_region(self, wrapper: Any) -> Optional[Tuple[int, int, int, int]]:
         """wrapper의 화면 영역(left, top, width, height)을 반환합니다."""
         if wrapper is None:
@@ -1404,14 +1409,22 @@ class AppUIAction:
         child_window_match_mode: str = "contains",
         case_sensitive: bool = False,
         focus_search_root: bool = True,
+        search_scope: str = "app",
     ) -> AppUIActionResult:
         """화면에서 RGB 픽셀 위치를 찾습니다."""
         pyautogui, error_result = self._get_pyautogui()
         if error_result:
             return error_result
 
+        scope_mode = (search_scope or "app").strip().lower()
+        if scope_mode not in {"app", "desktop"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 search_scope: {search_scope} (app|desktop)",
+            )
+
         target_mode = (window_target or "auto").strip().lower()
-        if target_mode not in {"auto", "top", "child"}:
+        if scope_mode == "app" and target_mode not in {"auto", "top", "child"}:
             return AppUIActionResult(
                 result="error",
                 message=f"지원하지 않는 window_target: {window_target} (auto|top|child)",
@@ -1421,33 +1434,47 @@ class AppUIAction:
         step = max(1, step)
         start = time.monotonic()
 
-        search_targets = self._iter_rgb_search_targets(
-            window_target=window_target,
-            child_window_title=child_window_title,
-            child_window_auto_id=child_window_auto_id,
-            child_window_match_mode=child_window_match_mode,
-            case_sensitive=case_sensitive,
-        )
-        if not search_targets:
-            return AppUIActionResult(
-                result="error",
-                message="RGB 탐색 대상 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.",
+        if scope_mode == "desktop":
+            desktop_region = self._get_desktop_region(pyautogui)
+            search_targets: list[tuple[str, Any, Tuple[int, int, int, int]]] = [
+                ("desktop(full_screen)", None, desktop_region)
+            ]
+            focus_search_root = False
+            logger.info(
+                "[rgb] 전체 화면 탐색: search_scope=desktop, region=%s",
+                desktop_region,
             )
+        else:
+            search_targets = self._iter_rgb_search_targets(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            )
+            if not search_targets:
+                return AppUIActionResult(
+                    result="error",
+                    message="RGB 탐색 대상 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.",
+                )
 
-        searched_labels = [label for label, _, _ in search_targets]
-        logger.info(
-            "[rgb] 탐색 대상 %d개: window_target=%s, child_window_title=%s, targets=%s",
-            len(search_targets),
-            window_target,
-            child_window_title,
-            searched_labels,
-        )
+            searched_labels = [label for label, _, _ in search_targets]
+            logger.info(
+                "[rgb] 탐색 대상 %d개: search_scope=app, window_target=%s, child_window_title=%s, targets=%s",
+                len(search_targets),
+                window_target,
+                child_window_title,
+                searched_labels,
+            )
 
         while True:
             for label, wrapper, region in search_targets:
-                self._log_search_window(tool="rgb", wrapper=wrapper, scope=label)
+                if wrapper is not None:
+                    self._log_search_window(tool="rgb", wrapper=wrapper, scope=label)
+                else:
+                    logger.info("[rgb] 현재 탐색: scope=%s, region=%s", label, region)
                 logger.info("[rgb] 탐색 영역: region=%s", region)
-                if focus_search_root:
+                if focus_search_root and wrapper is not None:
                     self._safe_call(wrapper.set_focus, None)
                     time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
 
