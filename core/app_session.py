@@ -15,6 +15,8 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+_EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd", ".msi")
+
 
 class SessionState(Enum):
     """세션 상태"""
@@ -403,27 +405,42 @@ class AppSession:
         try:
             self._app = Application(backend=self._backend)
             
-            # 실행 파일 여부 확인 (exe, bat, cmd 등)
-            is_executable = exe_path.lower().endswith(('.exe', '.bat', '.cmd', '.msi'))
+            is_executable = self._is_executable_path(exe_path)
 
             # pywinauto Application.start()가 모르는 인자 제거
             _TOOL_ONLY_KEYS = {"connect_path", "title", "title_re"}
             start_kwargs = {k: v for k, v in kwargs.items() if k not in _TOOL_ONLY_KEYS}
+            connect_exe_path = self._resolve_connect_executable_path(kwargs.get("connect_path"))
 
             if is_executable:
                 self._app.start(exe_path, **start_kwargs)
             else:
-                # [수정] .rul, .txt 등 데이터 파일인 경우 시스템 연결 앱으로 실행
                 import os
-                logger.info(f"파일 연동 실행 시도: {exe_path}")
+
+                if not connect_exe_path:
+                    raise ConnectionError(
+                        message=(
+                            "데이터 파일(.rul 등) 실행을 위해 connect_path가 필요합니다. "
+                            "launch_application(connect_path=...) 또는 config application.connect_path에 exe 경로를 설정하세요."
+                        ),
+                        details={"data_file": exe_path},
+                    )
+
+                logger.info(
+                    "[launch] 데이터 파일 실행: file=%s, connect_exe=%s",
+                    exe_path,
+                    connect_exe_path,
+                )
                 os.startfile(exe_path)
-                
-                # 파일 실행 시에는 PID를 즉시 알 수 없으므로, 설정된 앱으로 연결(connect) 시도
-                # kwargs에 포함된 path, title, title_re 등을 활용하여 연결 시도
+
                 wait_until(
-                    condition=lambda: self._try_connect(**kwargs),
+                    condition=lambda: self._try_connect(
+                        path=connect_exe_path,
+                        title=kwargs.get("title"),
+                        **{k: v for k, v in kwargs.items() if k not in {"connect_path", "title"}},
+                    ),
                     timeout=startup_timeout,
-                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({exe_path})"
+                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({exe_path})",
                 )
 
             # 메인 윈도우 대기
@@ -510,6 +527,44 @@ class AppSession:
         locator = self.get_window_locator(window_name)
         return self.get_window(**locator)
     
+    def _is_executable_path(self, path: Optional[str]) -> bool:
+        if not path:
+            return False
+        return str(path).lower().endswith(_EXECUTABLE_SUFFIXES)
+
+    def _resolve_connect_executable_path(self, connect_path: Optional[str] = None) -> Optional[str]:
+        """
+        .rul 등 데이터 파일 실행 후 pywinauto가 붙을 exe 경로를 결정합니다.
+        우선순위: 인자 connect_path > config.connect_path > config.executable_path(실행파일일 때)
+        """
+        app_config = self._config.get("application", {})
+        candidates = [
+            connect_path,
+            app_config.get("connect_path"),
+            app_config.get("executable_path") if self._is_executable_path(app_config.get("executable_path")) else None,
+        ]
+        for candidate in candidates:
+            if candidate and str(candidate).strip():
+                return str(candidate).strip()
+        return None
+
+    def open_associated_file(self, path: str, **kwargs) -> "AppSession":
+        """연결을 유지한 채 데이터 파일(.rul 등)만 다시 엽니다."""
+        from errors.automation_error import ConnectionError
+        import os
+        import time
+
+        if not path:
+            raise ConnectionError(message="열 데이터 파일 경로가 비어 있습니다")
+
+        logger.info("[launch] 연결 유지 상태에서 데이터 파일 열기: %s", path)
+        os.startfile(path)
+        delay = float(self._config.get("timeouts", {}).get("after_focus_delay", 0.2))
+        time.sleep(delay)
+        if self.is_connected:
+            self._bring_to_front()
+        return self
+
     def _get_available_windows_hints(self) -> list:
         """연결 실패 시 디버깅용으로 열려 있는 윈도우 제목 목록을 반환합니다."""
         try:
@@ -536,16 +591,14 @@ class AppSession:
         # 2. 설정 기반 자동 전략 (명시적 인자가 부족할 때)
         if not strategies:
             app_config = self._config.get("application", {})
-            conf_path = app_config.get("executable_path")
-            
-            if conf_path:
-                # PID 기반 선행 검색 시도 (경로가 정확히 일치하는 프로세스 검색)
-                pid = self._find_pid_by_path(conf_path)
+            conf_connect = self._resolve_connect_executable_path()
+
+            if conf_connect:
+                pid = self._find_pid_by_path(conf_connect)
                 if pid:
                     strategies.append({"process": pid})
                 else:
-                    # PID가 없으면 경로 기반 시도 (Fallback)
-                    strategies.append({"path": conf_path})
+                    strategies.append({"path": conf_connect})
             
             # 보안 강화를 위해 타이틀 기반 폴백은 더 이상 사용하지 않습니다.
 
@@ -623,8 +676,8 @@ class AppSession:
         return None
 
     def _verify_connection_path(self) -> bool:
-        """현재 연결된 앱의 프로세스 경로가 설정된 경로와 일치하는지 확인합니다."""
-        target_path = self._config.get("application", {}).get("executable_path")
+        """현재 연결된 앱의 프로세스 경로가 설정된 exe 경로와 일치하는지 확인합니다."""
+        target_path = self._resolve_connect_executable_path()
         if not target_path or self._app is None:
             return True
             

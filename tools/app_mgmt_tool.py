@@ -45,13 +45,20 @@ async def launch_application(
 
     try:
         launcher = get_launcher()
-        # 입력된 경로가 있으면 사용하고, 없으면 설정된 기본 경로 사용
-        target_path = executable_path or launcher._session.config.get("application", {}).get("executable_path")
+        app_config = launcher._session.config.get("application", {})
+        target_path = executable_path or app_config.get("executable_path")
+        resolved_connect_path = connect_path or app_config.get("connect_path")
+        if target_path and not launcher._session._is_executable_path(target_path):
+            logger.info(
+                "[Tool] launch_application 데이터 파일 모드: file=%s, connect_exe=%s",
+                target_path,
+                resolved_connect_path,
+            )
 
         launcher.launch(
             path=target_path,
             wait_for_ready=wait_for_window,
-            connect_path=connect_path,
+            connect_path=resolved_connect_path,
             title=window_title,
             title_re=window_title_re,
         )
@@ -116,8 +123,12 @@ async def connect_to_application(
 
     try:
         launcher = get_launcher()
-        # 하드코딩 요구사항: 설정된 경로가 있으면 LLM 인자를 무시하거나 우선함
-        config_path = launcher._session.config.get("application", {}).get("executable_path")
+        app_config = launcher._session.config.get("application", {})
+        config_path = (
+            executable_path
+            or launcher._session._resolve_connect_executable_path()
+            or app_config.get("executable_path")
+        )
 
         launcher.connect_to_running(
             process_id=process_id,
