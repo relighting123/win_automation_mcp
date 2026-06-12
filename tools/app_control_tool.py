@@ -180,6 +180,8 @@ def click_app_by_attr(
     timeout: Optional[float] = None,
     draw_outline: bool = False,
     outline_colour: str = "red",
+    search_outline_colour: str = "green",
+    outline_scope: str = "all",
 ) -> str:
     """
     pywinauto(UIA) 속성 기반으로 요소를 직접 찾아 클릭합니다.
@@ -201,7 +203,13 @@ def click_app_by_attr(
     child_window_match_mode:
       - exact: child_window_title 완전 일치
       - contains: child_window_title 포함 일치
-    draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
+    draw_outline을 True로 설정하면 탐색/클릭 대상을 강조 표시합니다.
+    outline_scope:
+      - search: 순회 중인 search_root(창)만
+      - target: 찾은 요소만
+      - all: search_root + target (기본)
+    search_outline_colour: search_root 테두리 색 (기본 green)
+    outline_colour: target 요소 테두리 색 (기본 red)
     """
     logger.info(
         "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
@@ -230,7 +238,9 @@ def click_app_by_attr(
         double=double,
         timeout=timeout,
         draw_outline=draw_outline,
-        outline_colour=outline_colour
+        outline_colour=outline_colour,
+        search_outline_colour=search_outline_colour,
+        outline_scope=outline_scope,
     )
     payload = result.to_dict()
     logger.info(
