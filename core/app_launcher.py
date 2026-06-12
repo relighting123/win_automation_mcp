@@ -72,15 +72,23 @@ class AppLauncher:
         Returns:
             연결된 AppSession
         """
-        if self._session.is_connected:
-            logger.info("이미 연결된 세션이 있습니다")
-            return self._session
-        
         exe_path = path or self._session.config.get(
             "application", {}
         ).get("executable_path")
         
-        logger.info(f"--- [DEBUG] launch exe_path 결정: argument_path={path}, config_path={self._session.config.get('application', {}).get('executable_path')}, 최종={exe_path} ---")
+        logger.info(
+            "[launch] path 결정: argument_path=%s, config_path=%s, 최종=%s",
+            path,
+            self._session.config.get("application", {}).get("executable_path"),
+            exe_path,
+        )
+
+        if self._session.is_connected:
+            if exe_path and not self._session._is_executable_path(exe_path):
+                logger.info("[launch] 이미 연결됨 - 데이터 파일만 다시 열기: %s", exe_path)
+                return self._session.open_associated_file(exe_path, **kwargs)
+            logger.info("이미 연결된 세션이 있습니다")
+            return self._session
         
         if not exe_path:
             raise ConnectionError(
