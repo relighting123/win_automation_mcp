@@ -328,29 +328,37 @@ def find_app_by_rgb(
     child_window_auto_id: Optional[str] = None,
     child_window_match_mode: str = "contains",
     case_sensitive: bool = False,
+    search_scope: str = "app",
 ) -> str:
     """
     화면에서 특정 RGB 색상을 가진 픽셀의 좌표를 찾습니다.
 
-    window_target:
+    search_scope:
+      - app: 연결된 앱 윈도우 영역에서 탐색 (기본)
+      - desktop: 전체 PC 화면(모든 모니터 가상 데스크톱)에서 탐색
+
+    window_target (search_scope=app 일 때):
       - auto: child_window_title 미지정 시 기존처럼 pick된 top 1개, 지정 시 child 우선
       - top: 프로세스 top window + child window(Find 등) 영역을 순회
       - child: child_window_title/auto_id로 좁힌 영역만 탐색
     """
     logger.info(
-        "[Tool] find_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, window_target=%s, child_window_title=%s",
+        "[Tool] find_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, search_scope=%s, window_target=%s, child_window_title=%s",
         r,
         g,
         b,
         tolerance,
+        search_scope,
         window_target,
         child_window_title,
     )
     action = get_app_ui_action()
 
-    focus_result = action.ensure_focus()
-    if not focus_result.is_success:
-        return json.dumps(focus_result.to_dict(), ensure_ascii=False)
+    scope_mode = (search_scope or "app").strip().lower()
+    if scope_mode != "desktop":
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return json.dumps(focus_result.to_dict(), ensure_ascii=False)
 
     result = action.find_rgb_position(
         rgb=(r, g, b),
@@ -361,6 +369,7 @@ def find_app_by_rgb(
         child_window_auto_id=child_window_auto_id,
         child_window_match_mode=child_window_match_mode,
         case_sensitive=case_sensitive,
+        search_scope=search_scope,
     )
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
@@ -378,25 +387,29 @@ def click_app_by_rgb(
     child_window_auto_id: Optional[str] = None,
     child_window_match_mode: str = "contains",
     case_sensitive: bool = False,
+    search_scope: str = "app",
 ) -> str:
     """
     화면에서 특정 RGB 색상을 가진 픽셀을 찾아 클릭합니다.
 
-    window_target은 find_app_by_rgb와 동일합니다.
+    search_scope / window_target은 find_app_by_rgb와 동일합니다.
     """
     logger.info(
-        "[Tool] click_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, window_target=%s, child_window_title=%s",
+        "[Tool] click_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, search_scope=%s, window_target=%s, child_window_title=%s",
         r,
         g,
         b,
         tolerance,
+        search_scope,
         window_target,
         child_window_title,
     )
     action = get_app_ui_action()
-    focus_result = action.ensure_focus()
-    if not focus_result.is_success:
-        return json.dumps(focus_result.to_dict(), ensure_ascii=False)
+    scope_mode = (search_scope or "app").strip().lower()
+    if scope_mode != "desktop":
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return json.dumps(focus_result.to_dict(), ensure_ascii=False)
 
     find_result = action.find_rgb_position(
         rgb=(r, g, b),
@@ -407,6 +420,7 @@ def click_app_by_rgb(
         child_window_auto_id=child_window_auto_id,
         child_window_match_mode=child_window_match_mode,
         case_sensitive=case_sensitive,
+        search_scope=search_scope,
     )
     
     if not find_result.is_success:
