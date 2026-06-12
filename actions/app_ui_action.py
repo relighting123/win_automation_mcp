@@ -73,13 +73,30 @@ class AppUIAction:
         size = pyautogui.size()
         return (0, 0, int(size.width), int(size.height))
 
-    def _wrapper_to_region(self, wrapper: Any) -> Optional[Tuple[int, int, int, int]]:
+    def _wrapper_to_region(
+        self,
+        wrapper: Any,
+        *,
+        expand_px: int = 4,
+    ) -> Optional[Tuple[int, int, int, int]]:
         """wrapper의 화면 영역(left, top, width, height)을 반환합니다."""
         if wrapper is None:
             return None
         try:
             rect = wrapper.rectangle()
-            return (rect.left, rect.top, rect.width(), rect.height())
+            left = int(rect.left) - max(0, expand_px)
+            top = int(rect.top) - max(0, expand_px)
+            width = int(rect.width()) + (2 * max(0, expand_px))
+            height = int(rect.height()) + (2 * max(0, expand_px))
+            if left < 0:
+                width += left
+                left = 0
+            if top < 0:
+                height += top
+                top = 0
+            if width <= 0 or height <= 0:
+                return None
+            return (left, top, width, height)
         except Exception as e:
             logger.debug("wrapper 영역 획득 실패: %s", e)
             return None
@@ -115,22 +132,23 @@ class AppUIAction:
         child_window_auto_id: Optional[str] = None,
         child_window_match_mode: str = "contains",
         case_sensitive: bool = False,
+        region_expand_px: int = 4,
     ) -> list[tuple[str, Any, Tuple[int, int, int, int]]]:
         """
         RGB 탐색에 사용할 (label, wrapper, region) 목록을 반환합니다.
 
-        - auto + child 미지정: 기존과 동일하게 pick된 top window 1개
+        - auto + child 미지정: pick된 top window 1개 (legacy)
         - top: 프로세스 top window + child window(Find 등) 영역 순회
         - child/auto+child: child_window_title/auto_id로 좁힌 영역
         """
-        target_mode = (window_target or "auto").strip().lower()
+        target_mode = (window_target or "top").strip().lower()
         child_title = (child_window_title or "").strip()
         child_auto_id = (child_window_auto_id or "").strip()
         legacy_single = target_mode == "auto" and not child_title and not child_auto_id
 
         if legacy_single:
             wrapper = self._pick_target_window() or self._session.get_top_window()
-            region = self._wrapper_to_region(wrapper)
+            region = self._wrapper_to_region(wrapper, expand_px=region_expand_px)
             if wrapper is not None and region is not None:
                 return [("auto->single", wrapper, region)]
             return []
@@ -159,7 +177,7 @@ class AppUIAction:
                         search_root_info,
                     )
                     continue
-                region = self._wrapper_to_region(search_root)
+                region = self._wrapper_to_region(search_root, expand_px=region_expand_px)
                 if region is None:
                     continue
                 targets.append((f"{search_root_info} (top={top_label})", search_root, region))
@@ -1408,8 +1426,9 @@ class AppUIAction:
         child_window_auto_id: Optional[str] = None,
         child_window_match_mode: str = "contains",
         case_sensitive: bool = False,
-        focus_search_root: bool = True,
+        focus_search_root: bool = False,
         search_scope: str = "app",
+        region_expand_px: int = 4,
     ) -> AppUIActionResult:
         """화면에서 RGB 픽셀 위치를 찾습니다."""
         pyautogui, error_result = self._get_pyautogui()
@@ -1451,6 +1470,7 @@ class AppUIAction:
                 child_window_auto_id=child_window_auto_id,
                 child_window_match_mode=child_window_match_mode,
                 case_sensitive=case_sensitive,
+                region_expand_px=region_expand_px,
             )
             if not search_targets:
                 return AppUIActionResult(

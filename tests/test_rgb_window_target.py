@@ -67,7 +67,7 @@ class RgbWindowTargetTest(unittest.TestCase):
             targets = self.action._iter_rgb_search_targets(window_target="auto")
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0][0], "auto->single")
-        self.assertEqual(targets[0][2], (10, 20, 100, 80))
+        self.assertEqual(targets[0][2], (6, 16, 108, 88))
 
     def test_top_iterates_search_roots(self) -> None:
         with patch.object(self.action, "_iter_process_top_windows", return_value=[self.main]):
@@ -79,8 +79,8 @@ class RgbWindowTargetTest(unittest.TestCase):
                 targets = self.action._iter_rgb_search_targets(window_target="top")
 
         self.assertEqual(len(targets), 2)
-        self.assertEqual(targets[0][2], (10, 20, 100, 80))
-        self.assertEqual(targets[1][2], (50, 60, 200, 120))
+        self.assertEqual(targets[0][2], (6, 16, 108, 88))
+        self.assertEqual(targets[1][2], (46, 56, 208, 128))
 
     def test_format_search_window_log(self) -> None:
         window = _IdentityWindow(title="Find", automation_id="FindDlg")
