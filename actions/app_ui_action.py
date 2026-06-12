@@ -412,8 +412,8 @@ class AppUIAction:
             logger.debug("대상 윈도우 선택 실패: %s", e)
             return None
 
-    def _format_window_label(self, wrapper: Any) -> str:
-        """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
+    def _get_window_search_identity(self, wrapper: Any) -> Dict[str, str]:
+        """탐색 중인 창의 title/auto_id 등 핵심 식별 정보를 반환합니다."""
         title_candidates = self._get_node_title_candidates(wrapper)
         title = title_candidates[0] if title_candidates else ""
 
@@ -429,17 +429,52 @@ class AppUIAction:
                 pass
 
         auto_id = str(self._safe_call(lambda: wrapper.element_info.automation_id, "") or "").strip()
+        control_id = str(self._safe_call(lambda: wrapper.element_info.control_id, "") or "").strip()
         control_type = str(self._safe_call(lambda: wrapper.element_info.control_type, "") or "").strip()
         class_name = str(self._safe_call(lambda: wrapper.element_info.class_name, "") or "").strip()
-        parts = [f"title={title or '-'}", f"auto_id={auto_id or '-'}"]
+        return {
+            "title": title or "-",
+            "auto_id": auto_id or "-",
+            "control_id": control_id or "-",
+            "uia_control_type": control_type or "-",
+            "class_name": class_name or "-",
+            "hwnd": str(handle) if handle else "-",
+        }
+
+    def _format_search_window_log(self, wrapper: Any) -> str:
+        """click/rgb 탐색 로그용 창 식별 문자열."""
+        info = self._get_window_search_identity(wrapper)
+        return (
+            f"title={info['title']}, auto_id={info['auto_id']}, "
+            f"control_id={info['control_id']}, uia_type={info['uia_control_type']}, hwnd={info['hwnd']}"
+        )
+
+    def _log_search_window(self, *, tool: str, wrapper: Any, scope: str = "") -> None:
+        info = self._get_window_search_identity(wrapper)
+        logger.info(
+            "[%s] 현재 탐색 창: title=%s, auto_id=%s, control_id=%s, uia_type=%s, hwnd=%s, scope=%s",
+            tool,
+            info["title"],
+            info["auto_id"],
+            info["control_id"],
+            info["uia_control_type"],
+            info["hwnd"],
+            scope or "-",
+        )
+
+    def _format_window_label(self, wrapper: Any) -> str:
+        """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
+        info = self._get_window_search_identity(wrapper)
+        title_candidates = self._get_node_title_candidates(wrapper)
+        parts = [f"title={info['title']}", f"auto_id={info['auto_id']}"]
         if len(title_candidates) > 1:
             parts.append(f"alt_titles={title_candidates[1:3]}")
-        if control_type:
-            parts.append(f"type={control_type}")
-        if class_name:
-            parts.append(f"class={class_name}")
-        if handle:
-            parts.append(f"hwnd={handle}")
+        if info["uia_control_type"] != "-":
+            parts.append(f"type={info['uia_control_type']}")
+        if info["class_name"] != "-":
+            parts.append(f"class={info['class_name']}")
+        if info["hwnd"] != "-":
+            parts.append(f"hwnd={info['hwnd']}")
         return ", ".join(parts)
 
     def _get_wrapper_handle(self, wrapper: Any) -> Optional[int]:
@@ -615,10 +650,11 @@ class AppUIAction:
         nodes = [root]
         nodes.extend(descendants)
 
+        self._log_search_window(tool="click_app_by_attr", wrapper=root, scope="descendants_scan")
         logger.info(
             "[click_app_by_attr] descendants 순회: search_root=%s, descendants=%d, total_nodes=%d, "
-            "auto_id=%s, control_type=%s, title=%s, legacy_value=%s",
-            self._format_window_label(root),
+            "target_auto_id=%s, target_control_type=%s, target_title=%s, target_legacy_value=%s",
+            self._format_search_window_log(root),
             len(descendants),
             len(nodes),
             auto_id,
@@ -1409,6 +1445,8 @@ class AppUIAction:
 
         while True:
             for label, wrapper, region in search_targets:
+                self._log_search_window(tool="rgb", wrapper=wrapper, scope=label)
+                logger.info("[rgb] 탐색 영역: region=%s", region)
                 if focus_search_root:
                     self._safe_call(wrapper.set_focus, None)
                     time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
@@ -1758,10 +1796,14 @@ class AppUIAction:
                             )
                             continue
 
+                        self._log_search_window(
+                            tool="click_app_by_attr",
+                            wrapper=search_root,
+                            scope=search_root_info,
+                        )
                         logger.info(
-                            "[click_app_by_attr] search_root=%s (from top=%s)",
-                            search_root_info,
-                            self._format_window_label(top_window),
+                            "[click_app_by_attr] search_root from top=%s",
+                            self._format_search_window_log(top_window),
                         )
 
                         target = self._find_first_matching_node(

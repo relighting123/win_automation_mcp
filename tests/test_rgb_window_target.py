@@ -38,6 +38,24 @@ class _MockWindow:
         return None
 
 
+class _Info:
+    def __init__(self, *, title="", automation_id="", control_id="", control_type="Window"):
+        self.automation_id = automation_id
+        self.control_id = control_id
+        self.control_type = control_type
+        self.class_name = ""
+        self.handle = 1234
+
+
+class _IdentityWindow:
+    def __init__(self, *, title="Find", automation_id="FindDlg"):
+        self.element_info = _Info(title=title, automation_id=automation_id, control_id="2000")
+        self._title = title
+
+    def window_text(self):
+        return self._title
+
+
 class RgbWindowTargetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.action = AppUIAction(session=MagicMock())
@@ -63,6 +81,13 @@ class RgbWindowTargetTest(unittest.TestCase):
         self.assertEqual(len(targets), 2)
         self.assertEqual(targets[0][2], (10, 20, 100, 80))
         self.assertEqual(targets[1][2], (50, 60, 200, 120))
+
+    def test_format_search_window_log(self) -> None:
+        window = _IdentityWindow(title="Find", automation_id="FindDlg")
+        label = self.action._format_search_window_log(window)
+        self.assertIn("title=Find", label)
+        self.assertIn("auto_id=FindDlg", label)
+        self.assertIn("control_id=2000", label)
 
     def test_child_scope_uses_resolve_roots(self) -> None:
         with patch.object(self.action, "_iter_process_top_windows", return_value=[self.main]):
