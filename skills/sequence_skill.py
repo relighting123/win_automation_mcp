@@ -33,7 +33,7 @@ class SequenceSkill(BaseSkill):
             logger.info(f"Loading skill '{self.skill_name}' from folder: {folder_path}")
             with open(folder_yaml, "r", encoding="utf-8") as f:
                 skill_config = yaml.safe_load(f)
-                self.steps = skill_config.get("tools", skill_config.get("steps", []))
+                self.steps = skill_config.get("tools", skill_config.get("steps", [])) or []
                 self.description = skill_config.get("description", "")
             
             # skill.md 내용 로드 (프롬프트 주입용)
@@ -54,9 +54,25 @@ class SequenceSkill(BaseSkill):
         with open(path, "r", encoding="utf-8") as f:
             full_config = yaml.safe_load(f)
             skill_config = full_config.get("skills", {}).get(self.skill_name, {})
-            self.steps = skill_config.get("tools", skill_config.get("steps", []))
+            self.steps = skill_config.get("tools", skill_config.get("steps", [])) or []
             self.description = skill_config.get("description", "")
             self.instruction = ""
+
+    def _normalize_step_args(self, step: Dict[str, Any]) -> Dict[str, Any]:
+        """step에서 args dict를 추출합니다. YAML의 빈 args: 는 None이 될 수 있어 {}로 정규화합니다."""
+        if "args" in step:
+            raw_args = step.get("args")
+            if raw_args is None:
+                return {}
+            if not isinstance(raw_args, dict):
+                raise ValueError(f"step.args는 dict 또는 null 이어야 합니다: {step}")
+            return raw_args
+
+        return {
+            k: v
+            for k, v in step.items()
+            if k not in {"tool", "type", "action"}
+        }
 
     def _render_template(self, value: Any, runtime_kwargs: Dict[str, Any]) -> Any:
         """step args 내부 문자열 템플릿을 런타임 인자 기준으로 치환"""
@@ -81,14 +97,7 @@ class SequenceSkill(BaseSkill):
             if not tool_name:
                 continue
 
-            if "args" in raw_step:
-                raw_args = raw_step["args"]
-            else:
-                raw_args = {
-                    k: v
-                    for k, v in raw_step.items()
-                    if k not in {"tool", "type", "action"}
-                }
+            raw_args = self._normalize_step_args(raw_step)
 
             processed_args = {}
             for k, v in raw_args.items():
@@ -127,16 +136,7 @@ class SequenceSkill(BaseSkill):
         if not tool_name:
             raise ValueError(f"step에 tool/type/action 중 하나가 필요합니다: {step}")
 
-        if "args" in step:
-            if not isinstance(step["args"], dict):
-                raise ValueError(f"step.args는 dict 이어야 합니다: {step}")
-            tool_args = step["args"]
-        else:
-            tool_args = {
-                k: v
-                for k, v in step.items()
-                if k not in {"tool", "type", "action"}
-            }
+        tool_args = self._normalize_step_args(step)
 
         final_args = {}
         for k, v in tool_args.items():
