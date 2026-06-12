@@ -340,6 +340,10 @@ def find_app_by_rgb(
     case_sensitive: bool = False,
     search_scope: str = "app",
     focus_before_search: bool = False,
+    draw_outline: bool = False,
+    outline_colour: str = "red",
+    search_outline_colour: str = "green",
+    outline_scope: str = "all",
 ) -> str:
     """
     화면에서 특정 RGB 색상을 가진 픽셀의 좌표를 찾습니다.
@@ -356,6 +360,12 @@ def find_app_by_rgb(
     focus_before_search:
       - False (기본): RGB 캡처 전 포커스를 바꾸지 않아 desktop과 유사하게 색 유지
       - True: 탐색 전 앱 포커스 (UI 색이 바뀔 수 있음)
+
+    draw_outline을 True로 설정하면 탐색 영역/발견 픽셀을 강조 표시합니다.
+    outline_scope:
+      - search: 순회 중인 search_root(창) 또는 region만
+      - target: 발견한 픽셀 위치만
+      - all: 탐색 영역 + 픽셀 (기본)
     """
     logger.info(
         "[Tool] find_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, search_scope=%s, window_target=%s, child_window_title=%s",
@@ -394,6 +404,10 @@ def find_app_by_rgb(
         case_sensitive=case_sensitive,
         search_scope=search_scope,
         focus_search_root=focus_before_search,
+        draw_outline=draw_outline,
+        outline_colour=outline_colour,
+        search_outline_colour=search_outline_colour,
+        outline_scope=outline_scope,
     )
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
@@ -413,11 +427,15 @@ def click_app_by_rgb(
     case_sensitive: bool = False,
     search_scope: str = "app",
     focus_before_search: bool = False,
+    draw_outline: bool = False,
+    outline_colour: str = "red",
+    search_outline_colour: str = "green",
+    outline_scope: str = "all",
 ) -> str:
     """
     화면에서 특정 RGB 색상을 가진 픽셀을 찾아 클릭합니다.
 
-    search_scope / window_target / focus_before_search는 find_app_by_rgb와 동일합니다.
+    search_scope / window_target / focus_before_search / draw_outline 옵션은 find_app_by_rgb와 동일합니다.
     """
     logger.info(
         "[Tool] click_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, search_scope=%s, window_target=%s, child_window_title=%s",
@@ -455,6 +473,10 @@ def click_app_by_rgb(
         case_sensitive=case_sensitive,
         search_scope=search_scope,
         focus_search_root=focus_before_search,
+        draw_outline=draw_outline,
+        outline_colour=outline_colour,
+        search_outline_colour=search_outline_colour,
+        outline_scope=outline_scope,
     )
     
     if not find_result.is_success:
