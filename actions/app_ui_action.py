@@ -503,6 +503,96 @@ class AppUIAction:
         except Exception as e:
             logger.warning("outline 실패 (%s): %s", label or "highlight", e)
 
+    def _colour_to_win32_rgb(self, colour: str) -> int:
+        colours = {
+            "green": 0x00FF00,
+            "blue": 0xFF0000,
+            "red": 0x0000FF,
+        }
+        normalized = (colour or "green").strip().lower()
+        if normalized in colours:
+            return colours[normalized]
+        return colours["green"]
+
+    def _safe_draw_screen_rect_outline(
+        self,
+        *,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+        colour: str,
+        thickness: int = 3,
+        label: str = "",
+    ) -> None:
+        try:
+            import win32con
+            import win32gui
+
+            rgb = self._colour_to_win32_rgb(colour)
+            hdc = win32gui.GetDC(0)
+            pen = win32gui.CreatePen(win32con.PS_SOLID, thickness, rgb)
+            old_pen = win32gui.SelectObject(hdc, pen)
+            old_brush = win32gui.SelectObject(hdc, win32gui.GetStockObject(win32con.NULL_BRUSH))
+            win32gui.Rectangle(hdc, left, top, right, bottom)
+            win32gui.SelectObject(hdc, old_pen)
+            win32gui.SelectObject(hdc, old_brush)
+            win32gui.DeleteObject(pen)
+            win32gui.ReleaseDC(0, hdc)
+            logger.info(
+                "[outline] %s colour=%s rect=(%s,%s,%s,%s)",
+                label or "screen_rect",
+                colour,
+                left,
+                top,
+                right,
+                bottom,
+            )
+        except Exception as e:
+            logger.warning("screen outline 실패 (%s): %s", label or "screen_rect", e)
+
+    def _safe_draw_rgb_search_region(
+        self,
+        *,
+        wrapper: Any,
+        region: Tuple[int, int, int, int],
+        colour: str,
+        label: str,
+    ) -> None:
+        if wrapper is not None and hasattr(wrapper, "draw_outline"):
+            self._safe_draw_outline(wrapper, colour=colour, label=label)
+            return
+
+        left, top, width, height = region
+        self._safe_draw_screen_rect_outline(
+            left=left,
+            top=top,
+            right=left + max(1, width) - 1,
+            bottom=top + max(1, height) - 1,
+            colour=colour,
+            label=label,
+        )
+
+    def _safe_draw_pixel_marker(
+        self,
+        *,
+        x: int,
+        y: int,
+        colour: str,
+        size_px: int = 12,
+        label: str = "",
+    ) -> None:
+        half = max(2, size_px // 2)
+        self._safe_draw_screen_rect_outline(
+            left=x - half,
+            top=y - half,
+            right=x + half,
+            bottom=y + half,
+            colour=colour,
+            thickness=2,
+            label=label or f"pixel({x},{y})",
+        )
+
     def _format_window_label(self, wrapper: Any) -> str:
         """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
         info = self._get_window_search_identity(wrapper)
@@ -1447,8 +1537,19 @@ class AppUIAction:
         focus_search_root: bool = False,
         search_scope: str = "app",
         region_expand_px: int = 4,
+        draw_outline: bool = False,
+        outline_colour: str = "red",
+        search_outline_colour: str = "green",
+        outline_scope: str = "all",
     ) -> AppUIActionResult:
-        """화면에서 RGB 픽셀 위치를 찾습니다."""
+        """
+        화면에서 RGB 픽셀 위치를 찾습니다.
+
+        draw_outline=True 시 outline_scope에 따라 탐색 영역/발견 픽셀을 강조합니다:
+          - search: 순회 중인 search_root(창) 또는 region만
+          - target: 발견한 픽셀 위치만
+          - all: 탐색 영역 + 픽셀 (기본)
+        """
         pyautogui, error_result = self._get_pyautogui()
         if error_result:
             return error_result
@@ -1466,6 +1567,16 @@ class AppUIAction:
                 result="error",
                 message=f"지원하지 않는 window_target: {window_target} (auto|top|child)",
             )
+
+        outline_scope = (outline_scope or "all").strip().lower()
+        if outline_scope not in {"search", "target", "all"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all)",
+            )
+        outline_search = draw_outline and outline_scope in {"search", "all"}
+        outline_target = draw_outline and outline_scope in {"target", "all"}
+        outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
 
         tolerance = max(0, tolerance)
         step = max(1, step)
@@ -1505,6 +1616,8 @@ class AppUIAction:
                 searched_labels,
             )
 
+        searched_labels = [label for label, _, _ in search_targets]
+
         while True:
             for label, wrapper, region in search_targets:
                 if wrapper is not None:
@@ -1515,6 +1628,15 @@ class AppUIAction:
                 if focus_search_root and wrapper is not None:
                     self._safe_call(wrapper.set_focus, None)
                     time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
+
+                if outline_search:
+                    self._safe_draw_rgb_search_region(
+                        wrapper=wrapper,
+                        region=region,
+                        colour=search_outline_colour,
+                        label=f"rgb_search={label}",
+                    )
+                    time.sleep(outline_pause)
 
                 screenshot = pyautogui.screenshot(region=region)
                 matched = self._find_rgb_in_region(
@@ -1535,6 +1657,14 @@ class AppUIAction:
                     final_y,
                     label,
                 )
+                if outline_target:
+                    self._safe_draw_pixel_marker(
+                        x=final_x,
+                        y=final_y,
+                        colour=outline_colour,
+                        label=f"rgb_target search_root={label}",
+                    )
+                    time.sleep(outline_pause)
                 return AppUIActionResult(
                     result="success",
                     x=final_x,
