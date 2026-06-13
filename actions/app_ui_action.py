@@ -770,7 +770,7 @@ class AppUIAction:
             if resolved is not None:
                 x, y, info = resolved
                 logger.info(
-                    "[right_click_at_focus] 포커스 위치: x=%s, y=%s, source=%s, info=%s",
+                    "[click_at_focus] 포커스 위치: x=%s, y=%s, source=%s, info=%s",
                     x,
                     y,
                     info.get("source"),
@@ -1895,7 +1895,7 @@ class AppUIAction:
 
             time.sleep(0.1)
 
-    def right_click_at_focus(
+    def click_at_focus(
         self,
         button: str = "right",
         clicks: int = 1,
@@ -1913,7 +1913,7 @@ class AppUIAction:
             )
 
         logger.info(
-            "[right_click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s",
+            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s",
             button,
             clicks,
             require_app_focus,

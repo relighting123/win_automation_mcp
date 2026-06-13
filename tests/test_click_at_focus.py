@@ -9,7 +9,7 @@ sys.path.insert(0, str(project_root))
 from actions.app_ui_action import AppUIAction, AppUIActionResult
 
 
-class RightClickAtFocusTest(unittest.TestCase):
+class ClickAtFocusTest(unittest.TestCase):
     def setUp(self) -> None:
         session = MagicMock()
         session.is_connected = True
@@ -36,7 +36,7 @@ class RightClickAtFocusTest(unittest.TestCase):
                     "_get_pyautogui",
                     return_value=(MagicMock(), None),
                 ) as get_pyautogui:
-                    result = self.action.right_click_at_focus()
+                    result = self.action.click_at_focus()
 
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 100)
@@ -61,7 +61,7 @@ class RightClickAtFocusTest(unittest.TestCase):
                     "_get_pyautogui",
                     return_value=(MagicMock(), None),
                 ) as get_pyautogui:
-                    result = self.action.right_click_at_focus(button="left")
+                    result = self.action.click_at_focus(button="left")
 
         self.assertEqual(result.result, "success")
         pyautogui = get_pyautogui.return_value[0]
@@ -73,12 +73,12 @@ class RightClickAtFocusTest(unittest.TestCase):
             "ensure_focus",
             return_value=AppUIActionResult(result="error", message="포커스 실패"),
         ):
-            result = self.action.right_click_at_focus()
+            result = self.action.click_at_focus()
 
         self.assertEqual(result.result, "error")
         self.assertIn("포커스 실패", result.message or "")
 
-    def test_right_click_rejects_foreign_process(self) -> None:
+    def test_rejects_foreign_process(self) -> None:
         with patch.object(
             self.action,
             "ensure_focus",
@@ -89,12 +89,12 @@ class RightClickAtFocusTest(unittest.TestCase):
                 "_resolve_focus_click_point",
                 return_value=(50, 60, {"source": "caret", "process_id": 9999}),
             ):
-                result = self.action.right_click_at_focus(require_app_focus=True)
+                result = self.action.click_at_focus(require_app_focus=True)
 
         self.assertEqual(result.result, "error")
         self.assertIn("연결된 애플리케이션이 아닙니다", result.message or "")
 
-    def test_right_click_not_found(self) -> None:
+    def test_not_found(self) -> None:
         with patch.object(
             self.action,
             "ensure_focus",
@@ -105,12 +105,12 @@ class RightClickAtFocusTest(unittest.TestCase):
                 "_resolve_focus_click_point",
                 return_value=(None, None, {}),
             ):
-                result = self.action.right_click_at_focus()
+                result = self.action.click_at_focus()
 
         self.assertEqual(result.result, "not_found")
 
     def test_invalid_button(self) -> None:
-        result = self.action.right_click_at_focus(button="invalid")
+        result = self.action.click_at_focus(button="invalid")
         self.assertEqual(result.result, "error")
 
     def test_resolve_focus_prefers_caret(self) -> None:

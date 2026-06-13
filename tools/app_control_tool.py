@@ -115,7 +115,7 @@ def click_app_position(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
-def right_click_at_focus(
+def click_at_focus(
     button: str = "right",
     clicks: int = 1,
     require_app_focus: bool = True,
@@ -132,26 +132,39 @@ def right_click_at_focus(
         require_app_focus: 포커스가 연결된 앱에 있을 때만 클릭 (기본 True)
     """
     logger.info(
-        "[Tool] right_click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s",
+        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s",
         button,
         clicks,
         require_app_focus,
     )
     action = get_app_ui_action()
-    result = action.right_click_at_focus(
+    result = action.click_at_focus(
         button=button,
         clicks=clicks,
         require_app_focus=require_app_focus,
     )
     payload = result.to_dict()
     logger.info(
-        "[Tool] right_click_at_focus 결과: success=%s, x=%s, y=%s, message=%s",
+        "[Tool] click_at_focus 결과: success=%s, x=%s, y=%s, message=%s",
         payload.get("is_success"),
         payload.get("x"),
         payload.get("y"),
         payload.get("message"),
     )
     return json.dumps(payload, ensure_ascii=False)
+
+
+def right_click_at_focus(
+    button: str = "right",
+    clicks: int = 1,
+    require_app_focus: bool = True,
+) -> str:
+    """Deprecated: click_at_focus를 사용하세요."""
+    return click_at_focus(
+        button=button,
+        clicks=clicks,
+        require_app_focus=require_app_focus,
+    )
 
 
 async def click_app_by_keyword(
@@ -536,6 +549,7 @@ def register_app_control_tools(mcp: "FastMCP") -> None:
     mcp.tool()(find_app_by_ocr)
     mcp.tool()(type_app_text)
     mcp.tool()(press_app_shortcut)
+    mcp.tool()(click_at_focus)
     mcp.tool()(right_click_at_focus)
     mcp.tool()(click_app_position)
     mcp.tool()(click_app_by_keyword)
