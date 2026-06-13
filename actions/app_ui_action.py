@@ -2022,13 +2022,10 @@ class AppUIAction:
         require_app_focus: bool = True,
         offset_x: int = 0,
         offset_y: int = 0,
-        click_method: str = "auto",
     ) -> AppUIActionResult:
         """
-        현재 키보드 포커스 위치에서 마우스 클릭합니다.
-        호출 시 연결된 애플리케이션에 ensure_focus()를 적용합니다.
-        offset_x/offset_y로 포커스 기준 좌표를 보정할 수 있습니다.
-        click_method: auto|mouse|context_menu
+        현재 키보드 포커스 위치의 (x, y)를 구한 뒤,
+        실제 마우스 커서를 이동시키고 클릭합니다.
         """
         button = (button or "right").strip().lower()
         if button not in {"left", "right", "middle"}:
@@ -2036,22 +2033,14 @@ class AppUIAction:
                 result="error",
                 message=f"지원하지 않는 button: {button} (left|right|middle)",
             )
-        click_method = (click_method or "auto").strip().lower()
-        if click_method not in {"auto", "mouse", "context_menu"}:
-            return AppUIActionResult(
-                result="error",
-                message=f"지원하지 않는 click_method: {click_method} (auto|mouse|context_menu)",
-            )
 
         logger.info(
-            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, "
-            "offset_x=%s, offset_y=%s, click_method=%s",
+            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
             button,
             clicks,
             require_app_focus,
             offset_x,
             offset_y,
-            click_method,
         )
 
         focus_result = self.ensure_focus()
@@ -2091,9 +2080,6 @@ class AppUIAction:
 
         click_x = int(x) + int(offset_x)
         click_y = int(y) + int(offset_y)
-        context_hwnd = focus_info.get("hwnd")
-        if context_hwnd is not None:
-            context_hwnd = int(context_hwnd)
 
         try:
             method = self._perform_screen_click(
@@ -2101,8 +2087,7 @@ class AppUIAction:
                 click_y,
                 button=button,
                 clicks=clicks,
-                context_hwnd=context_hwnd,
-                click_method=click_method,
+                click_method="mouse",
             )
             offset_note = ""
             if offset_x or offset_y:
@@ -2112,7 +2097,7 @@ class AppUIAction:
                 message=(
                     f"포커스 위치 {button} 클릭 성공: method={method}, source={focus_info.get('source')}, "
                     f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}, "
-                    f"hwnd={context_hwnd or '-'}{offset_note}"
+                    f"click=({click_x},{click_y}){offset_note}"
                 ),
                 x=click_x,
                 y=click_y,

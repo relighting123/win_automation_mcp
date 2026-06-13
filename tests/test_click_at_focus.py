@@ -21,7 +21,7 @@ class ClickAtFocusTest(unittest.TestCase):
         self.action = AppUIAction(session=session)
         self.action._launcher = MagicMock()
 
-    def test_right_click_calls_ensure_focus_and_clicks(self) -> None:
+    def test_right_click_moves_mouse_and_clicks(self) -> None:
         with patch.object(
             self.action,
             "ensure_focus",
@@ -35,7 +35,7 @@ class ClickAtFocusTest(unittest.TestCase):
                 with patch.object(
                     self.action,
                     "_perform_screen_click",
-                    return_value="wm_contextmenu",
+                    return_value="win32_mouse_event",
                 ) as perform_click:
                     result = self.action.click_at_focus()
 
@@ -48,8 +48,7 @@ class ClickAtFocusTest(unittest.TestCase):
             200,
             button="right",
             clicks=1,
-            context_hwnd=5555,
-            click_method="auto",
+            click_method="mouse",
         )
 
     def test_left_click_at_focus(self) -> None:
@@ -68,7 +67,7 @@ class ClickAtFocusTest(unittest.TestCase):
                     "_perform_screen_click",
                     return_value="win32_mouse_event",
                 ) as perform_click:
-                    result = self.action.click_at_focus(button="left", click_method="mouse")
+                    result = self.action.click_at_focus(button="left")
 
         self.assertEqual(result.result, "success")
         perform_click.assert_called_once_with(
@@ -76,7 +75,6 @@ class ClickAtFocusTest(unittest.TestCase):
             90,
             button="left",
             clicks=1,
-            context_hwnd=None,
             click_method="mouse",
         )
 
@@ -142,7 +140,7 @@ class ClickAtFocusTest(unittest.TestCase):
                     "_perform_screen_click",
                     return_value="win32_mouse_event",
                 ) as perform_click:
-                    result = self.action.click_at_focus(offset_x=5, offset_y=-3, click_method="mouse")
+                    result = self.action.click_at_focus(offset_x=5, offset_y=-3)
 
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 105)
@@ -152,7 +150,6 @@ class ClickAtFocusTest(unittest.TestCase):
             197,
             button="right",
             clicks=1,
-            context_hwnd=None,
             click_method="mouse",
         )
 

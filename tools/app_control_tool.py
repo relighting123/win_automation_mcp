@@ -121,14 +121,10 @@ def click_at_focus(
     require_app_focus: bool = True,
     offset_x: int = 0,
     offset_y: int = 0,
-    click_method: str = "auto",
 ) -> str:
     """
-    현재 키보드 포커스 위치에서 마우스 클릭합니다.
-
-    호출 시 연결된 애플리케이션에 ensure_focus()를 적용한 뒤,
-    포커스된 요소/캐럿 위치를 기준으로 클릭합니다.
-    (구 right_click_at_focus — button으로 left/right/middle 선택)
+    현재 키보드 포커스 위치의 (x, y)를 구한 뒤,
+    실제 마우스 커서를 이동시키고 클릭합니다.
 
     Args:
         button: left|right|middle (기본 right)
@@ -136,20 +132,14 @@ def click_at_focus(
         require_app_focus: 포커스가 연결된 앱에 있을 때만 클릭 (기본 True)
         offset_x: 포커스 x 좌표 보정 (픽셀, 기본 0)
         offset_y: 포커스 y 좌표 보정 (픽셀, 기본 0)
-        click_method: auto|mouse|context_menu
-          - auto: right+hwnd면 WM_CONTEXTMENU, 아니면 win32 mouse
-          - mouse: 실제 마우스 오른쪽/왼쪽 클릭
-          - context_menu: WM_CONTEXTMENU (Shift+F10 유사)
     """
     logger.info(
-        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s, "
-        "offset_x=%s, offset_y=%s, click_method=%s",
+        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
         button,
         clicks,
         require_app_focus,
         offset_x,
         offset_y,
-        click_method,
     )
     action = get_app_ui_action()
     result = action.click_at_focus(
@@ -158,7 +148,6 @@ def click_at_focus(
         require_app_focus=require_app_focus,
         offset_x=offset_x,
         offset_y=offset_y,
-        click_method=click_method,
     )
     payload = result.to_dict()
     logger.info(
