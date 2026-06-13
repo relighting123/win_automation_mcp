@@ -70,6 +70,7 @@ skills:
           button: right
           clicks: 1
           require_app_focus: true
+          ensure_window_focus: false
           offset_x: 0
           offset_y: 0
 

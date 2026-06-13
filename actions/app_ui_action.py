@@ -30,6 +30,10 @@ class AppUIActionResult:
     message: Optional[str] = None
     x: Optional[int] = None
     y: Optional[int] = None
+    base_x: Optional[int] = None
+    base_y: Optional[int] = None
+    offset_x: Optional[int] = None
+    offset_y: Optional[int] = None
     shortcut: Optional[str] = None
     button: Optional[str] = None
     matched_text: Optional[str] = None
@@ -39,7 +43,7 @@ class AppUIActionResult:
         return self.result == "success"
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "result": self.result,
             "message": self.message,
             "x": self.x,
@@ -49,6 +53,15 @@ class AppUIActionResult:
             "matched_text": self.matched_text,
             "is_success": self.is_success,
         }
+        if self.base_x is not None:
+            payload["base_x"] = self.base_x
+        if self.base_y is not None:
+            payload["base_y"] = self.base_y
+        if self.offset_x is not None:
+            payload["offset_x"] = self.offset_x
+        if self.offset_y is not None:
+            payload["offset_y"] = self.offset_y
+        return payload
 
 
 class AppUIAction:
@@ -183,6 +196,32 @@ class AppUIAction:
                 targets.append((f"{search_root_info} (top={top_label})", search_root, region))
         return targets
 
+    def _ensure_connected(self) -> AppUIActionResult:
+        """앱 실행/연결만 확인하고 윈도우 포커스는 변경하지 않습니다."""
+        try:
+            self._launcher.ensure_running()
+            if not self._session.is_connected:
+                self._session.connect()
+            return AppUIActionResult(result="success")
+        except Exception as e:
+            return AppUIActionResult(result="error", message=f"애플리케이션 연결 실패: {e}")
+
+    @staticmethod
+    def _coerce_pixel_offset(value: Any, *, name: str) -> int:
+        """offset_x/offset_y를 정수 픽셀 값으로 변환합니다."""
+        if value is None:
+            return 0
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a number")
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return 0
+            return int(float(stripped))
+        raise ValueError(f"{name} must be a number, got {type(value).__name__}")
+
     def ensure_focus(self, *, invalidate_cache: bool = False) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
         try:
@@ -264,6 +303,27 @@ class AppUIAction:
             return None, AppUIActionResult(result="error", message=f"pyautogui 로드 실패: {e}")
         return pyautogui, None
 
+    def _get_cursor_pos(self) -> Optional[tuple[int, int]]:
+        try:
+            import ctypes
+
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+            point = POINT()
+            if ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+                return int(point.x), int(point.y)
+        except Exception as e:
+            logger.debug("GetCursorPos 실패: %s", e)
+        return None
+
+    def _cursor_reached(self, x: int, y: int, *, tolerance: int = 3) -> bool:
+        current = self._get_cursor_pos()
+        if current is None:
+            return False
+        current_x, current_y = current
+        return abs(current_x - int(x)) <= tolerance and abs(current_y - int(y)) <= tolerance
+
     def _perform_screen_click(
         self,
         x: int,
@@ -287,20 +347,9 @@ class AppUIAction:
 
         ui_delay = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.1))
         pyautogui, _ = self._get_pyautogui()
-
-        try:
-            import ctypes
-
-            ctypes.windll.user32.SetCursorPos(int(x), int(y))
-            time.sleep(ui_delay)
-        except Exception as e:
-            logger.debug("SetCursorPos 실패: %s", e)
-            if pyautogui is not None:
-                try:
-                    pyautogui.moveTo(x, y)
-                    time.sleep(ui_delay)
-                except Exception as move_error:
-                    logger.debug("pyautogui.moveTo 실패: %s", move_error)
+        target_x = int(x)
+        target_y = int(y)
+        cursor_before = self._get_cursor_pos()
 
         use_context_menu = click_method == "context_menu" or (
             click_method == "auto" and button == "right" and context_hwnd
@@ -310,7 +359,7 @@ class AppUIAction:
                 import win32api
                 import win32con
 
-                lparam = win32api.MAKELONG(int(x) & 0xFFFF, int(y) & 0xFFFF)
+                lparam = win32api.MAKELONG(target_x & 0xFFFF, target_y & 0xFFFF)
                 win32api.PostMessage(
                     int(context_hwnd),
                     win32con.WM_CONTEXTMENU,
@@ -320,8 +369,8 @@ class AppUIAction:
                 logger.info(
                     "[click] WM_CONTEXTMENU 전송: hwnd=%s, x=%s, y=%s",
                     context_hwnd,
-                    x,
-                    y,
+                    target_x,
+                    target_y,
                 )
                 return "wm_contextmenu"
             except Exception as e:
@@ -330,10 +379,36 @@ class AppUIAction:
                     raise
 
         if click_method in {"auto", "mouse"}:
+            if pyautogui is not None:
+                pyautogui.click(
+                    x=target_x,
+                    y=target_y,
+                    button=button,
+                    clicks=max(1, clicks),
+                )
+                logger.info(
+                    "[click] pyautogui.click: target=(%s,%s), button=%s, before=%s, after=%s",
+                    target_x,
+                    target_y,
+                    button,
+                    cursor_before,
+                    self._get_cursor_pos(),
+                )
+                return "pyautogui"
+
             try:
                 import ctypes
 
                 user32 = ctypes.windll.user32
+                user32.SetCursorPos(target_x, target_y)
+                time.sleep(ui_delay)
+                if not self._cursor_reached(target_x, target_y):
+                    logger.warning(
+                        "[click] SetCursorPos 후 커서 검증 실패: target=(%s,%s), cursor=%s",
+                        target_x,
+                        target_y,
+                        self._get_cursor_pos(),
+                    )
                 if button == "left":
                     down, up = 0x0002, 0x0004
                 elif button == "right":
@@ -345,15 +420,16 @@ class AppUIAction:
                     user32.mouse_event(up, 0, 0, 0, 0)
                     if clicks > 1:
                         time.sleep(0.05)
-                logger.info("[click] win32 mouse_event: x=%s, y=%s, button=%s", x, y, button)
+                logger.info(
+                    "[click] win32 mouse_event: target=(%s,%s), button=%s, cursor=%s",
+                    target_x,
+                    target_y,
+                    button,
+                    self._get_cursor_pos(),
+                )
                 return "win32_mouse_event"
             except Exception as e:
                 logger.debug("win32 mouse_event 실패: %s", e)
-
-        if pyautogui is not None:
-            pyautogui.click(x=x, y=y, button=button, clicks=max(1, clicks))
-            logger.info("[click] pyautogui.click: x=%s, y=%s, button=%s", x, y, button)
-            return "pyautogui"
 
         raise RuntimeError("사용 가능한 클릭 방식이 없습니다")
 
@@ -2020,12 +2096,16 @@ class AppUIAction:
         button: str = "right",
         clicks: int = 1,
         require_app_focus: bool = True,
-        offset_x: int = 0,
-        offset_y: int = 0,
+        ensure_window_focus: bool = False,
+        offset_x: Any = 0,
+        offset_y: Any = 0,
     ) -> AppUIActionResult:
         """
         현재 키보드 포커스 위치의 (x, y)를 구한 뒤,
         click_position과 동일한 경로로 클릭합니다.
+
+        스킬 시퀀스 중간 단계에서는 ensure_window_focus=False(기본)로 두어
+        이전 단계가 만든 키보드 포커스를 유지합니다.
         """
         button = (button or "right").strip().lower()
         if button not in {"left", "right", "middle"}:
@@ -2034,32 +2114,40 @@ class AppUIAction:
                 message=f"지원하지 않는 button: {button} (left|right|middle)",
             )
 
+        try:
+            parsed_offset_x = self._coerce_pixel_offset(offset_x, name="offset_x")
+            parsed_offset_y = self._coerce_pixel_offset(offset_y, name="offset_y")
+        except ValueError as e:
+            return AppUIActionResult(result="error", message=str(e))
+
         logger.info(
-            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
+            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, "
+            "ensure_window_focus=%s, offset_x=%s, offset_y=%s",
             button,
             clicks,
             require_app_focus,
-            offset_x,
-            offset_y,
+            ensure_window_focus,
+            parsed_offset_x,
+            parsed_offset_y,
         )
 
-        focus_result = self.ensure_focus()
-        if not focus_result.is_success:
+        connect_result = self._ensure_connected()
+        if not connect_result.is_success:
             return AppUIActionResult(
                 result="error",
-                message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
+                message=connect_result.message or "애플리케이션 연결에 실패했습니다.",
             )
 
-        after_focus_delay = float(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
-        if after_focus_delay > 0:
-            time.sleep(after_focus_delay)
-
+        # 포커스 좌표는 ensure_focus() 전에 먼저 읽어야 이전 스킬 단계의 키보드 포커스가 유지됩니다.
         x, y, focus_info = self._resolve_focus_click_point()
         if x is None or y is None:
             return AppUIActionResult(
                 result="not_found",
                 message="포커스 위치를 찾지 못했습니다.",
             )
+
+        base_x = int(x)
+        base_y = int(y)
 
         if require_app_focus:
             target_pids = self._get_connected_process_ids()
@@ -2073,13 +2161,40 @@ class AppUIAction:
                         "현재 포커스가 연결된 애플리케이션이 아닙니다. "
                         f"focus_pid={focus_pid}, target_pids={sorted(target_pids)}"
                     ),
-                    x=x,
-                    y=y,
+                    x=base_x,
+                    y=base_y,
                     button=button,
                 )
 
-        click_x = int(x) + int(offset_x)
-        click_y = int(y) + int(offset_y)
+        click_x = base_x + parsed_offset_x
+        click_y = base_y + parsed_offset_y
+
+        if ensure_window_focus:
+            focus_result = self.ensure_focus()
+            if not focus_result.is_success:
+                return AppUIActionResult(
+                    result="error",
+                    message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
+                    x=click_x,
+                    y=click_y,
+                    button=button,
+                )
+            after_focus_delay = float(
+                self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1)
+            )
+            if after_focus_delay > 0:
+                time.sleep(after_focus_delay)
+
+        logger.info(
+            "[click_at_focus] 클릭 좌표: base=(%s,%s), offset=(%s,%s), click=(%s,%s), source=%s",
+            base_x,
+            base_y,
+            parsed_offset_x,
+            parsed_offset_y,
+            click_x,
+            click_y,
+            focus_info.get("source"),
+        )
 
         click_result = self.click_position(
             x=click_x,
@@ -2097,8 +2212,8 @@ class AppUIAction:
             )
 
         offset_note = ""
-        if offset_x or offset_y:
-            offset_note = f", offset=({offset_x},{offset_y}), base=({x},{y})"
+        if parsed_offset_x or parsed_offset_y:
+            offset_note = f", offset=({parsed_offset_x},{parsed_offset_y}), base=({base_x},{base_y})"
         return AppUIActionResult(
             result="success",
             message=(
@@ -2108,6 +2223,10 @@ class AppUIAction:
             ),
             x=click_x,
             y=click_y,
+            base_x=base_x,
+            base_y=base_y,
+            offset_x=parsed_offset_x,
+            offset_y=parsed_offset_y,
             button=button,
         )
 
