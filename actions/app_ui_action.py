@@ -21,6 +21,59 @@ from core.app_launcher import get_launcher
 
 logger = logging.getLogger(__name__)
 
+_DPI_AWARENESS_SET = False
+
+
+def ensure_dpi_awareness() -> bool:
+    """
+    프로세스를 per-monitor DPI-aware로 설정합니다(프로세스 당 1회).
+
+    DPI-aware가 아니면 Win32 좌표(ClientToScreen/GetWindowRect/UIA BoundingRectangle)는
+    물리 픽셀로 반환되는데 pyautogui 클릭은 가상화된 논리 좌표로 동작해, 배율이 100%가
+    아닌 모니터에서 좌표와 offset이 어긋나 클릭이 엉뚱한 위치로 가거나 작은 offset이
+    반영되지 않는 문제가 발생합니다. 좌표계를 물리 픽셀로 통일하기 위해 설정합니다.
+
+    DPI awareness는 프로세스 시작 직후, GUI/윈도우 생성 전에 호출해야 가장 안정적입니다.
+    """
+    global _DPI_AWARENESS_SET
+    if _DPI_AWARENESS_SET:
+        return True
+    try:
+        import ctypes
+
+        # 1) Windows 10 1703+: PER_MONITOR_AWARE_V2 (가장 권장)
+        try:
+            ctx = ctypes.c_void_p(-4)  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctx):
+                _DPI_AWARENESS_SET = True
+                logger.info("[dpi] SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) 적용")
+                return True
+        except Exception as e:
+            logger.debug("[dpi] SetProcessDpiAwarenessContext 실패: %s", e)
+
+        # 2) Windows 8.1+: shcore.SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE=2)
+        try:
+            if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+                _DPI_AWARENESS_SET = True
+                logger.info("[dpi] SetProcessDpiAwareness(PER_MONITOR) 적용")
+                return True
+        except Exception as e:
+            logger.debug("[dpi] SetProcessDpiAwareness 실패: %s", e)
+
+        # 3) 구버전 폴백: 시스템 DPI aware
+        if ctypes.windll.user32.SetProcessDPIAware():
+            _DPI_AWARENESS_SET = True
+            logger.info("[dpi] SetProcessDPIAware 적용")
+            return True
+    except Exception as e:
+        # 이미 다른 곳에서 awareness가 설정된 경우 등은 무시하고 진행합니다.
+        logger.debug("[dpi] DPI awareness 설정 건너뜀: %s", e)
+    return _DPI_AWARENESS_SET
+
+
+# 모듈 로드 시점에 1회 설정합니다(클릭 좌표 계산 전에 적용되도록).
+ensure_dpi_awareness()
+
 
 @dataclass
 class AppUIActionResult:
@@ -78,6 +131,7 @@ class AppUIAction:
     }
 
     def __init__(self, session: Optional[AppSession] = None):
+        ensure_dpi_awareness()
         self._session = session or AppSession.get_instance()
         self._launcher = get_launcher()
 
