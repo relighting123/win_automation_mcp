@@ -264,6 +264,99 @@ class AppUIAction:
             return None, AppUIActionResult(result="error", message=f"pyautogui 로드 실패: {e}")
         return pyautogui, None
 
+    def _perform_screen_click(
+        self,
+        x: int,
+        y: int,
+        *,
+        button: str = "left",
+        clicks: int = 1,
+        context_hwnd: Optional[int] = None,
+        click_method: str = "auto",
+    ) -> str:
+        """
+        화면 좌표 클릭을 수행합니다.
+        auto: right+hwnd는 WM_CONTEXTMENU, 그 외 win32 mouse_event
+        mouse: SetCursorPos + mouse_event
+        context_menu: WM_CONTEXTMENU (Shift+F10 유사)
+        """
+        button = (button or "left").strip().lower()
+        click_method = (click_method or "auto").strip().lower()
+        if click_method not in {"auto", "mouse", "context_menu"}:
+            raise ValueError(f"지원하지 않는 click_method: {click_method}")
+
+        ui_delay = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.1))
+        pyautogui, _ = self._get_pyautogui()
+
+        try:
+            import ctypes
+
+            ctypes.windll.user32.SetCursorPos(int(x), int(y))
+            time.sleep(ui_delay)
+        except Exception as e:
+            logger.debug("SetCursorPos 실패: %s", e)
+            if pyautogui is not None:
+                try:
+                    pyautogui.moveTo(x, y)
+                    time.sleep(ui_delay)
+                except Exception as move_error:
+                    logger.debug("pyautogui.moveTo 실패: %s", move_error)
+
+        use_context_menu = click_method == "context_menu" or (
+            click_method == "auto" and button == "right" and context_hwnd
+        )
+        if use_context_menu and context_hwnd:
+            try:
+                import win32api
+                import win32con
+
+                lparam = win32api.MAKELONG(int(x) & 0xFFFF, int(y) & 0xFFFF)
+                win32api.PostMessage(
+                    int(context_hwnd),
+                    win32con.WM_CONTEXTMENU,
+                    int(context_hwnd),
+                    lparam,
+                )
+                logger.info(
+                    "[click] WM_CONTEXTMENU 전송: hwnd=%s, x=%s, y=%s",
+                    context_hwnd,
+                    x,
+                    y,
+                )
+                return "wm_contextmenu"
+            except Exception as e:
+                logger.debug("WM_CONTEXTMENU 실패: %s", e)
+                if click_method == "context_menu":
+                    raise
+
+        if click_method in {"auto", "mouse"}:
+            try:
+                import ctypes
+
+                user32 = ctypes.windll.user32
+                if button == "left":
+                    down, up = 0x0002, 0x0004
+                elif button == "right":
+                    down, up = 0x0008, 0x0010
+                else:
+                    down, up = 0x0020, 0x0040
+                for _ in range(max(1, clicks)):
+                    user32.mouse_event(down, 0, 0, 0, 0)
+                    user32.mouse_event(up, 0, 0, 0, 0)
+                    if clicks > 1:
+                        time.sleep(0.05)
+                logger.info("[click] win32 mouse_event: x=%s, y=%s, button=%s", x, y, button)
+                return "win32_mouse_event"
+            except Exception as e:
+                logger.debug("win32 mouse_event 실패: %s", e)
+
+        if pyautogui is not None:
+            pyautogui.click(x=x, y=y, button=button, clicks=max(1, clicks))
+            logger.info("[click] pyautogui.click: x=%s, y=%s, button=%s", x, y, button)
+            return "pyautogui"
+
+        raise RuntimeError("사용 가능한 클릭 방식이 없습니다")
+
     def _normalize_keys(self, shortcut: str) -> list[str]:
         keys = [token.strip().lower() for token in shortcut.split("+") if token.strip()]
         keys = [self._KEY_ALIAS.get(key, key) for key in keys]
@@ -745,6 +838,7 @@ class AppUIAction:
                 return None
 
             control_type_id = int(self._safe_call(lambda: element.CurrentControlType, 0) or 0)
+            hwnd = int(self._safe_call(lambda: element.CurrentNativeWindowHandle, 0) or 0) or None
             return (
                 int((left + right) / 2),
                 int((top + bottom) / 2),
@@ -754,6 +848,7 @@ class AppUIAction:
                     "automation_id": str(self._safe_call(lambda: element.CurrentAutomationId, "") or ""),
                     "name": str(self._safe_call(lambda: element.CurrentName, "") or ""),
                     "control_type_id": control_type_id,
+                    "hwnd": hwnd,
                 },
             )
         except Exception as e:
@@ -1927,11 +2022,13 @@ class AppUIAction:
         require_app_focus: bool = True,
         offset_x: int = 0,
         offset_y: int = 0,
+        click_method: str = "auto",
     ) -> AppUIActionResult:
         """
         현재 키보드 포커스 위치에서 마우스 클릭합니다.
         호출 시 연결된 애플리케이션에 ensure_focus()를 적용합니다.
         offset_x/offset_y로 포커스 기준 좌표를 보정할 수 있습니다.
+        click_method: auto|mouse|context_menu
         """
         button = (button or "right").strip().lower()
         if button not in {"left", "right", "middle"}:
@@ -1939,14 +2036,22 @@ class AppUIAction:
                 result="error",
                 message=f"지원하지 않는 button: {button} (left|right|middle)",
             )
+        click_method = (click_method or "auto").strip().lower()
+        if click_method not in {"auto", "mouse", "context_menu"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 click_method: {click_method} (auto|mouse|context_menu)",
+            )
 
         logger.info(
-            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
+            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, "
+            "offset_x=%s, offset_y=%s, click_method=%s",
             button,
             clicks,
             require_app_focus,
             offset_x,
             offset_y,
+            click_method,
         )
 
         focus_result = self.ensure_focus()
@@ -1955,6 +2060,10 @@ class AppUIAction:
                 result="error",
                 message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
             )
+
+        after_focus_delay = float(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
+        if after_focus_delay > 0:
+            time.sleep(after_focus_delay)
 
         x, y, focus_info = self._resolve_focus_click_point()
         if x is None or y is None:
@@ -1980,24 +2089,30 @@ class AppUIAction:
                     button=button,
                 )
 
-        pyautogui, error_result = self._get_pyautogui()
-        if error_result:
-            return error_result
-
         click_x = int(x) + int(offset_x)
         click_y = int(y) + int(offset_y)
+        context_hwnd = focus_info.get("hwnd")
+        if context_hwnd is not None:
+            context_hwnd = int(context_hwnd)
 
         try:
-            pyautogui.click(x=click_x, y=click_y, button=button, clicks=max(1, clicks))
+            method = self._perform_screen_click(
+                click_x,
+                click_y,
+                button=button,
+                clicks=clicks,
+                context_hwnd=context_hwnd,
+                click_method=click_method,
+            )
             offset_note = ""
             if offset_x or offset_y:
                 offset_note = f", offset=({offset_x},{offset_y}), base=({x},{y})"
             return AppUIActionResult(
                 result="success",
                 message=(
-                    f"포커스 위치 {button} 클릭 성공: source={focus_info.get('source')}, "
-                    f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}"
-                    f"{offset_note}"
+                    f"포커스 위치 {button} 클릭 성공: method={method}, source={focus_info.get('source')}, "
+                    f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}, "
+                    f"hwnd={context_hwnd or '-'}{offset_note}"
                 ),
                 x=click_x,
                 y=click_y,
@@ -2021,18 +2136,13 @@ class AppUIAction:
         clicks: int = 1,
     ) -> AppUIActionResult:
         """지정 좌표를 클릭합니다."""
-        pyautogui, error_result = self._get_pyautogui()
-        if error_result:
-            return error_result
-
         button = button.lower()
         if button not in {"left", "right", "middle"}:
             return AppUIActionResult(result="error", message=f"지원하지 않는 버튼: {button}")
 
         try:
-            pyautogui.moveTo(x, y)
-            pyautogui.click(x=x, y=y, button=button, clicks=max(1, clicks))
-            return AppUIActionResult(result="success", x=x, y=y, button=button)
+            method = self._perform_screen_click(x, y, button=button, clicks=clicks, click_method="mouse")
+            return AppUIActionResult(result="success", x=x, y=y, button=button, message=f"method={method}")
         except Exception as e:
             logger.error("좌표 클릭 실패: %s", e)
             return AppUIActionResult(result="error", message=f"좌표 클릭 실패: {e}")

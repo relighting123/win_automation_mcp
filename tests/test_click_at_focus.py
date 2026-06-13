@@ -13,6 +13,7 @@ class ClickAtFocusTest(unittest.TestCase):
     def setUp(self) -> None:
         session = MagicMock()
         session.is_connected = True
+        session.config = {"timeouts": {"after_focus_delay": 0, "ui_delay": 0}}
         app = MagicMock()
         app.process = 4242
         app.windows.return_value = []
@@ -29,21 +30,27 @@ class ClickAtFocusTest(unittest.TestCase):
             with patch.object(
                 self.action,
                 "_resolve_focus_click_point",
-                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242}),
+                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242, "hwnd": 5555}),
             ):
                 with patch.object(
                     self.action,
-                    "_get_pyautogui",
-                    return_value=(MagicMock(), None),
-                ) as get_pyautogui:
+                    "_perform_screen_click",
+                    return_value="wm_contextmenu",
+                ) as perform_click:
                     result = self.action.click_at_focus()
 
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 100)
         self.assertEqual(result.y, 200)
         ensure_focus.assert_called_once()
-        pyautogui = get_pyautogui.return_value[0]
-        pyautogui.click.assert_called_once_with(x=100, y=200, button="right", clicks=1)
+        perform_click.assert_called_once_with(
+            100,
+            200,
+            button="right",
+            clicks=1,
+            context_hwnd=5555,
+            click_method="auto",
+        )
 
     def test_left_click_at_focus(self) -> None:
         with patch.object(
@@ -58,14 +65,20 @@ class ClickAtFocusTest(unittest.TestCase):
             ):
                 with patch.object(
                     self.action,
-                    "_get_pyautogui",
-                    return_value=(MagicMock(), None),
-                ) as get_pyautogui:
-                    result = self.action.click_at_focus(button="left")
+                    "_perform_screen_click",
+                    return_value="win32_mouse_event",
+                ) as perform_click:
+                    result = self.action.click_at_focus(button="left", click_method="mouse")
 
         self.assertEqual(result.result, "success")
-        pyautogui = get_pyautogui.return_value[0]
-        pyautogui.click.assert_called_once_with(x=80, y=90, button="left", clicks=1)
+        perform_click.assert_called_once_with(
+            80,
+            90,
+            button="left",
+            clicks=1,
+            context_hwnd=None,
+            click_method="mouse",
+        )
 
     def test_fails_when_ensure_focus_fails(self) -> None:
         with patch.object(
@@ -126,16 +139,22 @@ class ClickAtFocusTest(unittest.TestCase):
             ):
                 with patch.object(
                     self.action,
-                    "_get_pyautogui",
-                    return_value=(MagicMock(), None),
-                ) as get_pyautogui:
-                    result = self.action.click_at_focus(offset_x=5, offset_y=-3)
+                    "_perform_screen_click",
+                    return_value="win32_mouse_event",
+                ) as perform_click:
+                    result = self.action.click_at_focus(offset_x=5, offset_y=-3, click_method="mouse")
 
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 105)
         self.assertEqual(result.y, 197)
-        pyautogui = get_pyautogui.return_value[0]
-        pyautogui.click.assert_called_once_with(x=105, y=197, button="right", clicks=1)
+        perform_click.assert_called_once_with(
+            105,
+            197,
+            button="right",
+            clicks=1,
+            context_hwnd=None,
+            click_method="mouse",
+        )
 
     def test_resolve_focus_prefers_caret(self) -> None:
         with patch.object(
