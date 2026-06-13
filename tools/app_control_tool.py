@@ -125,6 +125,7 @@ def click_at_focus(
 
     호출 시 연결된 애플리케이션에 ensure_focus()를 적용한 뒤,
     포커스된 요소/캐럿 위치를 기준으로 클릭합니다.
+    (구 right_click_at_focus — button으로 left/right/middle 선택)
 
     Args:
         button: left|right|middle (기본 right)
@@ -152,19 +153,6 @@ def click_at_focus(
         payload.get("message"),
     )
     return json.dumps(payload, ensure_ascii=False)
-
-
-def right_click_at_focus(
-    button: str = "right",
-    clicks: int = 1,
-    require_app_focus: bool = True,
-) -> str:
-    """Deprecated: click_at_focus를 사용하세요."""
-    return click_at_focus(
-        button=button,
-        clicks=clicks,
-        require_app_focus=require_app_focus,
-    )
 
 
 async def click_app_by_keyword(
@@ -550,7 +538,6 @@ def register_app_control_tools(mcp: "FastMCP") -> None:
     mcp.tool()(type_app_text)
     mcp.tool()(press_app_shortcut)
     mcp.tool()(click_at_focus)
-    mcp.tool()(right_click_at_focus)
     mcp.tool()(click_app_position)
     mcp.tool()(click_app_by_keyword)
     mcp.tool()(click_app_by_attr)
