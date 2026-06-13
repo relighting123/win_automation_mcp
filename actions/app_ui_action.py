@@ -183,6 +183,32 @@ class AppUIAction:
                 targets.append((f"{search_root_info} (top={top_label})", search_root, region))
         return targets
 
+    def _ensure_connected(self) -> AppUIActionResult:
+        """앱 실행/연결만 확인하고 윈도우 포커스는 변경하지 않습니다."""
+        try:
+            self._launcher.ensure_running()
+            if not self._session.is_connected:
+                self._session.connect()
+            return AppUIActionResult(result="success")
+        except Exception as e:
+            return AppUIActionResult(result="error", message=f"애플리케이션 연결 실패: {e}")
+
+    @staticmethod
+    def _coerce_pixel_offset(value: Any, *, name: str) -> int:
+        """offset_x/offset_y를 정수 픽셀 값으로 변환합니다."""
+        if value is None:
+            return 0
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a number")
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return 0
+            return int(float(stripped))
+        raise ValueError(f"{name} must be a number, got {type(value).__name__}")
+
     def ensure_focus(self, *, invalidate_cache: bool = False) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
         try:
@@ -2020,12 +2046,16 @@ class AppUIAction:
         button: str = "right",
         clicks: int = 1,
         require_app_focus: bool = True,
-        offset_x: int = 0,
-        offset_y: int = 0,
+        ensure_window_focus: bool = False,
+        offset_x: Any = 0,
+        offset_y: Any = 0,
     ) -> AppUIActionResult:
         """
         현재 키보드 포커스 위치의 (x, y)를 구한 뒤,
         click_position과 동일한 경로로 클릭합니다.
+
+        스킬 시퀀스 중간 단계에서는 ensure_window_focus=False(기본)로 두어
+        이전 단계가 만든 키보드 포커스를 유지합니다.
         """
         button = (button or "right").strip().lower()
         if button not in {"left", "right", "middle"}:
@@ -2034,32 +2064,40 @@ class AppUIAction:
                 message=f"지원하지 않는 button: {button} (left|right|middle)",
             )
 
+        try:
+            parsed_offset_x = self._coerce_pixel_offset(offset_x, name="offset_x")
+            parsed_offset_y = self._coerce_pixel_offset(offset_y, name="offset_y")
+        except ValueError as e:
+            return AppUIActionResult(result="error", message=str(e))
+
         logger.info(
-            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
+            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, "
+            "ensure_window_focus=%s, offset_x=%s, offset_y=%s",
             button,
             clicks,
             require_app_focus,
-            offset_x,
-            offset_y,
+            ensure_window_focus,
+            parsed_offset_x,
+            parsed_offset_y,
         )
 
-        focus_result = self.ensure_focus()
-        if not focus_result.is_success:
+        connect_result = self._ensure_connected()
+        if not connect_result.is_success:
             return AppUIActionResult(
                 result="error",
-                message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
+                message=connect_result.message or "애플리케이션 연결에 실패했습니다.",
             )
 
-        after_focus_delay = float(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
-        if after_focus_delay > 0:
-            time.sleep(after_focus_delay)
-
+        # 포커스 좌표는 ensure_focus() 전에 먼저 읽어야 이전 스킬 단계의 키보드 포커스가 유지됩니다.
         x, y, focus_info = self._resolve_focus_click_point()
         if x is None or y is None:
             return AppUIActionResult(
                 result="not_found",
                 message="포커스 위치를 찾지 못했습니다.",
             )
+
+        base_x = int(x)
+        base_y = int(y)
 
         if require_app_focus:
             target_pids = self._get_connected_process_ids()
@@ -2073,13 +2111,40 @@ class AppUIAction:
                         "현재 포커스가 연결된 애플리케이션이 아닙니다. "
                         f"focus_pid={focus_pid}, target_pids={sorted(target_pids)}"
                     ),
-                    x=x,
-                    y=y,
+                    x=base_x,
+                    y=base_y,
                     button=button,
                 )
 
-        click_x = int(x) + int(offset_x)
-        click_y = int(y) + int(offset_y)
+        click_x = base_x + parsed_offset_x
+        click_y = base_y + parsed_offset_y
+
+        if ensure_window_focus:
+            focus_result = self.ensure_focus()
+            if not focus_result.is_success:
+                return AppUIActionResult(
+                    result="error",
+                    message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
+                    x=click_x,
+                    y=click_y,
+                    button=button,
+                )
+            after_focus_delay = float(
+                self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1)
+            )
+            if after_focus_delay > 0:
+                time.sleep(after_focus_delay)
+
+        logger.info(
+            "[click_at_focus] 클릭 좌표: base=(%s,%s), offset=(%s,%s), click=(%s,%s), source=%s",
+            base_x,
+            base_y,
+            parsed_offset_x,
+            parsed_offset_y,
+            click_x,
+            click_y,
+            focus_info.get("source"),
+        )
 
         click_result = self.click_position(
             x=click_x,
@@ -2097,8 +2162,8 @@ class AppUIAction:
             )
 
         offset_note = ""
-        if offset_x or offset_y:
-            offset_note = f", offset=({offset_x},{offset_y}), base=({x},{y})"
+        if parsed_offset_x or parsed_offset_y:
+            offset_note = f", offset=({parsed_offset_x},{parsed_offset_y}), base=({base_x},{base_y})"
         return AppUIActionResult(
             result="success",
             message=(

@@ -119,6 +119,7 @@ def click_at_focus(
     button: str = "right",
     clicks: int = 1,
     require_app_focus: bool = True,
+    ensure_window_focus: bool = False,
     offset_x: int = 0,
     offset_y: int = 0,
 ) -> str:
@@ -130,14 +131,18 @@ def click_at_focus(
         button: left|right|middle (기본 right)
         clicks: 클릭 횟수 (기본 1)
         require_app_focus: 포커스가 연결된 앱에 있을 때만 클릭 (기본 True)
+        ensure_window_focus: 앱 윈도우를 최상단으로 가져올지 여부 (기본 False).
+            스킬 시퀀스 중간 단계에서는 False를 유지해 이전 단계의 키보드 포커스를 보존하세요.
         offset_x: 포커스 x 좌표 보정 (픽셀, 기본 0)
         offset_y: 포커스 y 좌표 보정 (픽셀, 기본 0)
     """
     logger.info(
-        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
+        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s, "
+        "ensure_window_focus=%s, offset_x=%s, offset_y=%s",
         button,
         clicks,
         require_app_focus,
+        ensure_window_focus,
         offset_x,
         offset_y,
     )
@@ -146,6 +151,7 @@ def click_at_focus(
         button=button,
         clicks=clicks,
         require_app_focus=require_app_focus,
+        ensure_window_focus=ensure_window_focus,
         offset_x=offset_x,
         offset_y=offset_y,
     )

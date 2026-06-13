@@ -24,31 +24,35 @@ class ClickAtFocusTest(unittest.TestCase):
     def test_right_click_moves_mouse_and_clicks(self) -> None:
         with patch.object(
             self.action,
-            "ensure_focus",
+            "_ensure_connected",
             return_value=AppUIActionResult(result="success"),
-        ) as ensure_focus:
+        ):
             with patch.object(
                 self.action,
-                "_resolve_focus_click_point",
-                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242, "hwnd": 5555}),
-            ):
+                "ensure_focus",
+            ) as ensure_focus:
                 with patch.object(
                     self.action,
-                    "click_position",
-                    return_value=AppUIActionResult(
-                        result="success",
-                        x=100,
-                        y=200,
-                        button="right",
-                        message="method=win32_mouse_event",
-                    ),
-                ) as click_position:
-                    result = self.action.click_at_focus()
+                    "_resolve_focus_click_point",
+                    return_value=(100, 200, {"source": "uia_focused", "process_id": 4242, "hwnd": 5555}),
+                ):
+                    with patch.object(
+                        self.action,
+                        "click_position",
+                        return_value=AppUIActionResult(
+                            result="success",
+                            x=100,
+                            y=200,
+                            button="right",
+                            message="method=win32_mouse_event",
+                        ),
+                    ) as click_position:
+                        result = self.action.click_at_focus()
 
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 100)
         self.assertEqual(result.y, 200)
-        ensure_focus.assert_called_once()
+        ensure_focus.assert_not_called()
         click_position.assert_called_once_with(
             x=100,
             y=200,
@@ -59,7 +63,7 @@ class ClickAtFocusTest(unittest.TestCase):
     def test_left_click_at_focus(self) -> None:
         with patch.object(
             self.action,
-            "ensure_focus",
+            "_ensure_connected",
             return_value=AppUIActionResult(result="success"),
         ):
             with patch.object(
@@ -88,21 +92,56 @@ class ClickAtFocusTest(unittest.TestCase):
             clicks=1,
         )
 
-    def test_fails_when_ensure_focus_fails(self) -> None:
+    def test_fails_when_ensure_window_focus_fails(self) -> None:
         with patch.object(
             self.action,
-            "ensure_focus",
-            return_value=AppUIActionResult(result="error", message="포커스 실패"),
+            "_ensure_connected",
+            return_value=AppUIActionResult(result="success"),
         ):
-            result = self.action.click_at_focus()
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242}),
+            ):
+                with patch.object(
+                    self.action,
+                    "ensure_focus",
+                    return_value=AppUIActionResult(result="error", message="포커스 실패"),
+                ):
+                    result = self.action.click_at_focus(ensure_window_focus=True)
 
         self.assertEqual(result.result, "error")
         self.assertIn("포커스 실패", result.message or "")
 
+    def test_ensure_window_focus_calls_ensure_focus(self) -> None:
+        with patch.object(
+            self.action,
+            "_ensure_connected",
+            return_value=AppUIActionResult(result="success"),
+        ):
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242}),
+            ):
+                with patch.object(
+                    self.action,
+                    "ensure_focus",
+                    return_value=AppUIActionResult(result="success"),
+                ) as ensure_focus:
+                    with patch.object(
+                        self.action,
+                        "click_position",
+                        return_value=AppUIActionResult(result="success", x=100, y=200, button="right"),
+                    ):
+                        self.action.click_at_focus(ensure_window_focus=True)
+
+        ensure_focus.assert_called_once()
+
     def test_rejects_foreign_process(self) -> None:
         with patch.object(
             self.action,
-            "ensure_focus",
+            "_ensure_connected",
             return_value=AppUIActionResult(result="success"),
         ):
             with patch.object(
@@ -118,7 +157,7 @@ class ClickAtFocusTest(unittest.TestCase):
     def test_not_found(self) -> None:
         with patch.object(
             self.action,
-            "ensure_focus",
+            "_ensure_connected",
             return_value=AppUIActionResult(result="success"),
         ):
             with patch.object(
@@ -137,7 +176,7 @@ class ClickAtFocusTest(unittest.TestCase):
     def test_click_with_offset(self) -> None:
         with patch.object(
             self.action,
-            "ensure_focus",
+            "_ensure_connected",
             return_value=AppUIActionResult(result="success"),
         ):
             with patch.object(
@@ -168,10 +207,36 @@ class ClickAtFocusTest(unittest.TestCase):
             clicks=1,
         )
 
+    def test_click_with_string_offset(self) -> None:
+        with patch.object(
+            self.action,
+            "_ensure_connected",
+            return_value=AppUIActionResult(result="success"),
+        ):
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242}),
+            ):
+                with patch.object(
+                    self.action,
+                    "click_position",
+                    return_value=AppUIActionResult(result="success", x=120, y=180, button="right"),
+                ) as click_position:
+                    result = self.action.click_at_focus(offset_x="20", offset_y="-20")
+
+        self.assertEqual(result.result, "success")
+        click_position.assert_called_once_with(
+            x=120,
+            y=180,
+            button="right",
+            clicks=1,
+        )
+
     def test_click_position_failure_propagates(self) -> None:
         with patch.object(
             self.action,
-            "ensure_focus",
+            "_ensure_connected",
             return_value=AppUIActionResult(result="success"),
         ):
             with patch.object(
