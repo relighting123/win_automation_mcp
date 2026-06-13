@@ -622,6 +622,45 @@ class AppUIAction:
                 continue
         return None
 
+    def _close_window_wrapper(self, wrapper: Any) -> tuple[bool, str]:
+        """wrapper.close() 또는 WM_CLOSE로 윈도우 닫기를 시도합니다."""
+        try:
+            wrapper.close()
+            return True, "wrapper.close"
+        except Exception as e:
+            logger.debug("wrapper.close() 실패: %s", e)
+
+        handle = self._get_wrapper_handle(wrapper)
+        if handle is None:
+            return False, "no_handle"
+
+        try:
+            import win32gui
+
+            win32gui.PostMessage(handle, 0x0010, 0, 0)  # WM_CLOSE
+            return True, "wm_close"
+        except Exception as e:
+            logger.debug("WM_CLOSE 전송 실패: %s", e)
+            return False, f"wm_close_failed:{e}"
+
+    def _wait_window_closed(self, wrapper: Any, timeout: float) -> bool:
+        """윈도우가 닫힐 때까지 대기합니다."""
+        handle = self._get_wrapper_handle(wrapper)
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            if handle is not None:
+                try:
+                    import win32gui
+
+                    if not win32gui.IsWindow(handle):
+                        return True
+                except Exception:
+                    pass
+            if not self._safe_call(lambda: wrapper.exists(), True):
+                return True
+            time.sleep(0.1)
+        return False
+
     def _is_wrapper_foreground(self, wrapper: Any) -> bool:
         """대상 윈도우(또는 동일 프로세스)가 foreground인지 확인합니다."""
         try:
@@ -2125,6 +2164,93 @@ class AppUIAction:
         except Exception as e:
             logger.error("[click_app_by_attr] 예외: %s", e)
             return AppUIActionResult(result="error", message=f"요소 클릭 실패: {e}")
+
+    def close_window(
+        self,
+        window_target: str = "auto",
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        timeout: Optional[float] = None,
+        wait_for_close: bool = True,
+        allow_invisible_children: bool = False,
+    ) -> AppUIActionResult:
+        """
+        특정 윈도우(주로 child dialog)를 닫습니다.
+        title bar X 버튼이 UIA로 클릭되지 않을 때 WM_CLOSE로 닫을 수 있습니다.
+        """
+        child_window_match_mode = (child_window_match_mode or "contains").strip().lower()
+        if child_window_match_mode not in {"exact", "contains"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 child_window_match_mode: {child_window_match_mode} (exact|contains)",
+            )
+
+        window_target = (window_target or "auto").strip().lower()
+        if window_target not in {"auto", "top", "child"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 window_target: {window_target} (auto|top|child)",
+            )
+
+        logger.info(
+            "[close_window] 시작: child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+            child_window_title,
+            child_window_auto_id,
+            window_target,
+        )
+
+        try:
+            if not self._session.is_connected:
+                self._launcher.ensure_running()
+            if not self._session.is_connected:
+                return AppUIActionResult(
+                    result="error",
+                    message="대상 애플리케이션에 연결할 수 없습니다.",
+                )
+
+            target_wrapper, resolve_info = self._resolve_attr_search_root(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                allow_invisible_children=allow_invisible_children,
+            )
+            if target_wrapper is None:
+                return AppUIActionResult(
+                    result="not_found",
+                    message=f"닫을 윈도우를 찾지 못했습니다: {resolve_info}",
+                )
+
+            window_label = self._format_search_window_log(target_wrapper)
+            closed, close_method = self._close_window_wrapper(target_wrapper)
+            if not closed:
+                return AppUIActionResult(
+                    result="error",
+                    message=f"윈도우 닫기 실패: {window_label}, method={close_method}",
+                )
+
+            actual_timeout = timeout if timeout is not None else 5.0
+            if wait_for_close and not self._wait_window_closed(target_wrapper, actual_timeout):
+                return AppUIActionResult(
+                    result="timeout",
+                    message=(
+                        f"닫기 요청은 전송했으나 윈도우가 사라지지 않았습니다: "
+                        f"{window_label}, method={close_method}, resolve={resolve_info}"
+                    ),
+                )
+
+            return AppUIActionResult(
+                result="success",
+                message=(
+                    f"윈도우 닫기 성공: {window_label}, method={close_method}, resolve={resolve_info}"
+                ),
+            )
+        except Exception as e:
+            logger.error("[close_window] 예외: %s", e)
+            return AppUIActionResult(result="error", message=f"윈도우 닫기 실패: {e}")
 
     def highlight_element_by_attr(
         self,

@@ -169,6 +169,75 @@ async def connect_to_application(
         )
 
 
+async def close_window(
+    window_target: str = "auto",
+    child_window_title: Optional[str] = None,
+    child_window_auto_id: Optional[str] = None,
+    child_window_match_mode: str = "contains",
+    case_sensitive: bool = False,
+    timeout: Optional[float] = None,
+    wait_for_close: bool = True,
+    allow_invisible_children: bool = False,
+) -> dict:
+    """
+    특정 윈도우(주로 child dialog)를 닫습니다.
+
+    title bar X 버튼이 UIA로 클릭되지 않을 때 WM_CLOSE로 닫을 수 있습니다.
+    Find 같은 child dialog를 닫을 때 사용합니다.
+
+    Args:
+        window_target: auto|top|child — 닫을 윈도우 범위
+        child_window_title: child 윈도우 제목 (예: "Find")
+        child_window_auto_id: child 윈도우 AutomationId
+        child_window_match_mode: exact|contains — child 제목 매칭 방식
+        case_sensitive: 제목 대소문자 구분 여부
+        timeout: 닫힘 대기 시간(초, 기본 5.0)
+        wait_for_close: 닫힘까지 대기 여부 (기본 True)
+        allow_invisible_children: 보이지 않는 child도 탐색할지 여부
+    """
+    logger.info(
+        "[Tool] close_window 호출: child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+        child_window_title,
+        child_window_auto_id,
+        window_target,
+    )
+
+    try:
+        from actions.app_ui_action import get_app_ui_action
+
+        action = get_app_ui_action()
+        result = action.close_window(
+            window_target=window_target,
+            child_window_title=child_window_title,
+            child_window_auto_id=child_window_auto_id,
+            child_window_match_mode=child_window_match_mode,
+            case_sensitive=case_sensitive,
+            timeout=timeout,
+            wait_for_close=wait_for_close,
+            allow_invisible_children=allow_invisible_children,
+        )
+        payload = result.to_dict()
+        logger.info(
+            "[Tool] close_window 결과: success=%s, result=%s, message=%s",
+            payload.get("is_success"),
+            payload.get("result"),
+            payload.get("message"),
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    except Exception as e:
+        logger.error(f"[Tool] close_window 예외: {e}")
+        return json.dumps(
+            {
+                "success": False,
+                "result": "error",
+                "message": f"윈도우 닫기 실패: {e}",
+                "error_detail": str(e),
+            },
+            ensure_ascii=False,
+        )
+
+
 async def close_application(force: bool = False) -> dict:
     """
     애플리케이션을 종료합니다.
@@ -322,6 +391,7 @@ def register_app_mgmt_tools(mcp: Any) -> None:
     """
     mcp.tool()(launch_application)
     mcp.tool()(connect_to_application)
+    mcp.tool()(close_window)
     mcp.tool()(close_application)
     mcp.tool()(restart_application)
     mcp.tool()(get_connection_status)
@@ -329,5 +399,5 @@ def register_app_mgmt_tools(mcp: Any) -> None:
 
     logger.info(
         "애플리케이션 관리 도구 등록 완료: launch_application, connect_to_application, "
-        "close_application, restart_application, get_connection_status, generate_locators"
+        "close_window, close_application, restart_application, get_connection_status, generate_locators"
     )
