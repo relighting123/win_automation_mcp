@@ -914,9 +914,17 @@ class AppUIAction:
     def _get_connected_app_top_hwnd(self) -> Optional[int]:
         """
         연결된 앱의 활성 최상위 창 hwnd를 반환합니다.
-        모달 다이얼로그가 떠 있으면 현재 foreground(=다이얼로그)를 우선 사용하고,
-        그렇지 않으면 앱의 top_window를 사용합니다.
+        앱의 top_window(모달 다이얼로그가 있으면 보통 그 다이얼로그)를 우선 사용하고,
+        조회에 실패하면 연결 앱에 속한 현재 foreground hwnd로 폴백합니다.
         """
+        try:
+            top = self._session.app.top_window()
+            handle = int(self._safe_call(lambda: top.handle, 0) or 0)
+            if handle:
+                return handle
+        except Exception as e:
+            logger.debug("[click_at_focus] top_window 조회 실패: %s", e)
+
         try:
             import ctypes
 
@@ -929,13 +937,7 @@ class AppUIAction:
         except Exception as e:
             logger.debug("[click_at_focus] foreground hwnd 조회 실패: %s", e)
 
-        try:
-            top = self._session.app.top_window()
-            handle = int(self._safe_call(lambda: top.handle, 0) or 0)
-            return handle or None
-        except Exception as e:
-            logger.debug("[click_at_focus] top_window 조회 실패: %s", e)
-            return None
+        return None
 
     def _bring_connected_app_to_front(self) -> AppUIActionResult:
         """연결된 앱의 활성 창(모달 다이얼로그 포함)을 foreground로 가져옵니다."""
