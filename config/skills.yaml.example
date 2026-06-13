@@ -30,6 +30,12 @@ skills:
         args:
           force: false
 
+      - tool: close_window
+        args:
+          child_window_title: "Find"
+          window_target: child
+          child_window_match_mode: contains
+
   demo_app_control_tools:
     description: "app_control_tool 계열 도구 사용 예시"
     tools:

@@ -17,6 +17,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
     )
     from tools.app_mgmt_tool import (
         close_application,
+        close_window,
         connect_to_application,
         generate_locators,
         get_connection_status,
@@ -31,6 +32,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         # app_mgmt_tool
         "launch_application": launch_application,
         "connect_to_application": connect_to_application,
+        "close_window": close_window,
         "close_application": close_application,
         "restart_application": restart_application,
         "get_connection_status": get_connection_status,
