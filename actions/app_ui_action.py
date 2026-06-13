@@ -68,27 +68,120 @@ class AppUIAction:
         self._session = session or AppSession.get_instance()
         self._launcher = get_launcher()
 
-    def _get_app_window_region(self) -> Optional[Tuple[int, int, int, int]]:
+    def _get_desktop_region(self, pyautogui: Any) -> Tuple[int, int, int, int]:
+        """전체 PC 화면 영역(left, top, width, height)을 반환합니다."""
+        size = pyautogui.size()
+        return (0, 0, int(size.width), int(size.height))
+
+    def _wrapper_to_region(
+        self,
+        wrapper: Any,
+        *,
+        expand_px: int = 4,
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """wrapper의 화면 영역(left, top, width, height)을 반환합니다."""
+        if wrapper is None:
+            return None
+        try:
+            rect = wrapper.rectangle()
+            left = int(rect.left) - max(0, expand_px)
+            top = int(rect.top) - max(0, expand_px)
+            width = int(rect.width()) + (2 * max(0, expand_px))
+            height = int(rect.height()) + (2 * max(0, expand_px))
+            if left < 0:
+                width += left
+                left = 0
+            if top < 0:
+                height += top
+                top = 0
+            if width <= 0 or height <= 0:
+                return None
+            return (left, top, width, height)
+        except Exception as e:
+            logger.debug("wrapper 영역 획득 실패: %s", e)
+            return None
+
+    def _get_app_window_region(self, wrapper: Optional[Any] = None) -> Optional[Tuple[int, int, int, int]]:
         """
         현재 연결된 애플리케이션의 메인 윈도우 영역(left, top, width, height)을 반환합니다.
         연결되지 않은 경우 연결을 시도합니다.
         """
         try:
+            if wrapper is not None:
+                return self._wrapper_to_region(wrapper)
+
             if not self._session.is_connected:
                 logger.info("세션이 연결되지 않아 애플리케이션 실행/연결을 시도합니다.")
                 self._launcher.ensure_running()
-            
+
             if not self._session.is_connected:
                 return None
 
-            wrapper = self._pick_target_window()
-            if wrapper is not None:
-                rect = wrapper.rectangle()
-                return (rect.left, rect.top, rect.width(), rect.height())
+            picked = self._pick_target_window()
+            return self._wrapper_to_region(picked)
         except Exception as e:
             logger.debug(f"윈도우 영역 획득 실패: {e}")
-        
+
         return None
+
+    def _iter_rgb_search_targets(
+        self,
+        *,
+        window_target: str = "auto",
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        region_expand_px: int = 4,
+    ) -> list[tuple[str, Any, Tuple[int, int, int, int]]]:
+        """
+        RGB 탐색에 사용할 (label, wrapper, region) 목록을 반환합니다.
+
+        - auto + child 미지정: pick된 top window 1개 (legacy)
+        - top: 프로세스 top window + child window(Find 등) 영역 순회
+        - child/auto+child: child_window_title/auto_id로 좁힌 영역
+        """
+        target_mode = (window_target or "top").strip().lower()
+        child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
+        legacy_single = target_mode == "auto" and not child_title and not child_auto_id
+
+        if legacy_single:
+            wrapper = self._pick_target_window() or self._session.get_top_window()
+            region = self._wrapper_to_region(wrapper, expand_px=region_expand_px)
+            if wrapper is not None and region is not None:
+                return [("auto->single", wrapper, region)]
+            return []
+
+        targets: list[tuple[str, Any, Tuple[int, int, int, int]]] = []
+        top_windows = self._iter_process_top_windows()
+        if not top_windows:
+            picked = self._pick_target_window()
+            top_windows = [picked] if picked is not None else []
+
+        for top_window in top_windows:
+            top_label = self._format_window_label(top_window)
+            search_roots = self._iter_attr_search_roots(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                top_window_override=top_window,
+            )
+            for search_root, search_root_info in search_roots:
+                if search_root is None:
+                    logger.info(
+                        "[rgb] search_root 없음: top=%s, info=%s",
+                        top_label,
+                        search_root_info,
+                    )
+                    continue
+                region = self._wrapper_to_region(search_root, expand_px=region_expand_px)
+                if region is None:
+                    continue
+                targets.append((f"{search_root_info} (top={top_label})", search_root, region))
+        return targets
 
     def ensure_focus(self, *, invalidate_cache: bool = False) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
@@ -342,8 +435,8 @@ class AppUIAction:
             logger.debug("대상 윈도우 선택 실패: %s", e)
             return None
 
-    def _format_window_label(self, wrapper: Any) -> str:
-        """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
+    def _get_window_search_identity(self, wrapper: Any) -> Dict[str, str]:
+        """탐색 중인 창의 title/auto_id 등 핵심 식별 정보를 반환합니다."""
         title_candidates = self._get_node_title_candidates(wrapper)
         title = title_candidates[0] if title_candidates else ""
 
@@ -359,17 +452,160 @@ class AppUIAction:
                 pass
 
         auto_id = str(self._safe_call(lambda: wrapper.element_info.automation_id, "") or "").strip()
+        control_id = str(self._safe_call(lambda: wrapper.element_info.control_id, "") or "").strip()
         control_type = str(self._safe_call(lambda: wrapper.element_info.control_type, "") or "").strip()
         class_name = str(self._safe_call(lambda: wrapper.element_info.class_name, "") or "").strip()
-        parts = [f"title={title or '-'}", f"auto_id={auto_id or '-'}"]
+        return {
+            "title": title or "-",
+            "auto_id": auto_id or "-",
+            "control_id": control_id or "-",
+            "uia_control_type": control_type or "-",
+            "class_name": class_name or "-",
+            "hwnd": str(handle) if handle else "-",
+        }
+
+    def _format_search_window_log(self, wrapper: Any) -> str:
+        """click/rgb 탐색 로그용 창 식별 문자열."""
+        info = self._get_window_search_identity(wrapper)
+        return (
+            f"title={info['title']}, auto_id={info['auto_id']}, "
+            f"control_id={info['control_id']}, uia_type={info['uia_control_type']}, hwnd={info['hwnd']}"
+        )
+
+    def _log_search_window(self, *, tool: str, wrapper: Any, scope: str = "") -> None:
+        info = self._get_window_search_identity(wrapper)
+        logger.info(
+            "[%s] 현재 탐색 창: title=%s, auto_id=%s, control_id=%s, uia_type=%s, hwnd=%s, scope=%s",
+            tool,
+            info["title"],
+            info["auto_id"],
+            info["control_id"],
+            info["uia_control_type"],
+            info["hwnd"],
+            scope or "-",
+        )
+
+    def _safe_draw_outline(
+        self,
+        node: Any,
+        *,
+        colour: str,
+        label: str = "",
+    ) -> None:
+        try:
+            node.draw_outline(colour=colour)
+            logger.info(
+                "[outline] %s colour=%s node=%s",
+                label or "highlight",
+                colour,
+                self._format_search_window_log(node),
+            )
+        except Exception as e:
+            logger.warning("outline 실패 (%s): %s", label or "highlight", e)
+
+    def _colour_to_win32_rgb(self, colour: str) -> int:
+        colours = {
+            "green": 0x00FF00,
+            "blue": 0xFF0000,
+            "red": 0x0000FF,
+        }
+        normalized = (colour or "green").strip().lower()
+        if normalized in colours:
+            return colours[normalized]
+        return colours["green"]
+
+    def _safe_draw_screen_rect_outline(
+        self,
+        *,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+        colour: str,
+        thickness: int = 3,
+        label: str = "",
+    ) -> None:
+        try:
+            import win32con
+            import win32gui
+
+            rgb = self._colour_to_win32_rgb(colour)
+            hdc = win32gui.GetDC(0)
+            pen = win32gui.CreatePen(win32con.PS_SOLID, thickness, rgb)
+            old_pen = win32gui.SelectObject(hdc, pen)
+            old_brush = win32gui.SelectObject(hdc, win32gui.GetStockObject(win32con.NULL_BRUSH))
+            win32gui.Rectangle(hdc, left, top, right, bottom)
+            win32gui.SelectObject(hdc, old_pen)
+            win32gui.SelectObject(hdc, old_brush)
+            win32gui.DeleteObject(pen)
+            win32gui.ReleaseDC(0, hdc)
+            logger.info(
+                "[outline] %s colour=%s rect=(%s,%s,%s,%s)",
+                label or "screen_rect",
+                colour,
+                left,
+                top,
+                right,
+                bottom,
+            )
+        except Exception as e:
+            logger.warning("screen outline 실패 (%s): %s", label or "screen_rect", e)
+
+    def _safe_draw_rgb_search_region(
+        self,
+        *,
+        wrapper: Any,
+        region: Tuple[int, int, int, int],
+        colour: str,
+        label: str,
+    ) -> None:
+        if wrapper is not None and hasattr(wrapper, "draw_outline"):
+            self._safe_draw_outline(wrapper, colour=colour, label=label)
+            return
+
+        left, top, width, height = region
+        self._safe_draw_screen_rect_outline(
+            left=left,
+            top=top,
+            right=left + max(1, width) - 1,
+            bottom=top + max(1, height) - 1,
+            colour=colour,
+            label=label,
+        )
+
+    def _safe_draw_pixel_marker(
+        self,
+        *,
+        x: int,
+        y: int,
+        colour: str,
+        size_px: int = 12,
+        label: str = "",
+    ) -> None:
+        half = max(2, size_px // 2)
+        self._safe_draw_screen_rect_outline(
+            left=x - half,
+            top=y - half,
+            right=x + half,
+            bottom=y + half,
+            colour=colour,
+            thickness=2,
+            label=label or f"pixel({x},{y})",
+        )
+
+    def _format_window_label(self, wrapper: Any) -> str:
+        """로그/오류 메시지용 윈도우 식별 문자열을 반환합니다."""
+        info = self._get_window_search_identity(wrapper)
+        title_candidates = self._get_node_title_candidates(wrapper)
+        parts = [f"title={info['title']}", f"auto_id={info['auto_id']}"]
         if len(title_candidates) > 1:
             parts.append(f"alt_titles={title_candidates[1:3]}")
-        if control_type:
-            parts.append(f"type={control_type}")
-        if class_name:
-            parts.append(f"class={class_name}")
-        if handle:
-            parts.append(f"hwnd={handle}")
+        if info["uia_control_type"] != "-":
+            parts.append(f"type={info['uia_control_type']}")
+        if info["class_name"] != "-":
+            parts.append(f"class={info['class_name']}")
+        if info["hwnd"] != "-":
+            parts.append(f"hwnd={info['hwnd']}")
         return ", ".join(parts)
 
     def _get_wrapper_handle(self, wrapper: Any) -> Optional[int]:
@@ -385,6 +621,202 @@ class AppUIAction:
             except Exception:
                 continue
         return None
+
+    def _get_connected_process_ids(self) -> set[int]:
+        """연결된 애플리케이션의 프로세스 ID 집합을 반환합니다."""
+        pids: set[int] = set()
+        if not self._session.is_connected:
+            return pids
+
+        proc = getattr(self._session.app, "process", None)
+        if proc:
+            pids.add(int(proc))
+
+        for window in self._safe_call(lambda: self._session.app.windows(), []) or []:
+            pid = self._safe_call(lambda: window.process_id(), None)
+            if pid:
+                pids.add(int(pid))
+        return pids
+
+    def _pid_from_hwnd(self, hwnd: int) -> Optional[int]:
+        try:
+            import win32process
+
+            _, pid = win32process.GetWindowThreadProcessId(int(hwnd))
+            return int(pid)
+        except Exception:
+            return None
+
+    def _get_caret_focus_click_point(self) -> Optional[tuple[int, int, dict]]:
+        """GetGUIThreadInfo 기반 캐럿/포커스 HWND 위치를 반환합니다."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long),
+                    ("top", ctypes.c_long),
+                    ("right", ctypes.c_long),
+                    ("bottom", ctypes.c_long),
+                ]
+
+            class GUITHREADINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("hwndActive", wintypes.HWND),
+                    ("hwndFocus", wintypes.HWND),
+                    ("hwndCapture", wintypes.HWND),
+                    ("hwndMenuOwner", wintypes.HWND),
+                    ("hwndMoveSize", wintypes.HWND),
+                    ("hwndCaret", wintypes.HWND),
+                    ("rcCaret", RECT),
+                ]
+
+            GUI_CARETBLINKING = 0x00000001
+            user32 = ctypes.windll.user32
+            fg_hwnd = user32.GetForegroundWindow()
+            if not fg_hwnd:
+                return None
+
+            thread_id = user32.GetWindowThreadProcessId(fg_hwnd, None)
+            info = GUITHREADINFO()
+            info.cbSize = ctypes.sizeof(GUITHREADINFO)
+            if not user32.GetGUIThreadInfo(thread_id, ctypes.byref(info)):
+                return None
+
+            import win32gui
+
+            if info.hwndCaret:
+                caret_left = int(info.rcCaret.left)
+                caret_top = int(info.rcCaret.top)
+                caret_right = int(info.rcCaret.right)
+                caret_bottom = int(info.rcCaret.bottom)
+                if caret_right > caret_left:
+                    client_x = (caret_left + caret_right) // 2
+                else:
+                    client_x = caret_left
+                if caret_bottom > caret_top:
+                    client_y = (caret_top + caret_bottom) // 2
+                else:
+                    client_y = caret_top
+
+                screen_x, screen_y = win32gui.ClientToScreen(int(info.hwndCaret), (client_x, client_y))
+                return (
+                    int(screen_x),
+                    int(screen_y),
+                    {
+                        "source": "caret",
+                        "hwnd": int(info.hwndCaret),
+                        "process_id": self._pid_from_hwnd(int(info.hwndCaret)),
+                        "flags": int(info.flags),
+                        "caret_blinking": bool(info.flags & GUI_CARETBLINKING),
+                    },
+                )
+
+            if info.hwndFocus:
+                left, top, right, bottom = win32gui.GetWindowRect(int(info.hwndFocus))
+                return (
+                    int((left + right) / 2),
+                    int((top + bottom) / 2),
+                    {
+                        "source": "hwnd_focus",
+                        "hwnd": int(info.hwndFocus),
+                        "process_id": self._pid_from_hwnd(int(info.hwndFocus)),
+                    },
+                )
+        except Exception as e:
+            logger.debug("캐럿/포커스 HWND 위치 조회 실패: %s", e)
+        return None
+
+    def _get_uia_focused_click_point(self) -> Optional[tuple[int, int, dict]]:
+        """UIA GetFocusedElement 기반 포커스 요소 중심 좌표를 반환합니다."""
+        try:
+            from pywinauto.uia_defines import IUIA
+
+            element = IUIA().iuia.GetFocusedElement()
+            if element is None:
+                return None
+
+            rect = element.CurrentBoundingRectangle
+            left, top, right, bottom = [int(v) for v in rect]
+            if right <= left or bottom <= top:
+                return None
+
+            control_type_id = int(self._safe_call(lambda: element.CurrentControlType, 0) or 0)
+            return (
+                int((left + right) / 2),
+                int((top + bottom) / 2),
+                {
+                    "source": "uia_focused",
+                    "process_id": int(self._safe_call(lambda: element.CurrentProcessId, 0) or 0) or None,
+                    "automation_id": str(self._safe_call(lambda: element.CurrentAutomationId, "") or ""),
+                    "name": str(self._safe_call(lambda: element.CurrentName, "") or ""),
+                    "control_type_id": control_type_id,
+                },
+            )
+        except Exception as e:
+            logger.debug("UIA focused element 조회 실패: %s", e)
+            return None
+
+    def _resolve_focus_click_point(self) -> tuple[Optional[int], Optional[int], dict]:
+        """
+        현재 키보드 포커스 위치의 화면 좌표를 결정합니다.
+        캐럿 > UIA focused element > hwnd focus 순으로 시도합니다.
+        """
+        for resolver in (self._get_caret_focus_click_point, self._get_uia_focused_click_point):
+            resolved = resolver()
+            if resolved is not None:
+                x, y, info = resolved
+                logger.info(
+                    "[click_at_focus] 포커스 위치: x=%s, y=%s, source=%s, info=%s",
+                    x,
+                    y,
+                    info.get("source"),
+                    info,
+                )
+                return x, y, info
+        return None, None, {}
+
+    def _close_window_wrapper(self, wrapper: Any) -> tuple[bool, str]:
+        """wrapper.close() 또는 WM_CLOSE로 윈도우 닫기를 시도합니다."""
+        try:
+            wrapper.close()
+            return True, "wrapper.close"
+        except Exception as e:
+            logger.debug("wrapper.close() 실패: %s", e)
+
+        handle = self._get_wrapper_handle(wrapper)
+        if handle is None:
+            return False, "no_handle"
+
+        try:
+            import win32gui
+
+            win32gui.PostMessage(handle, 0x0010, 0, 0)  # WM_CLOSE
+            return True, "wm_close"
+        except Exception as e:
+            logger.debug("WM_CLOSE 전송 실패: %s", e)
+            return False, f"wm_close_failed:{e}"
+
+    def _wait_window_closed(self, wrapper: Any, timeout: float) -> bool:
+        """윈도우가 닫힐 때까지 대기합니다."""
+        handle = self._get_wrapper_handle(wrapper)
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            if handle is not None:
+                try:
+                    import win32gui
+
+                    if not win32gui.IsWindow(handle):
+                        return True
+                except Exception:
+                    pass
+            if not self._safe_call(lambda: wrapper.exists(), True):
+                return True
+            time.sleep(0.1)
+        return False
 
     def _is_wrapper_foreground(self, wrapper: Any) -> bool:
         """대상 윈도우(또는 동일 프로세스)가 foreground인지 확인합니다."""
@@ -545,10 +977,11 @@ class AppUIAction:
         nodes = [root]
         nodes.extend(descendants)
 
+        self._log_search_window(tool="click_app_by_attr", wrapper=root, scope="descendants_scan")
         logger.info(
             "[click_app_by_attr] descendants 순회: search_root=%s, descendants=%d, total_nodes=%d, "
-            "auto_id=%s, control_type=%s, title=%s, legacy_value=%s",
-            self._format_window_label(root),
+            "target_auto_id=%s, target_control_type=%s, target_title=%s, target_legacy_value=%s",
+            self._format_search_window_log(root),
             len(descendants),
             len(nodes),
             auto_id,
@@ -864,6 +1297,62 @@ class AppUIAction:
             )
             return None, f"child_not_found(title={child_title}, auto_id={child_auto_id}, candidates={candidates})"
         return top_window, "auto->top"
+
+    def _iter_attr_search_roots(
+        self,
+        *,
+        window_target: str,
+        child_window_title: Optional[str],
+        child_window_auto_id: Optional[str],
+        child_window_match_mode: str,
+        case_sensitive: bool,
+        top_window_override: Optional[Any] = None,
+        allow_invisible_children: bool = False,
+    ) -> list[tuple[Optional[Any], str]]:
+        """
+        click_app_by_attr가 순회할 search root 목록을 반환합니다.
+
+        top.descendants()만으로는 Find 같은 child window 내부 컨트롤(Close)이
+        빠질 수 있어, top 모드에서는 top + child window 각각을 search root로 봅니다.
+        child_window_title/auto_id가 지정된 경우에는 해당 child만 탐색합니다.
+        """
+        target_mode = (window_target or "auto").strip().lower()
+        child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
+        child_scoped = target_mode == "child" or (
+            target_mode == "auto" and bool(child_title or child_auto_id)
+        )
+
+        if child_scoped:
+            root, info = self._resolve_attr_search_root(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                top_window_override=top_window_override,
+                allow_invisible_children=allow_invisible_children,
+            )
+            return [(root, info)]
+
+        top_window = top_window_override
+        if top_window is None:
+            top_window = self._pick_target_window() or self._session.get_top_window()
+        if top_window is None:
+            return [(None, "none")]
+
+        prefix = "top" if target_mode == "top" else "auto->top"
+        roots: list[tuple[Any, str]] = [(top_window, prefix)]
+        child_roots = self._list_candidate_child_windows(
+            top_window,
+            include_descendants=True,
+            require_visible=False,
+        )
+        for index, child in enumerate(child_roots):
+            label = self._format_window_label(child)
+            child_prefix = "child" if target_mode == "top" else "auto->child"
+            roots.append((child, f"{child_prefix}[{index}]({label})"))
+        return roots
 
     def _click_with_preferred_action(
         self,
@@ -1201,73 +1690,291 @@ class AppUIAction:
             
             return AppUIActionResult(result="error", message=f"텍스트 입력 실패: {e}")
 
+    def _find_rgb_in_region(
+        self,
+        *,
+        rgb: Tuple[int, int, int],
+        region: Tuple[int, int, int, int],
+        tolerance: int,
+        step: int,
+        screenshot: Any,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        screenshot 픽셀을 (x, y) step 간격으로 순회하며 RGB를 찾습니다.
+        PIL RGB 기준으로 per-channel tolerance를 적용합니다.
+        """
+        if screenshot is None:
+            return None
+
+        try:
+            image = screenshot.convert("RGB") if hasattr(screenshot, "convert") else screenshot
+            width, height = image.size
+            left, top, region_width, region_height = region
+            scan_width = min(width, max(0, region_width))
+            scan_height = min(height, max(0, region_height))
+            if scan_width == 0 or scan_height == 0:
+                return None
+
+            pixel_access = image.load()
+            for y in range(0, scan_height, step):
+                for x in range(0, scan_width, step):
+                    pixel = pixel_access[x, y]
+                    if self._match(pixel[:3], rgb, tolerance):
+                        return left + x, top + y
+            return None
+        except Exception as e:
+            logger.warning("RGB region scan 실패: %s", e)
+            return None
+
     def find_rgb_position(
         self,
         rgb: Tuple[int, int, int],
         tolerance: int = 5,
         step: int = 1,
         timeout: Optional[float] = None,
+        *,
+        window_target: str = "auto",
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        focus_search_root: bool = False,
+        search_scope: str = "app",
+        region_expand_px: int = 4,
+        draw_outline: bool = False,
+        outline_colour: str = "red",
+        search_outline_colour: str = "green",
+        outline_scope: str = "all",
     ) -> AppUIActionResult:
-        """화면에서 RGB 픽셀 위치를 찾습니다."""
+        """
+        화면에서 RGB 픽셀 위치를 찾습니다.
+
+        draw_outline=True 시 outline_scope에 따라 탐색 영역/발견 픽셀을 강조합니다:
+          - search: 순회 중인 search_root(창) 또는 region만
+          - target: 발견한 픽셀 위치만
+          - all: 탐색 영역 + 픽셀 (기본)
+        """
         pyautogui, error_result = self._get_pyautogui()
         if error_result:
             return error_result
+
+        scope_mode = (search_scope or "app").strip().lower()
+        if scope_mode not in {"app", "desktop"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 search_scope: {search_scope} (app|desktop)",
+            )
+
+        target_mode = (window_target or "auto").strip().lower()
+        if scope_mode == "app" and target_mode not in {"auto", "top", "child"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 window_target: {window_target} (auto|top|child)",
+            )
+
+        outline_scope = (outline_scope or "all").strip().lower()
+        if outline_scope not in {"search", "target", "all"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all)",
+            )
+        outline_search = draw_outline and outline_scope in {"search", "all"}
+        outline_target = draw_outline and outline_scope in {"target", "all"}
+        outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
 
         tolerance = max(0, tolerance)
         step = max(1, step)
         start = time.monotonic()
 
-        region = self._get_app_window_region()
-        if region is None:
-            return AppUIActionResult(result="error", message="대상 애플리케이션 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.")
+        if scope_mode == "desktop":
+            desktop_region = self._get_desktop_region(pyautogui)
+            search_targets: list[tuple[str, Any, Tuple[int, int, int, int]]] = [
+                ("desktop(full_screen)", None, desktop_region)
+            ]
+            focus_search_root = False
+            logger.info(
+                "[rgb] 전체 화면 탐색: search_scope=desktop, region=%s",
+                desktop_region,
+            )
+        else:
+            search_targets = self._iter_rgb_search_targets(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                region_expand_px=region_expand_px,
+            )
+            if not search_targets:
+                return AppUIActionResult(
+                    result="error",
+                    message="RGB 탐색 대상 윈도우를 찾을 수 없거나 경로가 일치하지 않습니다.",
+                )
+
+            searched_labels = [label for label, _, _ in search_targets]
+            logger.info(
+                "[rgb] 탐색 대상 %d개: search_scope=app, window_target=%s, child_window_title=%s, targets=%s",
+                len(search_targets),
+                window_target,
+                child_window_title,
+                searched_labels,
+            )
+
+        searched_labels = [label for label, _, _ in search_targets]
 
         while True:
-            screenshot = pyautogui.screenshot(region=region)
-            
-            # [Optimization] numpy를 사용하여 픽셀 탐색 속도 대폭 향상
-            pixels = np.array(screenshot)
-            
-            # tolerance 내의 모든 픽셀을 한 번에 마스킹
-            # pixels shape: (height, width, channels)
-            # rgb: (r, g, b)
-            # channels가 4개(RGBA)인 경우 처음 3개만 사용
-            target_pixels = pixels[:, :, :3]
-            
-            # 각 채널별 차이 계산
-            # numpy 브로드캐스팅을 활용하여 (H, W, 3) - (3,) 연산 수행
-            diff = np.abs(target_pixels.astype(np.int16) - np.array(rgb, dtype=np.int16))
-            
-            # 모든 채널(axis=-1)이 tolerance 이내인 픽셀 찾기
-            mask = np.all(diff <= tolerance, axis=-1)
-            
-            # step 적용 (Slicing)
-            if step > 1:
-                # y, x 순서로 step 적용된 mask 생성
-                reduced_mask = np.zeros_like(mask)
-                reduced_mask[::step, ::step] = mask[::step, ::step]
-                mask = reduced_mask
+            for label, wrapper, region in search_targets:
+                if wrapper is not None:
+                    self._log_search_window(tool="rgb", wrapper=wrapper, scope=label)
+                else:
+                    logger.info("[rgb] 현재 탐색: scope=%s, region=%s", label, region)
+                logger.info("[rgb] 탐색 영역: region=%s", region)
+                if focus_search_root and wrapper is not None:
+                    self._safe_call(wrapper.set_focus, None)
+                    time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1))
 
-            # 일치하는 좌표 찾기
-            coords = np.where(mask)
-            if coords[0].size > 0:
-                # 첫 번째 일치하는 점 선택 (y, x 순서)
-                y_idx, x_idx = coords[0][0], coords[1][0]
-                
-                # 리전이 있는 경우 절대 좌표로 변환
-                final_x = int(x_idx) + (region[0] if region else 0)
-                final_y = int(y_idx) + (region[1] if region else 0)
-                
-                logger.info(f"RGB {rgb} 발견: ({final_x}, {final_y}) (numpy 최적화 적용)")
-                return AppUIActionResult(result="success", x=final_x, y=final_y)
+                if outline_search:
+                    self._safe_draw_rgb_search_region(
+                        wrapper=wrapper,
+                        region=region,
+                        colour=search_outline_colour,
+                        label=f"rgb_search={label}",
+                    )
+                    time.sleep(outline_pause)
+
+                screenshot = pyautogui.screenshot(region=region)
+                matched = self._find_rgb_in_region(
+                    rgb=rgb,
+                    region=region,
+                    tolerance=tolerance,
+                    step=step,
+                    screenshot=screenshot,
+                )
+                if matched is None:
+                    continue
+
+                final_x, final_y = matched
+                logger.info(
+                    "RGB %s 발견: (%s, %s), search_root=%s",
+                    rgb,
+                    final_x,
+                    final_y,
+                    label,
+                )
+                if outline_target:
+                    self._safe_draw_pixel_marker(
+                        x=final_x,
+                        y=final_y,
+                        colour=outline_colour,
+                        label=f"rgb_target search_root={label}",
+                    )
+                    time.sleep(outline_pause)
+                return AppUIActionResult(
+                    result="success",
+                    x=final_x,
+                    y=final_y,
+                    message=f"RGB 발견: search_root={label}",
+                )
 
             if timeout is None:
-                logger.warning(f"RGB {rgb}를 찾을 수 없습니다.")
-                return AppUIActionResult(result="not_found", message="RGB 위치를 찾을 수 없습니다")
-            if timeout is not None and time.monotonic() - start > timeout:
-                logger.warning(f"RGB {rgb} 탐색 시간 초과 ({timeout}s)")
-                return AppUIActionResult(result="timeout", message="RGB 위치 탐색 시간 초과")
-            
+                logger.warning(
+                    "RGB %s를 찾을 수 없습니다. search_targets=%s",
+                    rgb,
+                    searched_labels,
+                )
+                return AppUIActionResult(
+                    result="not_found",
+                    message=f"RGB 위치를 찾을 수 없습니다. search_targets={searched_labels}",
+                )
+            if time.monotonic() - start > timeout:
+                logger.warning("RGB %s 탐색 시간 초과 (%ss)", rgb, timeout)
+                return AppUIActionResult(
+                    result="timeout",
+                    message=f"RGB 위치 탐색 시간 초과. search_targets={searched_labels}",
+                )
+
             time.sleep(0.1)
+
+    def click_at_focus(
+        self,
+        button: str = "right",
+        clicks: int = 1,
+        require_app_focus: bool = True,
+    ) -> AppUIActionResult:
+        """
+        현재 키보드 포커스 위치에서 마우스 클릭합니다.
+        호출 시 연결된 애플리케이션에 ensure_focus()를 적용합니다.
+        """
+        button = (button or "right").strip().lower()
+        if button not in {"left", "right", "middle"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 button: {button} (left|right|middle)",
+            )
+
+        logger.info(
+            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s",
+            button,
+            clicks,
+            require_app_focus,
+        )
+
+        focus_result = self.ensure_focus()
+        if not focus_result.is_success:
+            return AppUIActionResult(
+                result="error",
+                message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
+            )
+
+        x, y, focus_info = self._resolve_focus_click_point()
+        if x is None or y is None:
+            return AppUIActionResult(
+                result="not_found",
+                message="포커스 위치를 찾지 못했습니다.",
+            )
+
+        if require_app_focus:
+            target_pids = self._get_connected_process_ids()
+            focus_pid = focus_info.get("process_id")
+            if focus_pid is None and focus_info.get("hwnd"):
+                focus_pid = self._pid_from_hwnd(int(focus_info["hwnd"]))
+            if target_pids and focus_pid and int(focus_pid) not in target_pids:
+                return AppUIActionResult(
+                    result="error",
+                    message=(
+                        "현재 포커스가 연결된 애플리케이션이 아닙니다. "
+                        f"focus_pid={focus_pid}, target_pids={sorted(target_pids)}"
+                    ),
+                    x=x,
+                    y=y,
+                    button=button,
+                )
+
+        pyautogui, error_result = self._get_pyautogui()
+        if error_result:
+            return error_result
+
+        try:
+            pyautogui.click(x=x, y=y, button=button, clicks=max(1, clicks))
+            return AppUIActionResult(
+                result="success",
+                message=(
+                    f"포커스 위치 {button} 클릭 성공: source={focus_info.get('source')}, "
+                    f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}"
+                ),
+                x=x,
+                y=y,
+                button=button,
+            )
+        except Exception as e:
+            logger.error("포커스 위치 클릭 실패: %s", e)
+            return AppUIActionResult(
+                result="error",
+                message=f"포커스 위치 {button} 클릭 실패: {e}",
+                x=x,
+                y=y,
+                button=button,
+            )
 
     def click_position(
         self,
@@ -1477,10 +2184,17 @@ class AppUIAction:
         timeout: Optional[float] = None,
         draw_outline: bool = False,
         outline_colour: str = "red",
+        search_outline_colour: str = "green",
+        outline_scope: str = "all",
     ) -> AppUIActionResult:
         """
         속성 기반으로 특정 요소를 찾아 클릭합니다.
         auto_id/control_type/title/legacy_value 중 하나 이상을 입력받아 대상을 식별합니다.
+
+        draw_outline=True 시 outline_scope에 따라 테두리 표시:
+          - search: 순회 중인 search_root(창)만
+          - target: 찾은 요소만
+          - all: search_root + target (기본)
         """
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
@@ -1513,6 +2227,16 @@ class AppUIAction:
                 message="검색 조건(auto_id, control_type, title, legacy_value)이 하나 이상 필요합니다.",
             )
 
+        outline_scope = (outline_scope or "all").strip().lower()
+        if outline_scope not in {"search", "target", "all"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all)",
+            )
+        outline_search = draw_outline and outline_scope in {"search", "all"}
+        outline_target = draw_outline and outline_scope in {"target", "all"}
+        outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
+
         logger.info(
             "[click_app_by_attr] 시작: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
             auto_id,
@@ -1528,6 +2252,8 @@ class AppUIAction:
             target = None
             search_root = None
             search_root_info = "none"
+            matched_search_root = None
+            matched_search_root_info = "none"
             scanned_top_labels: list[str] = []
             while True:
                 focus_result = self.ensure_focus(invalidate_cache=True)
@@ -1552,7 +2278,7 @@ class AppUIAction:
                         "[click_app_by_attr] top window 순회 시작: %s",
                         self._format_window_label(top_window),
                     )
-                    search_root, search_root_info = self._resolve_attr_search_root(
+                    search_roots = self._iter_attr_search_roots(
                         window_target=window_target,
                         child_window_title=child_window_title,
                         child_window_auto_id=child_window_auto_id,
@@ -1560,30 +2286,47 @@ class AppUIAction:
                         case_sensitive=case_sensitive,
                         top_window_override=top_window,
                     )
-                    if search_root is None:
-                        logger.info(
-                            "[click_app_by_attr] search_root 없음: top=%s, info=%s",
-                            self._format_window_label(top_window),
-                            search_root_info,
+                    for search_root, search_root_info in search_roots:
+                        if search_root is None:
+                            logger.info(
+                                "[click_app_by_attr] search_root 없음: top=%s, info=%s",
+                                self._format_window_label(top_window),
+                                search_root_info,
+                            )
+                            continue
+
+                        self._log_search_window(
+                            tool="click_app_by_attr",
+                            wrapper=search_root,
+                            scope=search_root_info,
                         )
-                        continue
+                        logger.info(
+                            "[click_app_by_attr] search_root from top=%s",
+                            self._format_search_window_log(top_window),
+                        )
 
-                    logger.info(
-                        "[click_app_by_attr] search_root=%s (from top=%s)",
-                        search_root_info,
-                        self._format_window_label(top_window),
-                    )
+                        if outline_search:
+                            self._safe_draw_outline(
+                                search_root,
+                                colour=search_outline_colour,
+                                label=f"search_root={search_root_info}",
+                            )
+                            time.sleep(outline_pause)
 
-                    target = self._find_first_matching_node(
-                        root=search_root,
-                        auto_id=auto_id,
-                        control_type=control_type,
-                        title=title,
-                        title_match_mode=title_match_mode,
-                        legacy_value=legacy_value,
-                        legacy_match_mode=legacy_match_mode,
-                        case_sensitive=case_sensitive,
-                    )
+                        target = self._find_first_matching_node(
+                            root=search_root,
+                            auto_id=auto_id,
+                            control_type=control_type,
+                            title=title,
+                            title_match_mode=title_match_mode,
+                            legacy_value=legacy_value,
+                            legacy_match_mode=legacy_match_mode,
+                            case_sensitive=case_sensitive,
+                        )
+                        if target is not None:
+                            matched_search_root = search_root
+                            matched_search_root_info = search_root_info
+                            break
                     if target is not None:
                         break
 
@@ -1613,20 +2356,24 @@ class AppUIAction:
                     ),
                 )
             
+            search_root = matched_search_root
+            search_root_info = matched_search_root_info
+
+            matched_auto_id = str(self._safe_call(lambda: target.element_info.automation_id, "") or "")
+            matched_title = str(self._safe_call(target.window_text, "") or "")
+            matched_type = str(self._safe_call(lambda: target.element_info.control_type, "") or "")
+
             if search_root is not None:
                 self._safe_call(search_root.set_focus, None)
                 time.sleep(self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2))
 
-            # 하이라이트 표시
-            if draw_outline:
-                try:
-                    target.draw_outline(colour=outline_colour)
-                except Exception as e:
-                    logger.warning(f"테두리 그리기 실패: {e}")
-            
-            matched_auto_id = str(self._safe_call(lambda: target.element_info.automation_id, "") or "")
-            matched_title = str(self._safe_call(target.window_text, "") or "")
-            matched_type = str(self._safe_call(lambda: target.element_info.control_type, "") or "")
+            if outline_target:
+                self._safe_draw_outline(
+                    target,
+                    colour=outline_colour,
+                    label=f"target(title={matched_title}, search_root={search_root_info})",
+                )
+                time.sleep(outline_pause)
             click_method = self._click_with_preferred_action(
                 target,
                 button=button,
@@ -1655,6 +2402,93 @@ class AppUIAction:
         except Exception as e:
             logger.error("[click_app_by_attr] 예외: %s", e)
             return AppUIActionResult(result="error", message=f"요소 클릭 실패: {e}")
+
+    def close_window(
+        self,
+        window_target: str = "auto",
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        timeout: Optional[float] = None,
+        wait_for_close: bool = True,
+        allow_invisible_children: bool = False,
+    ) -> AppUIActionResult:
+        """
+        특정 윈도우(주로 child dialog)를 닫습니다.
+        title bar X 버튼이 UIA로 클릭되지 않을 때 WM_CLOSE로 닫을 수 있습니다.
+        """
+        child_window_match_mode = (child_window_match_mode or "contains").strip().lower()
+        if child_window_match_mode not in {"exact", "contains"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 child_window_match_mode: {child_window_match_mode} (exact|contains)",
+            )
+
+        window_target = (window_target or "auto").strip().lower()
+        if window_target not in {"auto", "top", "child"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 window_target: {window_target} (auto|top|child)",
+            )
+
+        logger.info(
+            "[close_window] 시작: child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+            child_window_title,
+            child_window_auto_id,
+            window_target,
+        )
+
+        try:
+            if not self._session.is_connected:
+                self._launcher.ensure_running()
+            if not self._session.is_connected:
+                return AppUIActionResult(
+                    result="error",
+                    message="대상 애플리케이션에 연결할 수 없습니다.",
+                )
+
+            target_wrapper, resolve_info = self._resolve_attr_search_root(
+                window_target=window_target,
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                allow_invisible_children=allow_invisible_children,
+            )
+            if target_wrapper is None:
+                return AppUIActionResult(
+                    result="not_found",
+                    message=f"닫을 윈도우를 찾지 못했습니다: {resolve_info}",
+                )
+
+            window_label = self._format_search_window_log(target_wrapper)
+            closed, close_method = self._close_window_wrapper(target_wrapper)
+            if not closed:
+                return AppUIActionResult(
+                    result="error",
+                    message=f"윈도우 닫기 실패: {window_label}, method={close_method}",
+                )
+
+            actual_timeout = timeout if timeout is not None else 5.0
+            if wait_for_close and not self._wait_window_closed(target_wrapper, actual_timeout):
+                return AppUIActionResult(
+                    result="timeout",
+                    message=(
+                        f"닫기 요청은 전송했으나 윈도우가 사라지지 않았습니다: "
+                        f"{window_label}, method={close_method}, resolve={resolve_info}"
+                    ),
+                )
+
+            return AppUIActionResult(
+                result="success",
+                message=(
+                    f"윈도우 닫기 성공: {window_label}, method={close_method}, resolve={resolve_info}"
+                ),
+            )
+        except Exception as e:
+            logger.error("[close_window] 예외: %s", e)
+            return AppUIActionResult(result="error", message=f"윈도우 닫기 실패: {e}")
 
     def highlight_element_by_attr(
         self,

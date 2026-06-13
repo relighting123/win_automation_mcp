@@ -115,6 +115,58 @@ def click_app_position(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
+def click_at_focus(
+    button: str = "right",
+    clicks: int = 1,
+    require_app_focus: bool = True,
+) -> str:
+    """
+    현재 키보드 포커스 위치에서 마우스 클릭합니다.
+
+    호출 시 연결된 애플리케이션에 ensure_focus()를 적용한 뒤,
+    포커스된 요소/캐럿 위치를 기준으로 클릭합니다.
+
+    Args:
+        button: left|right|middle (기본 right)
+        clicks: 클릭 횟수 (기본 1)
+        require_app_focus: 포커스가 연결된 앱에 있을 때만 클릭 (기본 True)
+    """
+    logger.info(
+        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s",
+        button,
+        clicks,
+        require_app_focus,
+    )
+    action = get_app_ui_action()
+    result = action.click_at_focus(
+        button=button,
+        clicks=clicks,
+        require_app_focus=require_app_focus,
+    )
+    payload = result.to_dict()
+    logger.info(
+        "[Tool] click_at_focus 결과: success=%s, x=%s, y=%s, message=%s",
+        payload.get("is_success"),
+        payload.get("x"),
+        payload.get("y"),
+        payload.get("message"),
+    )
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def right_click_at_focus(
+    button: str = "right",
+    clicks: int = 1,
+    require_app_focus: bool = True,
+) -> str:
+    """Deprecated: click_at_focus를 사용하세요."""
+    return click_at_focus(
+        button=button,
+        clicks=clicks,
+        require_app_focus=require_app_focus,
+    )
+
+
 async def click_app_by_keyword(
     keyword: str,
     element_type: str = "any",
@@ -180,6 +232,8 @@ def click_app_by_attr(
     timeout: Optional[float] = None,
     draw_outline: bool = False,
     outline_colour: str = "red",
+    search_outline_colour: str = "green",
+    outline_scope: str = "all",
 ) -> str:
     """
     pywinauto(UIA) 속성 기반으로 요소를 직접 찾아 클릭합니다.
@@ -201,7 +255,13 @@ def click_app_by_attr(
     child_window_match_mode:
       - exact: child_window_title 완전 일치
       - contains: child_window_title 포함 일치
-    draw_outline을 True로 설정하면 클릭 전 요소를 강조 표시합니다.
+    draw_outline을 True로 설정하면 탐색/클릭 대상을 강조 표시합니다.
+    outline_scope:
+      - search: 순회 중인 search_root(창)만
+      - target: 찾은 요소만
+      - all: search_root + target (기본)
+    search_outline_colour: search_root 테두리 색 (기본 green)
+    outline_colour: target 요소 테두리 색 (기본 red)
     """
     logger.info(
         "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
@@ -230,7 +290,9 @@ def click_app_by_attr(
         double=double,
         timeout=timeout,
         draw_outline=draw_outline,
-        outline_colour=outline_colour
+        outline_colour=outline_colour,
+        search_outline_colour=search_outline_colour,
+        outline_scope=outline_scope,
     )
     payload = result.to_dict()
     logger.info(
@@ -323,26 +385,82 @@ def find_app_by_rgb(
     b: int,
     tolerance: int = 5,
     timeout: Optional[float] = None,
+    window_target: str = "top",
+    child_window_title: Optional[str] = None,
+    child_window_auto_id: Optional[str] = None,
+    child_window_match_mode: str = "contains",
+    case_sensitive: bool = False,
+    search_scope: str = "app",
+    focus_before_search: bool = False,
+    draw_outline: bool = False,
+    outline_colour: str = "red",
+    search_outline_colour: str = "green",
+    outline_scope: str = "all",
 ) -> str:
     """
     화면에서 특정 RGB 색상을 가진 픽셀의 좌표를 찾습니다.
-    
-    Args:
-        r: Red 값 (0-255)
-        g: Green 값 (0-255)
-        b: Blue 값 (0-255)
-        tolerance: 허용 오차
-        timeout: 최대 대기 시간
+
+    search_scope:
+      - app: 연결된 앱 윈도우 영역에서 탐색 (기본)
+      - desktop: 전체 PC 화면(모든 모니터 가상 데스크톱)에서 탐색
+
+    window_target (search_scope=app 일 때):
+      - top (기본): 프로세스 top window + child window(Find 등) 영역을 순회
+      - auto: child_window_title 미지정 시 pick된 top 1개, 지정 시 child 우선
+      - child: child_window_title/auto_id로 좁힌 영역만 탐색
+
+    focus_before_search:
+      - False (기본): RGB 캡처 전 포커스를 바꾸지 않아 desktop과 유사하게 색 유지
+      - True: 탐색 전 앱 포커스 (UI 색이 바뀔 수 있음)
+
+    draw_outline을 True로 설정하면 탐색 영역/발견 픽셀을 강조 표시합니다.
+    outline_scope:
+      - search: 순회 중인 search_root(창) 또는 region만
+      - target: 발견한 픽셀 위치만
+      - all: 탐색 영역 + 픽셀 (기본)
     """
-    logger.info(f"[Tool] find_app_by_rgb 호출: rgb=({r}, {g}, {b}), tolerance={tolerance}")
+    logger.info(
+        "[Tool] find_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, search_scope=%s, window_target=%s, child_window_title=%s",
+        r,
+        g,
+        b,
+        tolerance,
+        search_scope,
+        window_target,
+        child_window_title,
+    )
     action = get_app_ui_action()
-    
-    # 추가: 탐색 전 앱을 화면 앞으로 가져오고 활성화
-    focus_result = action.ensure_focus()
-    if not focus_result.is_success:
-        return json.dumps(focus_result.to_dict(), ensure_ascii=False)
-        
-    result = action.find_rgb_position(rgb=(r, g, b), tolerance=tolerance, timeout=timeout)
+
+    scope_mode = (search_scope or "app").strip().lower()
+    try:
+        action._launcher.ensure_running()
+    except Exception as exc:
+        return json.dumps(
+            {"result": "error", "message": f"애플리케이션 연결 실패: {exc}", "is_success": False},
+            ensure_ascii=False,
+        )
+
+    if scope_mode != "desktop" and focus_before_search:
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return json.dumps(focus_result.to_dict(), ensure_ascii=False)
+
+    result = action.find_rgb_position(
+        rgb=(r, g, b),
+        tolerance=tolerance,
+        timeout=timeout,
+        window_target=window_target,
+        child_window_title=child_window_title,
+        child_window_auto_id=child_window_auto_id,
+        child_window_match_mode=child_window_match_mode,
+        case_sensitive=case_sensitive,
+        search_scope=search_scope,
+        focus_search_root=focus_before_search,
+        draw_outline=draw_outline,
+        outline_colour=outline_colour,
+        search_outline_colour=search_outline_colour,
+        outline_scope=outline_scope,
+    )
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
@@ -354,17 +472,64 @@ def click_app_by_rgb(
     button: str = "left",
     clicks: int = 1,
     timeout: Optional[float] = None,
+    window_target: str = "top",
+    child_window_title: Optional[str] = None,
+    child_window_auto_id: Optional[str] = None,
+    child_window_match_mode: str = "contains",
+    case_sensitive: bool = False,
+    search_scope: str = "app",
+    focus_before_search: bool = False,
+    draw_outline: bool = False,
+    outline_colour: str = "red",
+    search_outline_colour: str = "green",
+    outline_scope: str = "all",
 ) -> str:
     """
     화면에서 특정 RGB 색상을 가진 픽셀을 찾아 클릭합니다.
-    """
-    logger.info(f"[Tool] click_app_by_rgb 호출: rgb=({r}, {g}, {b}), tolerance={tolerance}")
-    action = get_app_ui_action()
-    focus_result = action.ensure_focus()
-    if not focus_result.is_success:
-        return json.dumps(focus_result.to_dict(), ensure_ascii=False)
 
-    find_result = action.find_rgb_position(rgb=(r, g, b), tolerance=tolerance, timeout=timeout)
+    search_scope / window_target / focus_before_search / draw_outline 옵션은 find_app_by_rgb와 동일합니다.
+    """
+    logger.info(
+        "[Tool] click_app_by_rgb 호출: rgb=(%s, %s, %s), tolerance=%s, search_scope=%s, window_target=%s, child_window_title=%s",
+        r,
+        g,
+        b,
+        tolerance,
+        search_scope,
+        window_target,
+        child_window_title,
+    )
+    action = get_app_ui_action()
+    scope_mode = (search_scope or "app").strip().lower()
+    try:
+        action._launcher.ensure_running()
+    except Exception as exc:
+        return json.dumps(
+            {"result": "error", "message": f"애플리케이션 연결 실패: {exc}", "is_success": False},
+            ensure_ascii=False,
+        )
+
+    if scope_mode != "desktop" and focus_before_search:
+        focus_result = action.ensure_focus()
+        if not focus_result.is_success:
+            return json.dumps(focus_result.to_dict(), ensure_ascii=False)
+
+    find_result = action.find_rgb_position(
+        rgb=(r, g, b),
+        tolerance=tolerance,
+        timeout=timeout,
+        window_target=window_target,
+        child_window_title=child_window_title,
+        child_window_auto_id=child_window_auto_id,
+        child_window_match_mode=child_window_match_mode,
+        case_sensitive=case_sensitive,
+        search_scope=search_scope,
+        focus_search_root=focus_before_search,
+        draw_outline=draw_outline,
+        outline_colour=outline_colour,
+        search_outline_colour=search_outline_colour,
+        outline_scope=outline_scope,
+    )
     
     if not find_result.is_success:
         return json.dumps(find_result.to_dict(), ensure_ascii=False)
@@ -384,6 +549,8 @@ def register_app_control_tools(mcp: "FastMCP") -> None:
     mcp.tool()(find_app_by_ocr)
     mcp.tool()(type_app_text)
     mcp.tool()(press_app_shortcut)
+    mcp.tool()(click_at_focus)
+    mcp.tool()(right_click_at_focus)
     mcp.tool()(click_app_position)
     mcp.tool()(click_app_by_keyword)
     mcp.tool()(click_app_by_attr)

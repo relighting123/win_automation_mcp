@@ -6,10 +6,12 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from scripts.generate_locators import (
+    build_locator_tree,
     collect_all_descendant_records,
+    count_tree_elements,
     extract_elements,
+    flatten_tree_elements,
     iter_search_nodes,
-    iter_search_roots,
     make_locator_key,
     node_to_record,
     resolve_target_windows,
@@ -48,6 +50,12 @@ class _MockNode:
     def descendants(self):
         return []
 
+    def children(self):
+        return []
+
+    def wrapper_object(self):
+        return self
+
 
 class _MockTop(_MockNode):
     def __init__(self, **kwargs):
@@ -67,12 +75,13 @@ class _MockTop(_MockNode):
 class _MockFind(_MockNode):
     def __init__(self):
         super().__init__(title="Find", control_type="Window", control_id=2000, automation_id="FindDlg")
-
-    def descendants(self):
-        return [
+        self._cached_descendants = [
             _MockNode(title="Next", control_type="Button", control_id=2001, automation_id="btnNext"),
             _MockNode(title="닫기", control_type="Button", control_id=2002, automation_id="Close"),
         ]
+
+    def descendants(self):
+        return self._cached_descendants
 
 
 class _MockMainWithFind(_MockNode):
@@ -84,7 +93,6 @@ class _MockMainWithFind(_MockNode):
         return [self.find]
 
     def descendants(self):
-        # top.descendants()에는 Find 내부 Close가 빠지는 케이스를 재현
         return [
             _MockNode(title="Next", control_type="Button", control_id=3001, automation_id="btnNext"),
             self.find,
@@ -102,11 +110,12 @@ class GenerateLocatorsTest(unittest.TestCase):
     def test_collect_all_descendant_records(self):
         top = _MockTop(title="Login", control_type="Window", control_id=1, automation_id="LoginWnd")
         records = collect_all_descendant_records(top, include_root=True)
-        self.assertEqual(len(records), 4)
+        self.assertEqual(len(records), 3)
         self.assertEqual(records[0]["auto_id"], "LoginWnd")
         self.assertEqual(records[0]["control_id"], "1")
-        self.assertEqual(records[1]["auto_id"], "Close")
-        self.assertEqual(records[1]["control_id"], "2001")
+        auto_ids = {record["auto_id"] for record in records}
+        self.assertIn("Close", auto_ids)
+        self.assertIn("OK", auto_ids)
 
     def test_node_to_record_uses_control_id_not_control_type_call(self):
         node = _MockNode(control_type="Button", control_id=999, automation_id="Btn1")
@@ -115,17 +124,45 @@ class GenerateLocatorsTest(unittest.TestCase):
         self.assertEqual(record["uia_control_type"], "Button")
         self.assertNotIn("control_type", record)
 
-    def test_extract_elements_filters_by_target_types(self):
-        top = _MockTop()
+    def test_build_locator_tree_flat_top(self):
+        top = _MockTop(title="Login", control_type="Window", control_id=1, automation_id="LoginWnd")
+        tree = build_locator_tree(top)
+        self.assertEqual(tree["window"]["auto_id"], "LoginWnd")
+        self.assertIn("close", tree["elements"])
+        self.assertNotIn("child_windows", tree)
+
+    def test_build_locator_tree_includes_child_windows(self):
+        top = _MockMainWithFind()
+        tree = build_locator_tree(top)
+        self.assertIn("btnnext", tree["elements"])
+        self.assertIn("find", tree["child_windows"])
+        find_tree = tree["child_windows"]["find"]
+        self.assertEqual(find_tree["window"]["title"], "Find")
+        self.assertIn("close", find_tree["elements"])
+        self.assertEqual(find_tree["elements"]["close"]["path"], "top/child_windows/find")
+
+    def test_extract_elements_flatten_includes_child_controls(self):
+        top = _MockMainWithFind()
         elements = extract_elements(top)
-        self.assertEqual(len(elements), 2)
-        self.assertEqual(elements["close"]["control_id"], "2001")
-        self.assertEqual(elements["close"]["auto_id"], "Close")
+        self.assertIn("btnnext", elements)
+        self.assertIn("find__close", elements)
 
     def test_extract_elements_all_types(self):
         top = _MockTop()
         elements = extract_elements(top, all_types=True, include_without_auto_id=True)
-        self.assertEqual(len(elements), 3)
+        self.assertEqual(len(elements), 2)
+
+    def test_count_tree_elements(self):
+        top = _MockMainWithFind()
+        tree = build_locator_tree(top)
+        self.assertEqual(count_tree_elements(tree), 3)
+
+    def test_flatten_tree_elements(self):
+        top = _MockMainWithFind()
+        tree = build_locator_tree(top)
+        flat = flatten_tree_elements(tree)
+        self.assertIn("find__close", flat)
+        self.assertEqual(flat["find__close"]["auto_id"], "Close")
 
     def test_make_locator_key_from_title(self):
         top = _MockTop(title="ezDFS2 Login", control_type="Window", control_id=1, automation_id="LoginWnd")
@@ -140,30 +177,6 @@ class GenerateLocatorsTest(unittest.TestCase):
         wins = [_MockTop(title="Main"), _MockTop(title="Login")]
         resolved = resolve_target_windows(wins, window_index=None, title_contains=None, single_window=True)
         self.assertEqual(len(resolved), 1)
-
-    def test_iter_search_roots_includes_child_window(self):
-        top = _MockMainWithFind()
-        roots = iter_search_roots(top)
-        self.assertGreaterEqual(len(roots), 2)
-        self.assertTrue(any("Find" in label for label, _ in roots))
-
-    def test_collect_includes_controls_under_child_window(self):
-        top = _MockMainWithFind()
-        records = collect_all_descendant_records(top, include_root=True)
-        auto_ids = {record["auto_id"] for record in records}
-        self.assertIn("btnNext", auto_ids)
-        self.assertIn("Close", auto_ids)
-        close_records = [record for record in records if record["auto_id"] == "Close"]
-        self.assertTrue(
-            any("Find" in record["search_root"] for record in close_records),
-            f"Close should be collected under Find child root, got: {close_records}",
-        )
-
-    def test_extract_elements_includes_close_from_child_window(self):
-        top = _MockMainWithFind()
-        elements = extract_elements(top)
-        self.assertIn("btnnext", elements)
-        self.assertIn("close", elements)
 
 
 if __name__ == "__main__":

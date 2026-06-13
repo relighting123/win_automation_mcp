@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from core.app_launcher import get_launcher
 from core.app_session import AppSession
+from core.launch_paths import LAUNCH_TARGET_KEYS, resolve_launch_paths
 from errors.automation_error import ConnectionError
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 async def launch_application(
     executable_path: Optional[str] = None,
+    argument_path: Optional[str] = None,
+    exec_path: Optional[str] = None,
+    file_path: Optional[str] = None,
+    path: Optional[str] = None,
     connect_path: Optional[str] = None,
     window_title: Optional[str] = None,
     window_title_re: Optional[str] = None,
@@ -29,29 +34,58 @@ async def launch_application(
     대상 Windows 애플리케이션 또는 데이터 파일을 실행합니다.
 
     지정된 경로의 애플리케이션(.exe)을 실행하거나, 데이터 파일(.rul, .txt 등)을 관련 프로그램으로 엽니다.
-    경로를 지정하지 않으면 설정 파일에 정의된 기본 애플리케이션 경로를 사용합니다.
+    실행 대상 경로가 없을 때만 app_config의 executable_path를 사용합니다.
 
     Args:
         executable_path: 실행할 파일 경로 (.exe 또는 연동된 데이터 파일)
+        argument_path: executable_path 별칭 (스킬 YAML / graph 호환)
+        exec_path: executable_path 별칭
+        file_path: executable_path 별칭 (.rul 등 데이터 파일)
+        path: executable_path 별칭
         connect_path: (데이터 파일 실행 시) 연결할 실제 실행 파일 경로
         window_title: (데이터 파일 실행 시) 연결할 윈도우 제목
         window_title_re: (데이터 파일 실행 시) 연결할 윈도우 제목 정규식
         wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
     """
-    logger.info(
-        f"[Tool] launch_application 호출: path={executable_path}, connect_path={connect_path}, "
-        f"title={window_title}, title_re={window_title_re}, wait={wait_for_window}"
-    )
+    raw_args = {
+        "executable_path": executable_path,
+        "argument_path": argument_path,
+        "exec_path": exec_path,
+        "file_path": file_path,
+        "path": path,
+        "connect_path": connect_path,
+        "window_title": window_title,
+        "window_title_re": window_title_re,
+        "wait_for_window": wait_for_window,
+    }
 
     try:
         launcher = get_launcher()
-        # 입력된 경로가 있으면 사용하고, 없으면 설정된 기본 경로 사용
-        target_path = executable_path or launcher._session.config.get("application", {}).get("executable_path")
+        app_config = launcher._session.config.get("application", {})
+        target_path, resolved_connect_path, _ = resolve_launch_paths(
+            raw_args,
+            app_config.get("executable_path"),
+            app_config.get("connect_path"),
+        )
+
+        logger.info(
+            "[Tool] launch_application 호출: target=%s, connect_path=%s, aliases=%s",
+            target_path,
+            resolved_connect_path,
+            {k: raw_args.get(k) for k in LAUNCH_TARGET_KEYS if raw_args.get(k)},
+        )
+
+        if target_path and not launcher._session._is_executable_path(target_path):
+            logger.info(
+                "[Tool] launch_application 데이터 파일 모드: file=%s, connect_exe=%s",
+                target_path,
+                resolved_connect_path,
+            )
 
         launcher.launch(
             path=target_path,
             wait_for_ready=wait_for_window,
-            connect_path=connect_path,
+            connect_path=resolved_connect_path,
             title=window_title,
             title_re=window_title_re,
         )
@@ -116,8 +150,12 @@ async def connect_to_application(
 
     try:
         launcher = get_launcher()
-        # 하드코딩 요구사항: 설정된 경로가 있으면 LLM 인자를 무시하거나 우선함
-        config_path = launcher._session.config.get("application", {}).get("executable_path")
+        app_config = launcher._session.config.get("application", {})
+        config_path = (
+            executable_path
+            or launcher._session._resolve_connect_executable_path()
+            or app_config.get("executable_path")
+        )
 
         launcher.connect_to_running(
             process_id=process_id,
@@ -152,6 +190,75 @@ async def connect_to_application(
             {
                 "success": False,
                 "message": f"애플리케이션 연결 실패: {e}",
+                "error_detail": str(e),
+            },
+            ensure_ascii=False,
+        )
+
+
+async def close_window(
+    window_target: str = "auto",
+    child_window_title: Optional[str] = None,
+    child_window_auto_id: Optional[str] = None,
+    child_window_match_mode: str = "contains",
+    case_sensitive: bool = False,
+    timeout: Optional[float] = None,
+    wait_for_close: bool = True,
+    allow_invisible_children: bool = False,
+) -> dict:
+    """
+    특정 윈도우(주로 child dialog)를 닫습니다.
+
+    title bar X 버튼이 UIA로 클릭되지 않을 때 WM_CLOSE로 닫을 수 있습니다.
+    Find 같은 child dialog를 닫을 때 사용합니다.
+
+    Args:
+        window_target: auto|top|child — 닫을 윈도우 범위
+        child_window_title: child 윈도우 제목 (예: "Find")
+        child_window_auto_id: child 윈도우 AutomationId
+        child_window_match_mode: exact|contains — child 제목 매칭 방식
+        case_sensitive: 제목 대소문자 구분 여부
+        timeout: 닫힘 대기 시간(초, 기본 5.0)
+        wait_for_close: 닫힘까지 대기 여부 (기본 True)
+        allow_invisible_children: 보이지 않는 child도 탐색할지 여부
+    """
+    logger.info(
+        "[Tool] close_window 호출: child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+        child_window_title,
+        child_window_auto_id,
+        window_target,
+    )
+
+    try:
+        from actions.app_ui_action import get_app_ui_action
+
+        action = get_app_ui_action()
+        result = action.close_window(
+            window_target=window_target,
+            child_window_title=child_window_title,
+            child_window_auto_id=child_window_auto_id,
+            child_window_match_mode=child_window_match_mode,
+            case_sensitive=case_sensitive,
+            timeout=timeout,
+            wait_for_close=wait_for_close,
+            allow_invisible_children=allow_invisible_children,
+        )
+        payload = result.to_dict()
+        logger.info(
+            "[Tool] close_window 결과: success=%s, result=%s, message=%s",
+            payload.get("is_success"),
+            payload.get("result"),
+            payload.get("message"),
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    except Exception as e:
+        logger.error(f"[Tool] close_window 예외: {e}")
+        return json.dumps(
+            {
+                "success": False,
+                "result": "error",
+                "message": f"윈도우 닫기 실패: {e}",
                 "error_detail": str(e),
             },
             ensure_ascii=False,
@@ -311,6 +418,7 @@ def register_app_mgmt_tools(mcp: Any) -> None:
     """
     mcp.tool()(launch_application)
     mcp.tool()(connect_to_application)
+    mcp.tool()(close_window)
     mcp.tool()(close_application)
     mcp.tool()(restart_application)
     mcp.tool()(get_connection_status)
@@ -318,5 +426,5 @@ def register_app_mgmt_tools(mcp: Any) -> None:
 
     logger.info(
         "애플리케이션 관리 도구 등록 완료: launch_application, connect_to_application, "
-        "close_application, restart_application, get_connection_status, generate_locators"
+        "close_window, close_application, restart_application, get_connection_status, generate_locators"
     )

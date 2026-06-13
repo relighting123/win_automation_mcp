@@ -30,6 +30,12 @@ skills:
         args:
           force: false
 
+      - tool: close_window
+        args:
+          child_window_title: "Find"
+          window_target: child
+          child_window_match_mode: contains
+
   demo_app_control_tools:
     description: "app_control_tool 계열 도구 사용 예시"
     tools:
@@ -58,6 +64,12 @@ skills:
       - tool: press_app_shortcut
         args:
           shortcut: "ctrl+s"
+
+      - tool: click_at_focus
+        args:
+          button: right
+          clicks: 1
+          require_app_focus: true
 
       - tool: click_app_position
         args:
@@ -130,7 +142,8 @@ skills:
     tools:
       - tool: launch_application
         args:
-          executable_path: { mode: "ai", value: "C:\\Path\\To\\Your\\default.rul" }
+          # executable_path / file_path / path 모두 지원
+          file_path: { mode: "ai", value: "C:\\Path\\To\\Your\\default.rul" }
       - tool: wait
         args:
           seconds: 2.0
