@@ -119,6 +119,8 @@ def click_at_focus(
     button: str = "right",
     clicks: int = 1,
     require_app_focus: bool = True,
+    offset_x: int = 0,
+    offset_y: int = 0,
 ) -> str:
     """
     현재 키보드 포커스 위치에서 마우스 클릭합니다.
@@ -131,18 +133,24 @@ def click_at_focus(
         button: left|right|middle (기본 right)
         clicks: 클릭 횟수 (기본 1)
         require_app_focus: 포커스가 연결된 앱에 있을 때만 클릭 (기본 True)
+        offset_x: 포커스 x 좌표 보정 (픽셀, 기본 0)
+        offset_y: 포커스 y 좌표 보정 (픽셀, 기본 0)
     """
     logger.info(
-        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s",
+        "[Tool] click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
         button,
         clicks,
         require_app_focus,
+        offset_x,
+        offset_y,
     )
     action = get_app_ui_action()
     result = action.click_at_focus(
         button=button,
         clicks=clicks,
         require_app_focus=require_app_focus,
+        offset_x=offset_x,
+        offset_y=offset_y,
     )
     payload = result.to_dict()
     logger.info(
