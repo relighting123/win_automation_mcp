@@ -20,8 +20,12 @@ class RightClickAtFocusTest(unittest.TestCase):
         self.action = AppUIAction(session=session)
         self.action._launcher = MagicMock()
 
-    def test_right_click_uses_focus_point_without_ensure_focus(self) -> None:
-        with patch.object(self.action, "ensure_focus") as ensure_focus:
+    def test_right_click_calls_ensure_focus_and_clicks(self) -> None:
+        with patch.object(
+            self.action,
+            "ensure_focus",
+            return_value=AppUIActionResult(result="success"),
+        ) as ensure_focus:
             with patch.object(
                 self.action,
                 "_resolve_focus_click_point",
@@ -37,17 +41,55 @@ class RightClickAtFocusTest(unittest.TestCase):
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 100)
         self.assertEqual(result.y, 200)
-        ensure_focus.assert_not_called()
+        ensure_focus.assert_called_once()
         pyautogui = get_pyautogui.return_value[0]
         pyautogui.click.assert_called_once_with(x=100, y=200, button="right", clicks=1)
+
+    def test_left_click_at_focus(self) -> None:
+        with patch.object(
+            self.action,
+            "ensure_focus",
+            return_value=AppUIActionResult(result="success"),
+        ):
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(80, 90, {"source": "caret", "process_id": 4242}),
+            ):
+                with patch.object(
+                    self.action,
+                    "_get_pyautogui",
+                    return_value=(MagicMock(), None),
+                ) as get_pyautogui:
+                    result = self.action.right_click_at_focus(button="left")
+
+        self.assertEqual(result.result, "success")
+        pyautogui = get_pyautogui.return_value[0]
+        pyautogui.click.assert_called_once_with(x=80, y=90, button="left", clicks=1)
+
+    def test_fails_when_ensure_focus_fails(self) -> None:
+        with patch.object(
+            self.action,
+            "ensure_focus",
+            return_value=AppUIActionResult(result="error", message="포커스 실패"),
+        ):
+            result = self.action.right_click_at_focus()
+
+        self.assertEqual(result.result, "error")
+        self.assertIn("포커스 실패", result.message or "")
 
     def test_right_click_rejects_foreign_process(self) -> None:
         with patch.object(
             self.action,
-            "_resolve_focus_click_point",
-            return_value=(50, 60, {"source": "caret", "process_id": 9999}),
+            "ensure_focus",
+            return_value=AppUIActionResult(result="success"),
         ):
-            result = self.action.right_click_at_focus(require_app_focus=True)
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(50, 60, {"source": "caret", "process_id": 9999}),
+            ):
+                result = self.action.right_click_at_focus(require_app_focus=True)
 
         self.assertEqual(result.result, "error")
         self.assertIn("연결된 애플리케이션이 아닙니다", result.message or "")
@@ -55,12 +97,21 @@ class RightClickAtFocusTest(unittest.TestCase):
     def test_right_click_not_found(self) -> None:
         with patch.object(
             self.action,
-            "_resolve_focus_click_point",
-            return_value=(None, None, {}),
+            "ensure_focus",
+            return_value=AppUIActionResult(result="success"),
         ):
-            result = self.action.right_click_at_focus()
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(None, None, {}),
+            ):
+                result = self.action.right_click_at_focus()
 
         self.assertEqual(result.result, "not_found")
+
+    def test_invalid_button(self) -> None:
+        result = self.action.right_click_at_focus(button="invalid")
+        self.assertEqual(result.result, "error")
 
     def test_resolve_focus_prefers_caret(self) -> None:
         with patch.object(

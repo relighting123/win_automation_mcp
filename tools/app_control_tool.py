@@ -116,26 +116,30 @@ def click_app_position(
 
 
 def right_click_at_focus(
+    button: str = "right",
     clicks: int = 1,
     require_app_focus: bool = True,
 ) -> str:
     """
-    현재 키보드 포커스 위치에서 오른쪽 클릭합니다.
+    현재 키보드 포커스 위치에서 마우스 클릭합니다.
 
-    ensure_focus()를 호출하지 않아, 그리드 셀·트리 항목 등 기존 포커스를 유지한 채
-    Shift+F10과 유사하게 컨텍스트 메뉴를 열 수 있습니다.
+    호출 시 연결된 애플리케이션에 ensure_focus()를 적용한 뒤,
+    포커스된 요소/캐럿 위치를 기준으로 클릭합니다.
 
     Args:
+        button: left|right|middle (기본 right)
         clicks: 클릭 횟수 (기본 1)
         require_app_focus: 포커스가 연결된 앱에 있을 때만 클릭 (기본 True)
     """
     logger.info(
-        "[Tool] right_click_at_focus 호출: clicks=%s, require_app_focus=%s",
+        "[Tool] right_click_at_focus 호출: button=%s, clicks=%s, require_app_focus=%s",
+        button,
         clicks,
         require_app_focus,
     )
     action = get_app_ui_action()
     result = action.right_click_at_focus(
+        button=button,
         clicks=clicks,
         require_app_focus=require_app_focus,
     )
