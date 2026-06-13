@@ -67,6 +67,7 @@ skills:
 
       - tool: right_click_at_focus
         args:
+          button: right
           clicks: 1
           require_app_focus: true
 

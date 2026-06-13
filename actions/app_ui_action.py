@@ -1897,24 +1897,34 @@ class AppUIAction:
 
     def right_click_at_focus(
         self,
+        button: str = "right",
         clicks: int = 1,
         require_app_focus: bool = True,
     ) -> AppUIActionResult:
         """
-        현재 키보드 포커스 위치에서 오른쪽 클릭합니다.
-        ensure_focus()를 호출하지 않아 기존 포커스를 유지합니다.
+        현재 키보드 포커스 위치에서 마우스 클릭합니다.
+        호출 시 연결된 애플리케이션에 ensure_focus()를 적용합니다.
         """
+        button = (button or "right").strip().lower()
+        if button not in {"left", "right", "middle"}:
+            return AppUIActionResult(
+                result="error",
+                message=f"지원하지 않는 button: {button} (left|right|middle)",
+            )
+
         logger.info(
-            "[right_click_at_focus] 시작: clicks=%s, require_app_focus=%s",
+            "[right_click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s",
+            button,
             clicks,
             require_app_focus,
         )
 
-        if not self._session.is_connected:
-            try:
-                self._launcher.ensure_running()
-            except Exception as e:
-                logger.debug("연결되지 않은 상태에서 ensure_running 실패: %s", e)
+        focus_result = self.ensure_focus()
+        if not focus_result.is_success:
+            return AppUIActionResult(
+                result="error",
+                message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
+            )
 
         x, y, focus_info = self._resolve_focus_click_point()
         if x is None or y is None:
@@ -1937,6 +1947,7 @@ class AppUIAction:
                     ),
                     x=x,
                     y=y,
+                    button=button,
                 )
 
         pyautogui, error_result = self._get_pyautogui()
@@ -1944,25 +1955,25 @@ class AppUIAction:
             return error_result
 
         try:
-            pyautogui.click(x=x, y=y, button="right", clicks=max(1, clicks))
+            pyautogui.click(x=x, y=y, button=button, clicks=max(1, clicks))
             return AppUIActionResult(
                 result="success",
                 message=(
-                    f"포커스 위치 오른쪽 클릭 성공: source={focus_info.get('source')}, "
+                    f"포커스 위치 {button} 클릭 성공: source={focus_info.get('source')}, "
                     f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}"
                 ),
                 x=x,
                 y=y,
-                button="right",
+                button=button,
             )
         except Exception as e:
-            logger.error("포커스 위치 오른쪽 클릭 실패: %s", e)
+            logger.error("포커스 위치 클릭 실패: %s", e)
             return AppUIActionResult(
                 result="error",
-                message=f"포커스 위치 오른쪽 클릭 실패: {e}",
+                message=f"포커스 위치 {button} 클릭 실패: {e}",
                 x=x,
                 y=y,
-                button="right",
+                button=button,
             )
 
     def click_position(
