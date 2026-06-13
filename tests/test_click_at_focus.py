@@ -113,6 +113,30 @@ class ClickAtFocusTest(unittest.TestCase):
         result = self.action.click_at_focus(button="invalid")
         self.assertEqual(result.result, "error")
 
+    def test_click_with_offset(self) -> None:
+        with patch.object(
+            self.action,
+            "ensure_focus",
+            return_value=AppUIActionResult(result="success"),
+        ):
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242}),
+            ):
+                with patch.object(
+                    self.action,
+                    "_get_pyautogui",
+                    return_value=(MagicMock(), None),
+                ) as get_pyautogui:
+                    result = self.action.click_at_focus(offset_x=5, offset_y=-3)
+
+        self.assertEqual(result.result, "success")
+        self.assertEqual(result.x, 105)
+        self.assertEqual(result.y, 197)
+        pyautogui = get_pyautogui.return_value[0]
+        pyautogui.click.assert_called_once_with(x=105, y=197, button="right", clicks=1)
+
     def test_resolve_focus_prefers_caret(self) -> None:
         with patch.object(
             self.action,

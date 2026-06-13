@@ -70,6 +70,8 @@ skills:
           button: right
           clicks: 1
           require_app_focus: true
+          offset_x: 0
+          offset_y: 0
 
       - tool: click_app_position
         args:

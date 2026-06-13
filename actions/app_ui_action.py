@@ -1925,10 +1925,13 @@ class AppUIAction:
         button: str = "right",
         clicks: int = 1,
         require_app_focus: bool = True,
+        offset_x: int = 0,
+        offset_y: int = 0,
     ) -> AppUIActionResult:
         """
         현재 키보드 포커스 위치에서 마우스 클릭합니다.
         호출 시 연결된 애플리케이션에 ensure_focus()를 적용합니다.
+        offset_x/offset_y로 포커스 기준 좌표를 보정할 수 있습니다.
         """
         button = (button or "right").strip().lower()
         if button not in {"left", "right", "middle"}:
@@ -1938,10 +1941,12 @@ class AppUIAction:
             )
 
         logger.info(
-            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s",
+            "[click_at_focus] 시작: button=%s, clicks=%s, require_app_focus=%s, offset_x=%s, offset_y=%s",
             button,
             clicks,
             require_app_focus,
+            offset_x,
+            offset_y,
         )
 
         focus_result = self.ensure_focus()
@@ -1979,16 +1984,23 @@ class AppUIAction:
         if error_result:
             return error_result
 
+        click_x = int(x) + int(offset_x)
+        click_y = int(y) + int(offset_y)
+
         try:
-            pyautogui.click(x=x, y=y, button=button, clicks=max(1, clicks))
+            pyautogui.click(x=click_x, y=click_y, button=button, clicks=max(1, clicks))
+            offset_note = ""
+            if offset_x or offset_y:
+                offset_note = f", offset=({offset_x},{offset_y}), base=({x},{y})"
             return AppUIActionResult(
                 result="success",
                 message=(
                     f"포커스 위치 {button} 클릭 성공: source={focus_info.get('source')}, "
                     f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}"
+                    f"{offset_note}"
                 ),
-                x=x,
-                y=y,
+                x=click_x,
+                y=click_y,
                 button=button,
             )
         except Exception as e:
@@ -1996,8 +2008,8 @@ class AppUIAction:
             return AppUIActionResult(
                 result="error",
                 message=f"포커스 위치 {button} 클릭 실패: {e}",
-                x=x,
-                y=y,
+                x=click_x,
+                y=click_y,
                 button=button,
             )
 
