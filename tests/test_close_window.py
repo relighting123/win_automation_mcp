@@ -128,6 +128,57 @@ class CloseWindowTest(unittest.TestCase):
         self.assertEqual(result.result, "error")
         self.assertIn("window_target", result.message or "")
 
+    def test_is_window_closed_when_exists_raises(self) -> None:
+        class _StaleWrapper(_MockWindow):
+            def exists(self):
+                raise RuntimeError("stale wrapper")
+
+        stale = _StaleWrapper()
+        self.assertTrue(self.action._is_window_closed(stale, handle=4242))
+
+    def test_wait_window_closed_when_exists_raises(self) -> None:
+        class _StaleWrapper(_MockWindow):
+            def exists(self):
+                raise RuntimeError("stale wrapper")
+
+        stale = _StaleWrapper()
+        self.assertTrue(self.action._wait_window_closed(stale, timeout=0.5))
+
+    def test_close_succeeds_when_exists_raises_after_close(self) -> None:
+        class _StaleOnCheck(_MockWindow):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self._closed = False
+
+            def close(self):
+                self.close_called = True
+                self._closed = True
+
+            def exists(self):
+                if self._closed:
+                    raise RuntimeError("stale wrapper")
+                return True
+
+        main = _MockMain()
+        main.find = _StaleOnCheck(title="Find", automation_id="FindDlg", handle=4242)
+
+        with patch.object(self.action, "_pick_target_window", return_value=main):
+            with patch.object(
+                self.action,
+                "_resolve_attr_search_root",
+                side_effect=[
+                    (main.find, "child(title=Find)"),
+                    (None, "child_not_found"),
+                ],
+            ):
+                result = self.action.close_window(
+                    window_target="child",
+                    child_window_title="Find",
+                    timeout=1.0,
+                )
+
+        self.assertEqual(result.result, "success")
+
 
 if __name__ == "__main__":
     unittest.main()
