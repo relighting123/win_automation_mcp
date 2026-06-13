@@ -34,21 +34,26 @@ class ClickAtFocusTest(unittest.TestCase):
             ):
                 with patch.object(
                     self.action,
-                    "_perform_screen_click",
-                    return_value="win32_mouse_event",
-                ) as perform_click:
+                    "click_position",
+                    return_value=AppUIActionResult(
+                        result="success",
+                        x=100,
+                        y=200,
+                        button="right",
+                        message="method=win32_mouse_event",
+                    ),
+                ) as click_position:
                     result = self.action.click_at_focus()
 
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 100)
         self.assertEqual(result.y, 200)
         ensure_focus.assert_called_once()
-        perform_click.assert_called_once_with(
-            100,
-            200,
+        click_position.assert_called_once_with(
+            x=100,
+            y=200,
             button="right",
             clicks=1,
-            click_method="mouse",
         )
 
     def test_left_click_at_focus(self) -> None:
@@ -64,18 +69,23 @@ class ClickAtFocusTest(unittest.TestCase):
             ):
                 with patch.object(
                     self.action,
-                    "_perform_screen_click",
-                    return_value="win32_mouse_event",
-                ) as perform_click:
+                    "click_position",
+                    return_value=AppUIActionResult(
+                        result="success",
+                        x=80,
+                        y=90,
+                        button="left",
+                        message="method=win32_mouse_event",
+                    ),
+                ) as click_position:
                     result = self.action.click_at_focus(button="left")
 
         self.assertEqual(result.result, "success")
-        perform_click.assert_called_once_with(
-            80,
-            90,
+        click_position.assert_called_once_with(
+            x=80,
+            y=90,
             button="left",
             clicks=1,
-            click_method="mouse",
         )
 
     def test_fails_when_ensure_focus_fails(self) -> None:
@@ -137,21 +147,47 @@ class ClickAtFocusTest(unittest.TestCase):
             ):
                 with patch.object(
                     self.action,
-                    "_perform_screen_click",
-                    return_value="win32_mouse_event",
-                ) as perform_click:
+                    "click_position",
+                    return_value=AppUIActionResult(
+                        result="success",
+                        x=105,
+                        y=197,
+                        button="right",
+                        message="method=win32_mouse_event",
+                    ),
+                ) as click_position:
                     result = self.action.click_at_focus(offset_x=5, offset_y=-3)
 
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 105)
         self.assertEqual(result.y, 197)
-        perform_click.assert_called_once_with(
-            105,
-            197,
+        click_position.assert_called_once_with(
+            x=105,
+            y=197,
             button="right",
             clicks=1,
-            click_method="mouse",
         )
+
+    def test_click_position_failure_propagates(self) -> None:
+        with patch.object(
+            self.action,
+            "ensure_focus",
+            return_value=AppUIActionResult(result="success"),
+        ):
+            with patch.object(
+                self.action,
+                "_resolve_focus_click_point",
+                return_value=(100, 200, {"source": "uia_focused", "process_id": 4242}),
+            ):
+                with patch.object(
+                    self.action,
+                    "click_position",
+                    return_value=AppUIActionResult(result="error", message="좌표 클릭 실패: boom"),
+                ):
+                    result = self.action.click_at_focus()
+
+        self.assertEqual(result.result, "error")
+        self.assertIn("좌표 클릭 실패", result.message or "")
 
     def test_resolve_focus_prefers_caret(self) -> None:
         with patch.object(

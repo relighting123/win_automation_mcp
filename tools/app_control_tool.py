@@ -124,7 +124,7 @@ def click_at_focus(
 ) -> str:
     """
     현재 키보드 포커스 위치의 (x, y)를 구한 뒤,
-    실제 마우스 커서를 이동시키고 클릭합니다.
+    click_app_position과 동일한 click_position 경로로 클릭합니다.
 
     Args:
         button: left|right|middle (기본 right)

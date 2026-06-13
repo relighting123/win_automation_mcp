@@ -2025,7 +2025,7 @@ class AppUIAction:
     ) -> AppUIActionResult:
         """
         현재 키보드 포커스 위치의 (x, y)를 구한 뒤,
-        실제 마우스 커서를 이동시키고 클릭합니다.
+        click_position과 동일한 경로로 클릭합니다.
         """
         button = (button or "right").strip().lower()
         if button not in {"left", "right", "middle"}:
@@ -2081,37 +2081,35 @@ class AppUIAction:
         click_x = int(x) + int(offset_x)
         click_y = int(y) + int(offset_y)
 
-        try:
-            method = self._perform_screen_click(
-                click_x,
-                click_y,
-                button=button,
-                clicks=clicks,
-                click_method="mouse",
-            )
-            offset_note = ""
-            if offset_x or offset_y:
-                offset_note = f", offset=({offset_x},{offset_y}), base=({x},{y})"
+        click_result = self.click_position(
+            x=click_x,
+            y=click_y,
+            button=button,
+            clicks=clicks,
+        )
+        if not click_result.is_success:
             return AppUIActionResult(
-                result="success",
-                message=(
-                    f"포커스 위치 {button} 클릭 성공: method={method}, source={focus_info.get('source')}, "
-                    f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}, "
-                    f"click=({click_x},{click_y}){offset_note}"
-                ),
+                result=click_result.result,
+                message=f"포커스 위치 {button} 클릭 실패: {click_result.message}",
                 x=click_x,
                 y=click_y,
                 button=button,
             )
-        except Exception as e:
-            logger.error("포커스 위치 클릭 실패: %s", e)
-            return AppUIActionResult(
-                result="error",
-                message=f"포커스 위치 {button} 클릭 실패: {e}",
-                x=click_x,
-                y=click_y,
-                button=button,
-            )
+
+        offset_note = ""
+        if offset_x or offset_y:
+            offset_note = f", offset=({offset_x},{offset_y}), base=({x},{y})"
+        return AppUIActionResult(
+            result="success",
+            message=(
+                f"포커스 위치 {button} 클릭 성공: {click_result.message}, source={focus_info.get('source')}, "
+                f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}, "
+                f"click=({click_x},{click_y}){offset_note}"
+            ),
+            x=click_x,
+            y=click_y,
+            button=button,
+        )
 
     def click_position(
         self,
