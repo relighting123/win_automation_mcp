@@ -200,6 +200,10 @@ class ClickAtFocusTest(unittest.TestCase):
         self.assertEqual(result.result, "success")
         self.assertEqual(result.x, 105)
         self.assertEqual(result.y, 197)
+        self.assertEqual(result.base_x, 100)
+        self.assertEqual(result.base_y, 200)
+        self.assertEqual(result.offset_x, 5)
+        self.assertEqual(result.offset_y, -3)
         click_position.assert_called_once_with(
             x=105,
             y=197,

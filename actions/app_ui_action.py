@@ -30,6 +30,10 @@ class AppUIActionResult:
     message: Optional[str] = None
     x: Optional[int] = None
     y: Optional[int] = None
+    base_x: Optional[int] = None
+    base_y: Optional[int] = None
+    offset_x: Optional[int] = None
+    offset_y: Optional[int] = None
     shortcut: Optional[str] = None
     button: Optional[str] = None
     matched_text: Optional[str] = None
@@ -39,7 +43,7 @@ class AppUIActionResult:
         return self.result == "success"
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "result": self.result,
             "message": self.message,
             "x": self.x,
@@ -49,6 +53,15 @@ class AppUIActionResult:
             "matched_text": self.matched_text,
             "is_success": self.is_success,
         }
+        if self.base_x is not None:
+            payload["base_x"] = self.base_x
+        if self.base_y is not None:
+            payload["base_y"] = self.base_y
+        if self.offset_x is not None:
+            payload["offset_x"] = self.offset_x
+        if self.offset_y is not None:
+            payload["offset_y"] = self.offset_y
+        return payload
 
 
 class AppUIAction:
@@ -290,6 +303,27 @@ class AppUIAction:
             return None, AppUIActionResult(result="error", message=f"pyautogui 로드 실패: {e}")
         return pyautogui, None
 
+    def _get_cursor_pos(self) -> Optional[tuple[int, int]]:
+        try:
+            import ctypes
+
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+            point = POINT()
+            if ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+                return int(point.x), int(point.y)
+        except Exception as e:
+            logger.debug("GetCursorPos 실패: %s", e)
+        return None
+
+    def _cursor_reached(self, x: int, y: int, *, tolerance: int = 3) -> bool:
+        current = self._get_cursor_pos()
+        if current is None:
+            return False
+        current_x, current_y = current
+        return abs(current_x - int(x)) <= tolerance and abs(current_y - int(y)) <= tolerance
+
     def _perform_screen_click(
         self,
         x: int,
@@ -313,20 +347,9 @@ class AppUIAction:
 
         ui_delay = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.1))
         pyautogui, _ = self._get_pyautogui()
-
-        try:
-            import ctypes
-
-            ctypes.windll.user32.SetCursorPos(int(x), int(y))
-            time.sleep(ui_delay)
-        except Exception as e:
-            logger.debug("SetCursorPos 실패: %s", e)
-            if pyautogui is not None:
-                try:
-                    pyautogui.moveTo(x, y)
-                    time.sleep(ui_delay)
-                except Exception as move_error:
-                    logger.debug("pyautogui.moveTo 실패: %s", move_error)
+        target_x = int(x)
+        target_y = int(y)
+        cursor_before = self._get_cursor_pos()
 
         use_context_menu = click_method == "context_menu" or (
             click_method == "auto" and button == "right" and context_hwnd
@@ -336,7 +359,7 @@ class AppUIAction:
                 import win32api
                 import win32con
 
-                lparam = win32api.MAKELONG(int(x) & 0xFFFF, int(y) & 0xFFFF)
+                lparam = win32api.MAKELONG(target_x & 0xFFFF, target_y & 0xFFFF)
                 win32api.PostMessage(
                     int(context_hwnd),
                     win32con.WM_CONTEXTMENU,
@@ -346,8 +369,8 @@ class AppUIAction:
                 logger.info(
                     "[click] WM_CONTEXTMENU 전송: hwnd=%s, x=%s, y=%s",
                     context_hwnd,
-                    x,
-                    y,
+                    target_x,
+                    target_y,
                 )
                 return "wm_contextmenu"
             except Exception as e:
@@ -356,10 +379,36 @@ class AppUIAction:
                     raise
 
         if click_method in {"auto", "mouse"}:
+            if pyautogui is not None:
+                pyautogui.click(
+                    x=target_x,
+                    y=target_y,
+                    button=button,
+                    clicks=max(1, clicks),
+                )
+                logger.info(
+                    "[click] pyautogui.click: target=(%s,%s), button=%s, before=%s, after=%s",
+                    target_x,
+                    target_y,
+                    button,
+                    cursor_before,
+                    self._get_cursor_pos(),
+                )
+                return "pyautogui"
+
             try:
                 import ctypes
 
                 user32 = ctypes.windll.user32
+                user32.SetCursorPos(target_x, target_y)
+                time.sleep(ui_delay)
+                if not self._cursor_reached(target_x, target_y):
+                    logger.warning(
+                        "[click] SetCursorPos 후 커서 검증 실패: target=(%s,%s), cursor=%s",
+                        target_x,
+                        target_y,
+                        self._get_cursor_pos(),
+                    )
                 if button == "left":
                     down, up = 0x0002, 0x0004
                 elif button == "right":
@@ -371,15 +420,16 @@ class AppUIAction:
                     user32.mouse_event(up, 0, 0, 0, 0)
                     if clicks > 1:
                         time.sleep(0.05)
-                logger.info("[click] win32 mouse_event: x=%s, y=%s, button=%s", x, y, button)
+                logger.info(
+                    "[click] win32 mouse_event: target=(%s,%s), button=%s, cursor=%s",
+                    target_x,
+                    target_y,
+                    button,
+                    self._get_cursor_pos(),
+                )
                 return "win32_mouse_event"
             except Exception as e:
                 logger.debug("win32 mouse_event 실패: %s", e)
-
-        if pyautogui is not None:
-            pyautogui.click(x=x, y=y, button=button, clicks=max(1, clicks))
-            logger.info("[click] pyautogui.click: x=%s, y=%s, button=%s", x, y, button)
-            return "pyautogui"
 
         raise RuntimeError("사용 가능한 클릭 방식이 없습니다")
 
@@ -2173,6 +2223,10 @@ class AppUIAction:
             ),
             x=click_x,
             y=click_y,
+            base_x=base_x,
+            base_y=base_y,
+            offset_x=parsed_offset_x,
+            offset_y=parsed_offset_y,
             button=button,
         )
 

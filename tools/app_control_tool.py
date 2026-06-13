@@ -157,8 +157,12 @@ def click_at_focus(
     )
     payload = result.to_dict()
     logger.info(
-        "[Tool] click_at_focus 결과: success=%s, x=%s, y=%s, message=%s",
+        "[Tool] click_at_focus 결과: success=%s, base=(%s,%s), offset=(%s,%s), click=(%s,%s), message=%s",
         payload.get("is_success"),
+        payload.get("base_x"),
+        payload.get("base_y"),
+        payload.get("offset_x"),
+        payload.get("offset_y"),
         payload.get("x"),
         payload.get("y"),
         payload.get("message"),
