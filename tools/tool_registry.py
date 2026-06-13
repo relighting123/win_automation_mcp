@@ -12,6 +12,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         get_app_coords_by_attr,
         highlight_app_by_attr,
         press_app_shortcut,
+        right_click_at_focus,
         type_app_text,
     )
     from tools.app_mgmt_tool import (
@@ -41,6 +42,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "click_app_by_text": click_app_by_text,
         "type_app_text": type_app_text,
         "press_app_shortcut": press_app_shortcut,
+        "right_click_at_focus": right_click_at_focus,
         "click_app_position": click_app_position,
         "click_app_by_keyword": click_app_by_keyword,
         "click_app_by_attr": click_app_by_attr,

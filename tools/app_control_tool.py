@@ -115,6 +115,41 @@ def click_app_position(
     return json.dumps(result.to_dict(), ensure_ascii=False)
 
 
+def right_click_at_focus(
+    clicks: int = 1,
+    require_app_focus: bool = True,
+) -> str:
+    """
+    현재 키보드 포커스 위치에서 오른쪽 클릭합니다.
+
+    ensure_focus()를 호출하지 않아, 그리드 셀·트리 항목 등 기존 포커스를 유지한 채
+    Shift+F10과 유사하게 컨텍스트 메뉴를 열 수 있습니다.
+
+    Args:
+        clicks: 클릭 횟수 (기본 1)
+        require_app_focus: 포커스가 연결된 앱에 있을 때만 클릭 (기본 True)
+    """
+    logger.info(
+        "[Tool] right_click_at_focus 호출: clicks=%s, require_app_focus=%s",
+        clicks,
+        require_app_focus,
+    )
+    action = get_app_ui_action()
+    result = action.right_click_at_focus(
+        clicks=clicks,
+        require_app_focus=require_app_focus,
+    )
+    payload = result.to_dict()
+    logger.info(
+        "[Tool] right_click_at_focus 결과: success=%s, x=%s, y=%s, message=%s",
+        payload.get("is_success"),
+        payload.get("x"),
+        payload.get("y"),
+        payload.get("message"),
+    )
+    return json.dumps(payload, ensure_ascii=False)
+
+
 async def click_app_by_keyword(
     keyword: str,
     element_type: str = "any",
@@ -497,6 +532,7 @@ def register_app_control_tools(mcp: "FastMCP") -> None:
     mcp.tool()(find_app_by_ocr)
     mcp.tool()(type_app_text)
     mcp.tool()(press_app_shortcut)
+    mcp.tool()(right_click_at_focus)
     mcp.tool()(click_app_position)
     mcp.tool()(click_app_by_keyword)
     mcp.tool()(click_app_by_attr)

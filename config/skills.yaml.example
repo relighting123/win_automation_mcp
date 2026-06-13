@@ -65,6 +65,11 @@ skills:
         args:
           shortcut: "ctrl+s"
 
+      - tool: right_click_at_focus
+        args:
+          clicks: 1
+          require_app_focus: true
+
       - tool: click_app_position
         args:
           x: 640
