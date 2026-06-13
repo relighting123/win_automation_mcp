@@ -800,20 +800,45 @@ class AppUIAction:
             logger.debug("WM_CLOSE 전송 실패: %s", e)
             return False, f"wm_close_failed:{e}"
 
-    def _wait_window_closed(self, wrapper: Any, timeout: float) -> bool:
+    def _is_window_closed(self, wrapper: Any, handle: Optional[int] = None) -> bool:
+        """대상 윈도우가 닫혔는지 판별합니다."""
+        if handle is None:
+            handle = self._get_wrapper_handle(wrapper)
+
+        if handle is not None:
+            try:
+                import win32gui
+
+                if not win32gui.IsWindow(handle):
+                    return True
+            except Exception:
+                return True
+
+        exists_result = self._safe_call(lambda: wrapper.exists(), None)
+        if exists_result is False or exists_result is None:
+            # exists() 예외는 닫힌 뒤 stale wrapper에서 흔함 → 닫힌 것으로 간주
+            return True
+
+        visible = self._safe_call(lambda: wrapper.is_visible(), None)
+        if visible is False:
+            return True
+
+        return False
+
+    def _wait_window_closed(
+        self,
+        wrapper: Any,
+        timeout: float,
+        *,
+        is_gone: Optional[Any] = None,
+    ) -> bool:
         """윈도우가 닫힐 때까지 대기합니다."""
         handle = self._get_wrapper_handle(wrapper)
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if handle is not None:
-                try:
-                    import win32gui
-
-                    if not win32gui.IsWindow(handle):
-                        return True
-                except Exception:
-                    pass
-            if not self._safe_call(lambda: wrapper.exists(), True):
+            if is_gone is not None and self._safe_call(is_gone, False):
+                return True
+            if self._is_window_closed(wrapper, handle):
                 return True
             time.sleep(0.1)
         return False
@@ -2470,8 +2495,23 @@ class AppUIAction:
                     message=f"윈도우 닫기 실패: {window_label}, method={close_method}",
                 )
 
+            def is_window_gone() -> bool:
+                root, _info = self._resolve_attr_search_root(
+                    window_target=window_target,
+                    child_window_title=child_window_title,
+                    child_window_auto_id=child_window_auto_id,
+                    child_window_match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                    allow_invisible_children=allow_invisible_children,
+                )
+                return root is None
+
             actual_timeout = timeout if timeout is not None else 5.0
-            if wait_for_close and not self._wait_window_closed(target_wrapper, actual_timeout):
+            if wait_for_close and not self._wait_window_closed(
+                target_wrapper,
+                actual_timeout,
+                is_gone=is_window_gone,
+            ):
                 return AppUIActionResult(
                     result="timeout",
                     message=(
