@@ -622,6 +622,163 @@ class AppUIAction:
                 continue
         return None
 
+    def _get_connected_process_ids(self) -> set[int]:
+        """연결된 애플리케이션의 프로세스 ID 집합을 반환합니다."""
+        pids: set[int] = set()
+        if not self._session.is_connected:
+            return pids
+
+        proc = getattr(self._session.app, "process", None)
+        if proc:
+            pids.add(int(proc))
+
+        for window in self._safe_call(lambda: self._session.app.windows(), []) or []:
+            pid = self._safe_call(lambda: window.process_id(), None)
+            if pid:
+                pids.add(int(pid))
+        return pids
+
+    def _pid_from_hwnd(self, hwnd: int) -> Optional[int]:
+        try:
+            import win32process
+
+            _, pid = win32process.GetWindowThreadProcessId(int(hwnd))
+            return int(pid)
+        except Exception:
+            return None
+
+    def _get_caret_focus_click_point(self) -> Optional[tuple[int, int, dict]]:
+        """GetGUIThreadInfo 기반 캐럿/포커스 HWND 위치를 반환합니다."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long),
+                    ("top", ctypes.c_long),
+                    ("right", ctypes.c_long),
+                    ("bottom", ctypes.c_long),
+                ]
+
+            class GUITHREADINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("hwndActive", wintypes.HWND),
+                    ("hwndFocus", wintypes.HWND),
+                    ("hwndCapture", wintypes.HWND),
+                    ("hwndMenuOwner", wintypes.HWND),
+                    ("hwndMoveSize", wintypes.HWND),
+                    ("hwndCaret", wintypes.HWND),
+                    ("rcCaret", RECT),
+                ]
+
+            GUI_CARETBLINKING = 0x00000001
+            user32 = ctypes.windll.user32
+            fg_hwnd = user32.GetForegroundWindow()
+            if not fg_hwnd:
+                return None
+
+            thread_id = user32.GetWindowThreadProcessId(fg_hwnd, None)
+            info = GUITHREADINFO()
+            info.cbSize = ctypes.sizeof(GUITHREADINFO)
+            if not user32.GetGUIThreadInfo(thread_id, ctypes.byref(info)):
+                return None
+
+            import win32gui
+
+            if info.hwndCaret:
+                caret_left = int(info.rcCaret.left)
+                caret_top = int(info.rcCaret.top)
+                caret_right = int(info.rcCaret.right)
+                caret_bottom = int(info.rcCaret.bottom)
+                if caret_right > caret_left:
+                    client_x = (caret_left + caret_right) // 2
+                else:
+                    client_x = caret_left
+                if caret_bottom > caret_top:
+                    client_y = (caret_top + caret_bottom) // 2
+                else:
+                    client_y = caret_top
+
+                screen_x, screen_y = win32gui.ClientToScreen(int(info.hwndCaret), (client_x, client_y))
+                return (
+                    int(screen_x),
+                    int(screen_y),
+                    {
+                        "source": "caret",
+                        "hwnd": int(info.hwndCaret),
+                        "process_id": self._pid_from_hwnd(int(info.hwndCaret)),
+                        "flags": int(info.flags),
+                        "caret_blinking": bool(info.flags & GUI_CARETBLINKING),
+                    },
+                )
+
+            if info.hwndFocus:
+                left, top, right, bottom = win32gui.GetWindowRect(int(info.hwndFocus))
+                return (
+                    int((left + right) / 2),
+                    int((top + bottom) / 2),
+                    {
+                        "source": "hwnd_focus",
+                        "hwnd": int(info.hwndFocus),
+                        "process_id": self._pid_from_hwnd(int(info.hwndFocus)),
+                    },
+                )
+        except Exception as e:
+            logger.debug("캐럿/포커스 HWND 위치 조회 실패: %s", e)
+        return None
+
+    def _get_uia_focused_click_point(self) -> Optional[tuple[int, int, dict]]:
+        """UIA GetFocusedElement 기반 포커스 요소 중심 좌표를 반환합니다."""
+        try:
+            from pywinauto.uia_defines import IUIA
+
+            element = IUIA().iuia.GetFocusedElement()
+            if element is None:
+                return None
+
+            rect = element.CurrentBoundingRectangle
+            left, top, right, bottom = [int(v) for v in rect]
+            if right <= left or bottom <= top:
+                return None
+
+            control_type_id = int(self._safe_call(lambda: element.CurrentControlType, 0) or 0)
+            return (
+                int((left + right) / 2),
+                int((top + bottom) / 2),
+                {
+                    "source": "uia_focused",
+                    "process_id": int(self._safe_call(lambda: element.CurrentProcessId, 0) or 0) or None,
+                    "automation_id": str(self._safe_call(lambda: element.CurrentAutomationId, "") or ""),
+                    "name": str(self._safe_call(lambda: element.CurrentName, "") or ""),
+                    "control_type_id": control_type_id,
+                },
+            )
+        except Exception as e:
+            logger.debug("UIA focused element 조회 실패: %s", e)
+            return None
+
+    def _resolve_focus_click_point(self) -> tuple[Optional[int], Optional[int], dict]:
+        """
+        현재 키보드 포커스 위치의 화면 좌표를 결정합니다.
+        캐럿 > UIA focused element > hwnd focus 순으로 시도합니다.
+        """
+        for resolver in (self._get_caret_focus_click_point, self._get_uia_focused_click_point):
+            resolved = resolver()
+            if resolved is not None:
+                x, y, info = resolved
+                logger.info(
+                    "[right_click_at_focus] 포커스 위치: x=%s, y=%s, source=%s, info=%s",
+                    x,
+                    y,
+                    info.get("source"),
+                    info,
+                )
+                return x, y, info
+        return None, None, {}
+
     def _is_wrapper_foreground(self, wrapper: Any) -> bool:
         """대상 윈도우(또는 동일 프로세스)가 foreground인지 확인합니다."""
         try:
@@ -1698,6 +1855,76 @@ class AppUIAction:
                 )
 
             time.sleep(0.1)
+
+    def right_click_at_focus(
+        self,
+        clicks: int = 1,
+        require_app_focus: bool = True,
+    ) -> AppUIActionResult:
+        """
+        현재 키보드 포커스 위치에서 오른쪽 클릭합니다.
+        ensure_focus()를 호출하지 않아 기존 포커스를 유지합니다.
+        """
+        logger.info(
+            "[right_click_at_focus] 시작: clicks=%s, require_app_focus=%s",
+            clicks,
+            require_app_focus,
+        )
+
+        if not self._session.is_connected:
+            try:
+                self._launcher.ensure_running()
+            except Exception as e:
+                logger.debug("연결되지 않은 상태에서 ensure_running 실패: %s", e)
+
+        x, y, focus_info = self._resolve_focus_click_point()
+        if x is None or y is None:
+            return AppUIActionResult(
+                result="not_found",
+                message="포커스 위치를 찾지 못했습니다.",
+            )
+
+        if require_app_focus:
+            target_pids = self._get_connected_process_ids()
+            focus_pid = focus_info.get("process_id")
+            if focus_pid is None and focus_info.get("hwnd"):
+                focus_pid = self._pid_from_hwnd(int(focus_info["hwnd"]))
+            if target_pids and focus_pid and int(focus_pid) not in target_pids:
+                return AppUIActionResult(
+                    result="error",
+                    message=(
+                        "현재 포커스가 연결된 애플리케이션이 아닙니다. "
+                        f"focus_pid={focus_pid}, target_pids={sorted(target_pids)}"
+                    ),
+                    x=x,
+                    y=y,
+                )
+
+        pyautogui, error_result = self._get_pyautogui()
+        if error_result:
+            return error_result
+
+        try:
+            pyautogui.click(x=x, y=y, button="right", clicks=max(1, clicks))
+            return AppUIActionResult(
+                result="success",
+                message=(
+                    f"포커스 위치 오른쪽 클릭 성공: source={focus_info.get('source')}, "
+                    f"name={focus_info.get('name', '-')}, auto_id={focus_info.get('automation_id', '-')}"
+                ),
+                x=x,
+                y=y,
+                button="right",
+            )
+        except Exception as e:
+            logger.error("포커스 위치 오른쪽 클릭 실패: %s", e)
+            return AppUIActionResult(
+                result="error",
+                message=f"포커스 위치 오른쪽 클릭 실패: {e}",
+                x=x,
+                y=y,
+                button="right",
+            )
 
     def click_position(
         self,
