@@ -1083,13 +1083,19 @@ class AppUIAction:
 
     def _close_window_wrapper(self, wrapper: Any) -> tuple[bool, str]:
         """wrapper.close() 또는 WM_CLOSE로 윈도우 닫기를 시도합니다."""
+        handle = self._get_wrapper_handle(wrapper)
         try:
             wrapper.close()
             return True, "wrapper.close"
         except Exception as e:
-            logger.debug("wrapper.close() 실패: %s", e)
+            # pywinauto의 close()는 창이 실제로 닫힌 뒤에도 stale handle 검증 과정에서
+            # 예외를 던지는 경우가 흔합니다. 이미 닫혔다면 성공으로 간주하여
+            # 불필요한 WM_CLOSE 재시도와 오해를 주는 실패 로그를 남기지 않습니다.
+            if self._is_window_closed(wrapper, handle):
+                logger.debug("wrapper.close() 예외였으나 윈도우는 이미 닫힘: %s", e)
+                return True, "wrapper.close"
+            logger.debug("wrapper.close() 실패, WM_CLOSE 폴백 시도: %s", e)
 
-        handle = self._get_wrapper_handle(wrapper)
         if handle is None:
             return False, "no_handle"
 
