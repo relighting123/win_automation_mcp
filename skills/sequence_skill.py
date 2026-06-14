@@ -1,4 +1,3 @@
-import asyncio
 import inspect
 import json
 import logging
@@ -201,19 +200,6 @@ class SequenceSkill(BaseSkill):
                 step = self._parse_step(raw_step, kwargs)
                 tool_name = step["tool"]
                 tool_args = step["args"]
-
-                if tool_name == "wait":
-                    seconds = float(tool_args.get("seconds", 0.5))
-                    await asyncio.sleep(seconds)
-                    step_results.append(
-                        {
-                            "index": index,
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result": {"success": True, "message": f"{seconds}초 대기 완료"},
-                        }
-                    )
-                    continue
 
                 tool_func = tool_registry.get(tool_name)
                 if tool_func is None:
