@@ -6,6 +6,7 @@
 
 import logging
 import json
+import asyncio
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 from actions.app_ui_action import get_app_ui_action
@@ -16,6 +17,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def wait(seconds: float = 0.5) -> str:
+    """
+    지정한 시간(초) 동안 대기합니다.
+    스킬 시퀀스나 UI 로딩 대기 등에 사용합니다.
+    """
+    if seconds < 0:
+        return json.dumps(
+            {"success": False, "message": "seconds는 0 이상이어야 합니다."},
+            ensure_ascii=False,
+        )
+    logger.info("[Tool] wait 호출: seconds=%s", seconds)
+    await asyncio.sleep(seconds)
+    return json.dumps(
+        {"success": True, "message": f"{seconds}초 대기 완료"},
+        ensure_ascii=False,
+    )
 
 
 async def find_app_by_ocr(
@@ -557,6 +574,7 @@ def click_app_by_rgb(
 
 def register_app_control_tools(mcp: "FastMCP") -> None:
     """애플리케이션 UI 제어 도구 등록"""
+    mcp.tool()(wait)
     mcp.tool()(describe_current_state)
     mcp.tool()(find_app_by_ocr)
     mcp.tool()(type_app_text)

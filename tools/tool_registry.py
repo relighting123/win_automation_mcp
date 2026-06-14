@@ -6,7 +6,6 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
     from tools.app_control_tool import (
         click_app_by_attr,
         click_app_by_keyword,
-        click_app_by_text,
         click_app_position,
         click_at_focus,
         find_app_by_ocr,
@@ -14,6 +13,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         highlight_app_by_attr,
         press_app_shortcut,
         type_app_text,
+        wait,
     )
     from tools.app_mgmt_tool import (
         close_application,
@@ -39,7 +39,6 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "generate_locators": generate_locators,
         # app_control_tool
         "find_app_by_ocr": find_app_by_ocr,
-        "click_app_by_text": click_app_by_text,
         "type_app_text": type_app_text,
         "press_app_shortcut": press_app_shortcut,
         "click_at_focus": click_at_focus,
@@ -49,6 +48,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "click_app_by_attr": click_app_by_attr,
         "highlight_app_by_attr": highlight_app_by_attr,
         "get_app_coords_by_attr": get_app_coords_by_attr,
+        "wait": wait,
         # data_analysis_tool
         "read_clipboard_as_dataframe": read_clipboard_as_dataframe,
         # source_edit_tool
