@@ -109,8 +109,16 @@ class CloseWindowTest(unittest.TestCase):
         main = _MockMain()
         main.find = broken
 
+        # close()가 예외를 던질 때 창이 아직 살아 있어야 WM_CLOSE 폴백을 시도하고,
+        # PostMessage 이후에는 닫힌 것으로 보이도록 상태를 전환합니다.
+        state = {"alive": True}
         mock_win32gui = MagicMock()
-        mock_win32gui.IsWindow.return_value = False
+        mock_win32gui.IsWindow.side_effect = lambda h: state["alive"]
+
+        def _post(*_args, **_kwargs):
+            state["alive"] = False
+
+        mock_win32gui.PostMessage.side_effect = _post
 
         with patch.object(self.action, "_pick_target_window", return_value=main):
             with patch.dict(sys.modules, {"win32gui": mock_win32gui}):
