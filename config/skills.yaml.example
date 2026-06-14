@@ -55,6 +55,7 @@ skills:
           case_sensitive: false
           button: "left"
           clicks: 1
+          timeout: 5.0
 
       - tool: type_app_text
         args:
