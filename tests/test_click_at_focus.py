@@ -138,6 +138,47 @@ class ClickAtFocusTest(unittest.TestCase):
 
         ensure_focus.assert_called_once()
 
+    def test_ensure_window_focus_brings_active_window_before_resolve(self) -> None:
+        """ensure_window_focus=True이면 활성 창(다이얼로그 포함)을 좌표 읽기 전에
+        foreground로 가져오고, 성공 시 ensure_focus 폴백은 사용하지 않습니다."""
+        call_order: list[str] = []
+
+        def fake_bring(hwnd: int) -> bool:
+            call_order.append(f"bring:{hwnd}")
+            return True
+
+        def fake_resolve():
+            call_order.append("resolve")
+            return (100, 200, {"source": "caret", "process_id": 4242, "hwnd": 7777})
+
+        with patch.object(
+            self.action,
+            "_ensure_connected",
+            return_value=AppUIActionResult(result="success"),
+        ):
+            with patch.object(self.action, "_get_connected_app_top_hwnd", return_value=7777):
+                with patch.object(self.action, "_bring_hwnd_to_foreground", side_effect=fake_bring):
+                    with patch.object(self.action, "ensure_focus") as ensure_focus:
+                        with patch.object(
+                            self.action,
+                            "_resolve_focus_click_point",
+                            side_effect=fake_resolve,
+                        ):
+                            with patch.object(
+                                self.action,
+                                "click_position",
+                                return_value=AppUIActionResult(
+                                    result="success", x=100, y=200, button="right"
+                                ),
+                            ):
+                                result = self.action.click_at_focus(ensure_window_focus=True)
+
+        self.assertEqual(result.result, "success")
+        # 창을 앞으로 가져온 뒤에 포커스 좌표를 읽어야 합니다.
+        self.assertEqual(call_order, ["bring:7777", "resolve"])
+        # foreground 전환에 성공했으므로 ensure_focus 폴백은 호출되지 않습니다.
+        ensure_focus.assert_not_called()
+
     def test_rejects_foreign_process(self) -> None:
         with patch.object(
             self.action,

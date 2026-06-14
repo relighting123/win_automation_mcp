@@ -21,6 +21,59 @@ from core.app_launcher import get_launcher
 
 logger = logging.getLogger(__name__)
 
+_DPI_AWARENESS_SET = False
+
+
+def ensure_dpi_awareness() -> bool:
+    """
+    프로세스를 per-monitor DPI-aware로 설정합니다(프로세스 당 1회).
+
+    DPI-aware가 아니면 Win32 좌표(ClientToScreen/GetWindowRect/UIA BoundingRectangle)는
+    물리 픽셀로 반환되는데 pyautogui 클릭은 가상화된 논리 좌표로 동작해, 배율이 100%가
+    아닌 모니터에서 좌표와 offset이 어긋나 클릭이 엉뚱한 위치로 가거나 작은 offset이
+    반영되지 않는 문제가 발생합니다. 좌표계를 물리 픽셀로 통일하기 위해 설정합니다.
+
+    DPI awareness는 프로세스 시작 직후, GUI/윈도우 생성 전에 호출해야 가장 안정적입니다.
+    """
+    global _DPI_AWARENESS_SET
+    if _DPI_AWARENESS_SET:
+        return True
+    try:
+        import ctypes
+
+        # 1) Windows 10 1703+: PER_MONITOR_AWARE_V2 (가장 권장)
+        try:
+            ctx = ctypes.c_void_p(-4)  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctx):
+                _DPI_AWARENESS_SET = True
+                logger.info("[dpi] SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) 적용")
+                return True
+        except Exception as e:
+            logger.debug("[dpi] SetProcessDpiAwarenessContext 실패: %s", e)
+
+        # 2) Windows 8.1+: shcore.SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE=2)
+        try:
+            if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+                _DPI_AWARENESS_SET = True
+                logger.info("[dpi] SetProcessDpiAwareness(PER_MONITOR) 적용")
+                return True
+        except Exception as e:
+            logger.debug("[dpi] SetProcessDpiAwareness 실패: %s", e)
+
+        # 3) 구버전 폴백: 시스템 DPI aware
+        if ctypes.windll.user32.SetProcessDPIAware():
+            _DPI_AWARENESS_SET = True
+            logger.info("[dpi] SetProcessDPIAware 적용")
+            return True
+    except Exception as e:
+        # 이미 다른 곳에서 awareness가 설정된 경우 등은 무시하고 진행합니다.
+        logger.debug("[dpi] DPI awareness 설정 건너뜀: %s", e)
+    return _DPI_AWARENESS_SET
+
+
+# 모듈 로드 시점에 1회 설정합니다(클릭 좌표 계산 전에 적용되도록).
+ensure_dpi_awareness()
+
 
 @dataclass
 class AppUIActionResult:
@@ -78,6 +131,7 @@ class AppUIAction:
     }
 
     def __init__(self, session: Optional[AppSession] = None):
+        ensure_dpi_awareness()
         self._session = session or AppSession.get_instance()
         self._launcher = get_launcher()
 
@@ -815,6 +869,83 @@ class AppUIAction:
             return int(pid)
         except Exception:
             return None
+
+    def _bring_hwnd_to_foreground(self, hwnd: int) -> bool:
+        """
+        임의의 top-level hwnd(모달 다이얼로그 포함)를 foreground로 가져옵니다.
+
+        SetForegroundWindow는 호출 스레드가 foreground가 아니면 제약을 받으므로,
+        AttachThreadInput으로 현재/기존 foreground 스레드를 붙여 제약을 회피합니다.
+        """
+        try:
+            import ctypes
+            import win32con
+            import win32gui
+
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            GA_ROOT = 2
+            root = int(user32.GetAncestor(int(hwnd), GA_ROOT) or int(hwnd))
+
+            if win32gui.IsIconic(root):
+                win32gui.ShowWindow(root, win32con.SW_RESTORE)
+
+            fg = user32.GetForegroundWindow()
+            target_tid = user32.GetWindowThreadProcessId(root, None)
+            fg_tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+            cur_tid = kernel32.GetCurrentThreadId()
+
+            attached: list[int] = []
+            for tid in {fg_tid, cur_tid}:
+                if tid and tid != target_tid and user32.AttachThreadInput(tid, target_tid, True):
+                    attached.append(tid)
+            try:
+                win32gui.BringWindowToTop(root)
+                user32.SetForegroundWindow(root)
+            finally:
+                for tid in attached:
+                    user32.AttachThreadInput(tid, target_tid, False)
+
+            return int(user32.GetForegroundWindow()) == root
+        except Exception as e:
+            logger.debug("[click_at_focus] foreground 전환 실패(hwnd=%s): %s", hwnd, e)
+            return False
+
+    def _get_connected_app_top_hwnd(self) -> Optional[int]:
+        """
+        연결된 앱의 활성 최상위 창 hwnd를 반환합니다.
+        앱의 top_window(모달 다이얼로그가 있으면 보통 그 다이얼로그)를 우선 사용하고,
+        조회에 실패하면 연결 앱에 속한 현재 foreground hwnd로 폴백합니다.
+        """
+        try:
+            top = self._session.app.top_window()
+            handle = int(self._safe_call(lambda: top.handle, 0) or 0)
+            if handle:
+                return handle
+        except Exception as e:
+            logger.debug("[click_at_focus] top_window 조회 실패: %s", e)
+
+        try:
+            import ctypes
+
+            fg = int(ctypes.windll.user32.GetForegroundWindow() or 0)
+            pids = self._get_connected_process_ids()
+            if fg and pids:
+                fg_pid = self._pid_from_hwnd(fg)
+                if fg_pid and int(fg_pid) in pids:
+                    return fg
+        except Exception as e:
+            logger.debug("[click_at_focus] foreground hwnd 조회 실패: %s", e)
+
+        return None
+
+    def _bring_connected_app_to_front(self) -> AppUIActionResult:
+        """연결된 앱의 활성 창(모달 다이얼로그 포함)을 foreground로 가져옵니다."""
+        hwnd = self._get_connected_app_top_hwnd()
+        if hwnd and self._bring_hwnd_to_foreground(hwnd):
+            return AppUIActionResult(result="success", message=f"foreground hwnd={hwnd}")
+        # 폴백: 기존 메인 윈도우 활성화 경로
+        return self.ensure_focus()
 
     def _get_caret_focus_click_point(self) -> Optional[tuple[int, int, dict]]:
         """GetGUIThreadInfo 기반 캐럿/포커스 HWND 위치를 반환합니다."""
@@ -2138,7 +2269,24 @@ class AppUIAction:
                 message=connect_result.message or "애플리케이션 연결에 실패했습니다.",
             )
 
-        # 포커스 좌표는 ensure_focus() 전에 먼저 읽어야 이전 스킬 단계의 키보드 포커스가 유지됩니다.
+        # ensure_window_focus=True이면 좌표를 읽기 전에 연결된 앱의 활성 창(모달
+        # 다이얼로그 포함)을 foreground로 끌어옵니다. 다이얼로그/자식창이 떠 있거나
+        # 시퀀스 중간에 foreground가 바뀐 상황에서도 올바른 창의 포커스를 읽습니다.
+        if ensure_window_focus:
+            focus_result = self._bring_connected_app_to_front()
+            if not focus_result.is_success:
+                return AppUIActionResult(
+                    result="error",
+                    message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
+                )
+            after_focus_delay = float(
+                self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1)
+            )
+            if after_focus_delay > 0:
+                time.sleep(after_focus_delay)
+
+        # 포커스 좌표는 ensure_window_focus=False일 때 이전 스킬 단계의 키보드 포커스를
+        # 유지하기 위해, True일 때는 위에서 끌어온 활성 창 기준으로 읽습니다.
         x, y, focus_info = self._resolve_focus_click_point()
         if x is None or y is None:
             return AppUIActionResult(
@@ -2168,22 +2316,6 @@ class AppUIAction:
 
         click_x = base_x + parsed_offset_x
         click_y = base_y + parsed_offset_y
-
-        if ensure_window_focus:
-            focus_result = self.ensure_focus()
-            if not focus_result.is_success:
-                return AppUIActionResult(
-                    result="error",
-                    message=focus_result.message or "애플리케이션 포커스 설정에 실패했습니다.",
-                    x=click_x,
-                    y=click_y,
-                    button=button,
-                )
-            after_focus_delay = float(
-                self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1)
-            )
-            if after_focus_delay > 0:
-                time.sleep(after_focus_delay)
 
         logger.info(
             "[click_at_focus] 클릭 좌표: base=(%s,%s), offset=(%s,%s), click=(%s,%s), source=%s",
