@@ -213,5 +213,54 @@ class ClickAppByAttrOutlineTest(unittest.TestCase):
         self.assertEqual(getattr(close_node, "_last_outline_colour", None), "red")
 
 
+class ClickAppByAttrPollingTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.session = MagicMock()
+        self.session.config = {"timeouts": {"ui_delay": 0.0, "after_focus_delay": 0.0}}
+        self.action = AppUIAction(session=self.session)
+        self.top = _MockMainWithFind()
+
+    @staticmethod
+    def _poll_sleep_calls(sleep_mock) -> list:
+        return [call for call in sleep_mock.call_args_list if call.args and call.args[0] > 0]
+
+    def _run_click(self, **kwargs):
+        defaults = {
+            "auto_id": "Close",
+            "window_target": "top",
+            "draw_outline": False,
+        }
+        defaults.update(kwargs)
+        with patch.object(self.action, "ensure_focus", return_value=MagicMock(result="success", is_success=True)):
+            with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
+                with patch.object(self.action, "_click_with_preferred_action", return_value="click_input"):
+                    return self.action.click_element_by_attr(**defaults)
+
+    def test_timeout_none_performs_single_attempt_without_sleep(self) -> None:
+        with patch("actions.app_ui_action.time.sleep") as sleep_mock:
+            result = self._run_click(timeout=None)
+        self.assertEqual(result.result, "success")
+        self.assertEqual(self._poll_sleep_calls(sleep_mock), [])
+
+    def test_poll_interval_zero_skips_sleep_between_retries(self) -> None:
+        with patch("actions.app_ui_action.time.sleep") as sleep_mock:
+            result = self._run_click(timeout=0.1, poll_interval=0)
+        self.assertEqual(result.result, "success")
+        self.assertEqual(self._poll_sleep_calls(sleep_mock), [])
+
+    def test_poll_interval_null_uses_default_sleep_when_polling(self) -> None:
+        close_node = self.top.find._cached_descendants[1]
+        with patch("actions.app_ui_action.time.sleep") as sleep_mock:
+            with patch.object(
+                self.action,
+                "_find_first_matching_node",
+                side_effect=[None, None, close_node],
+            ):
+                with patch("actions.app_ui_action.time.monotonic", side_effect=[0.0, 0.0, 0.3]):
+                    result = self._run_click(timeout=1.0, poll_interval=None)
+        self.assertEqual(result.result, "success")
+        self.assertEqual([call.args[0] for call in self._poll_sleep_calls(sleep_mock)], [0.2])
+
+
 if __name__ == "__main__":
     unittest.main()

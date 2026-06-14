@@ -21,6 +21,8 @@ from core.app_launcher import get_launcher
 
 logger = logging.getLogger(__name__)
 
+_CLICK_ATTR_DEFAULT_POLL_INTERVAL = 0.2
+
 _DPI_AWARENESS_SET = False
 
 
@@ -2569,6 +2571,7 @@ class AppUIAction:
         clicks: int = 1,
         double: bool = False,
         timeout: Optional[float] = None,
+        poll_interval: Optional[float] = None,
         draw_outline: bool = False,
         outline_colour: str = "red",
         search_outline_colour: str = "green",
@@ -2577,6 +2580,15 @@ class AppUIAction:
         """
         속성 기반으로 특정 요소를 찾아 클릭합니다.
         auto_id/control_type/title/legacy_value 중 하나 이상을 입력받아 대상을 식별합니다.
+
+        timeout:
+          - None: 1회만 탐색 (폴링 없음)
+          - 0 이하: 1회만 탐색 (폴링 없음)
+          - 양수: 해당 시간(초)까지 재시도
+        poll_interval:
+          - None: 기본 간격(0.2초)으로 재시도
+          - 0: 재시도 사이 대기 없음
+          - 양수: 지정한 간격(초)으로 재시도
 
         draw_outline=True 시 outline_scope에 따라 테두리 표시:
           - search: 순회 중인 search_root(창)만
@@ -2634,7 +2646,13 @@ class AppUIAction:
         )
 
         try:
-            actual_timeout = timeout if timeout is not None else 5.0
+            use_polling = timeout is not None and timeout > 0
+            actual_timeout = float(timeout) if use_polling else 0.0
+            effective_poll_interval = (
+                _CLICK_ATTR_DEFAULT_POLL_INTERVAL
+                if poll_interval is None
+                else max(0.0, float(poll_interval))
+            )
             start = time.monotonic()
             target = None
             search_root = None
@@ -2719,9 +2737,12 @@ class AppUIAction:
 
                 if target is not None:
                     break
+                if not use_polling:
+                    break
                 if time.monotonic() - start > actual_timeout:
                     break
-                time.sleep(0.2)
+                if effective_poll_interval > 0:
+                    time.sleep(effective_poll_interval)
 
             if target is None:
                 logger.warning(

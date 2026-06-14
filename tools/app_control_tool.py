@@ -233,6 +233,7 @@ def click_app_by_attr(
     clicks: int = 1,
     double: bool = False,
     timeout: Optional[float] = None,
+    poll_interval: Optional[float] = None,
     draw_outline: bool = False,
     outline_colour: str = "red",
     search_outline_colour: str = "green",
@@ -265,6 +266,13 @@ def click_app_by_attr(
       - all: search_root + target (기본)
     search_outline_colour: search_root 테두리 색 (기본 green)
     outline_colour: target 요소 테두리 색 (기본 red)
+    timeout:
+      - null/미지정: 1회만 탐색 (폴링 없음)
+      - 양수: 해당 시간(초)까지 재시도
+    poll_interval:
+      - null/미지정: 기본 간격(0.2초)으로 재시도
+      - 0: 재시도 사이 대기 없음
+      - 양수: 지정한 간격(초)으로 재시도
     """
     logger.info(
         "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
@@ -292,6 +300,7 @@ def click_app_by_attr(
         clicks=clicks,
         double=double,
         timeout=timeout,
+        poll_interval=poll_interval,
         draw_outline=draw_outline,
         outline_colour=outline_colour,
         search_outline_colour=search_outline_colour,
