@@ -69,6 +69,18 @@ class GraphNodes:
         self._skills_cache = all_skills
         return all_skills
 
+    @staticmethod
+    def _skill_has_tools(skill_config: Any) -> bool:
+        """스킬 정의에 실행 가능한 tool/step이 있는지 확인합니다."""
+        if not isinstance(skill_config, dict):
+            return False
+        tools = skill_config.get("tools", skill_config.get("steps", [])) or []
+        return bool(tools)
+
+    def _get_runnable_skill_ids(self, skills_config: Dict[str, Any]) -> List[str]:
+        """tools/steps가 정의된 실행 가능한 스킬 ID만 반환합니다."""
+        return [sid for sid, cfg in skills_config.items() if self._skill_has_tools(cfg)]
+
     async def _map_skill_id(self, skill_id: str, valid_skills: Dict[str, Any]) -> str:
         """스킬 ID를 정확 일치 또는 구분자 차이만 보정합니다."""
         if not skill_id:
@@ -93,8 +105,8 @@ class GraphNodes:
             logger.info(f"스킬 ID 정규화 매핑: '{skill_id}' -> '{norm_match}'")
             return norm_match
 
-        logger.warning("정의되지 않은 스킬 ID 감지: '%s'. 유사도 매핑 없이 원본을 유지합니다.", skill_id)
-        return skill_id
+        logger.warning("정의되지 않은 스킬 ID 감지: '%s'. 무시합니다.", skill_id)
+        return ""
 
     def _create_structured_plan_model(self, valid_ids: List[str]):
         """유효한 스킬 ID만 선택하도록 강제하는 동적 Pydantic 모델 생성 (Latest LangGraph/LangChain Pattern)"""
@@ -304,17 +316,23 @@ class GraphNodes:
         """질의와 스킬 목록을 기반으로 실행할 skill_ids를 AI가 선정합니다."""
         logger.info("--- [auto 계획] AI 스킬 계획 시작 ---")
 
-        if not valid_ids:
-            logger.warning("사용 가능한 스킬이 정의되어 있지 않습니다.")
+        runnable_ids = self._get_runnable_skill_ids(skills_config)
+        if not runnable_ids:
+            logger.warning("실행 가능한 스킬(tools/steps 정의)이 없습니다.")
             return {
                 "skill_ids": [],
                 "execution_halted": True,
-                "halt_reason": "config/skills.yaml 또는 skills/*/skill.yaml 에 등록된 스킬이 없습니다.",
+                "halt_reason": (
+                    "실행 가능한 스킬이 없습니다. config/skills.yaml 또는 skills/*/skill.yaml 에 "
+                    "tools/steps가 정의된 스킬을 등록하세요."
+                ),
             }
 
-        skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in skills_config.items()])
+        skills_info = "\n".join(
+            [f"- {sid}: {skills_config.get(sid, {}).get('description', '')}" for sid in runnable_ids]
+        )
 
-        SkillPlanModel = self._create_structured_plan_model(valid_ids)
+        SkillPlanModel = self._create_structured_plan_model(runnable_ids)
         structured_llm = self.planner_llm.with_structured_output(SkillPlanModel)
 
         try:
@@ -323,28 +341,37 @@ class GraphNodes:
                 ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
             ])
 
-            result_ids = getattr(plan, "skill_ids", [])
+            result_ids = [sid for sid in getattr(plan, "skill_ids", []) if sid in runnable_ids]
             logger.info(f"AI 계획 결과: {result_ids}")
             if not result_ids:
                 return {
                     "skill_ids": [],
                     "execution_halted": True,
-                    "halt_reason": "질의에 맞는 스킬을 찾지 못했습니다.",
+                    "halt_reason": (
+                        f"질의 '{state.query}'에 맞는 스킬을 찾지 못했습니다. "
+                        f"/skills 로 확인 후 /analyze manual <skill_id> <질의> 를 사용하세요."
+                    ),
                 }
             return {"skill_ids": result_ids}
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
             raw_res = await self.planner_llm.ainvoke(
-                f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요."
+                f"질의: {state.query}\n목록: {runnable_ids}\n"
+                "위 목록에 있는 스킬 ID만 콤마로 구분해 답하세요. 질의 문장 자체는 답하지 마세요."
             )
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
-            mapped_ids = [await self._map_skill_id(pid, skills_config) for pid in potential_ids]
-            mapped_ids = [sid for sid in mapped_ids if sid]
+            mapped_ids = []
+            for pid in potential_ids:
+                mapped = await self._map_skill_id(pid, skills_config)
+                if mapped and mapped in runnable_ids:
+                    mapped_ids.append(mapped)
             if not mapped_ids:
                 return {
                     "skill_ids": [],
                     "execution_halted": True,
-                    "halt_reason": f"스킬 계획 실패: {e}",
+                    "halt_reason": (
+                        f"스킬 계획 실패: {e}. /analyze manual <skill_id> <질의> 형식을 사용하세요."
+                    ),
                 }
             return {"skill_ids": mapped_ids}
 
@@ -361,13 +388,19 @@ class GraphNodes:
         logger.info(f"[{state.mode} 모드] 기존 스킬 리스트 검증 및 매핑 시작")
         mapped_ids = []
         for sid in state.skill_ids:
-            mapped_ids.append(await self._map_skill_id(sid, skills_config))
-        mapped_ids = [sid for sid in mapped_ids if sid]
+            mapped = await self._map_skill_id(sid, skills_config)
+            if mapped:
+                mapped_ids.append(mapped)
+        runnable_ids = self._get_runnable_skill_ids(skills_config)
+        mapped_ids = [sid for sid in mapped_ids if sid in runnable_ids]
         if not mapped_ids:
             return {
                 "skill_ids": [],
                 "execution_halted": True,
-                "halt_reason": f"{state.mode} 모드에서 유효한 skill_id를 찾지 못했습니다.",
+                "halt_reason": (
+                    f"{state.mode} 모드에서 유효한 skill_id를 찾지 못했습니다. "
+                    f"/skills 로 ID를 확인하고 /analyze manual <skill_id> <질의> 를 사용하세요."
+                ),
             }
         return {"skill_ids": mapped_ids}
 
@@ -490,8 +523,14 @@ class GraphNodes:
         tool_sequence = [step["tool"] for step in steps_metadata]
         
         if not tool_sequence:
+            available = self._get_runnable_skill_ids(self._get_skills_config())
             logger.error(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
-            raise ValueError(f"Skill '{current_skill_id}'에 유효한 도구가 없습니다.")
+            raise ValueError(
+                f"Skill '{current_skill_id}'에 유효한 도구가 없습니다. "
+                f"질의 문장을 skill_id로 쓰지 말고 /skills 에서 확인한 ID를 사용하세요. "
+                f"예: /analyze manual demo_app_control_tools {state.query!r}. "
+                f"사용 가능 스킬: {available}"
+            )
 
         if state.mode == "manual":
             # manual 모드는 사람이 정의한 스킬 시퀀스를 그대로 실행하므로
