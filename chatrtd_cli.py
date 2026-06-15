@@ -132,10 +132,10 @@ HELP_TEXT = f"""
   [text]/models remove <name>[/text]                                     모델 삭제
 
 [secondary]Analyze (automation graph)[/secondary]
-  [text]/analyze <query>[/text]                    semi 모드로 실행 (기본)
-  [text]/analyze auto <query>[/text]               auto 모드 — graph가 스킬 자동 선택
-  [text]/analyze semi <query>[/text]               semi 모드 — 스킬 순서 고정, AI가 인자 추출
-  [text]/analyze manual <skill_id> [query][/text]  manual 모드 — 스킬 고정 실행
+  [text]/analyze <query>[/text]                    auto 모드 — graph가 스킬 자동 선택·조합 (기본)
+  [text]/analyze auto <query>[/text]               auto 모드 — 스킬 자동 선택·조합
+  [text]/analyze semi <query>[/text]               semi 모드 — YAML 단계 엄격 실행
+  [text]/analyze manual <skill_id> [query][/text]  manual 모드 — 스킬 1개 고정 실행
 
 [secondary]Config[/secondary]
   [text]/config[/text]                   현재 설정 확인
@@ -154,9 +154,9 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/models add",     "모델 등록"),
     ("/models select",  "활성 모델 전환"),
     ("/models remove",  "모델 삭제"),
-    ("/analyze",        "자동화 실행 (semi 모드)"),
-    ("/analyze auto",   "auto 모드 — 스킬 자동 선택"),
-    ("/analyze semi",   "semi 모드 — 스킬 순서 고정"),
+    ("/analyze",        "자동화 실행 (스킬 자동 선택)"),
+    ("/analyze auto",   "auto 모드 — 스킬 자동 선택·조합"),
+    ("/analyze semi",   "semi 모드 — YAML 단계 엄격 실행"),
     ("/analyze manual", "manual 모드 — 스킬 고정 실행"),
     ("/config",         "현재 설정 확인"),
     ("/config set",     "설정 변경  (/config set mcp-url <url>)"),
@@ -629,12 +629,12 @@ class ChatRTDCLI:
             )
             return
 
-        # 첫 번째 토큰이 모드명이면 분리, 아니면 semi 기본값
+        # 첫 번째 토큰이 모드명이면 분리, 아니면 auto 기본값 (스킬 ID 없이 질의만으로 실행)
         if args[0].lower() in _MODES:
             mode  = args[0].lower()
             rest  = args[1:]
         else:
-            mode  = "semi"
+            mode  = "auto"
             rest  = args
 
         # manual 모드: 첫 토큰을 skill_id로 사용
