@@ -639,9 +639,32 @@ class GraphNodes:
         query_lower = state.query.lower()
         query_wants_clipboard = any(
             token in query_lower
-            for token in ["ctrl+c", "ctrl c", "clipboard", "복사", "데이터프레임", "dataframe", "표"]
+            for token in [
+                "ctrl+c",
+                "ctrl c",
+                "clipboard",
+                "복사",
+                "데이터프레임",
+                "dataframe",
+                "표",
+                "json",
+                "캐시",
+                "cache",
+            ]
         )
-        clipboard_entry = next((h for h in reversed(history) if h.get("tool") == "read_clipboard_as_dataframe"), None)
+        dataset_tools = (
+            "read_clipboard_as_dataframe",
+            "load_json_as_dataframe",
+            "get_cached_dataset_summary",
+        )
+        clipboard_entry = next(
+            (
+                h
+                for h in reversed(history)
+                if h.get("tool") in dataset_tools
+            ),
+            None,
+        )
 
         clipboard_data: Dict[str, Any] = {
             "success": False,
@@ -658,8 +681,10 @@ class GraphNodes:
                     "raw": decoded_clipboard,
                 }
         elif query_wants_clipboard:
-            # read_clipboard_as_dataframe가 스킬에서 실행되지 않았더라도 report 단계에서 보조 조회
-            live_clipboard = await self.mcp.call_tool("read_clipboard_as_dataframe", {})
+            live_clipboard = await self.mcp.call_tool("get_cached_dataset_summary", {})
+            decoded_cache = self._decode_tool_output(live_clipboard)
+            if not (isinstance(decoded_cache, dict) and decoded_cache.get("success")):
+                live_clipboard = await self.mcp.call_tool("read_clipboard_as_dataframe", {})
             decoded_clipboard = self._decode_tool_output(live_clipboard)
             if isinstance(decoded_clipboard, dict):
                 clipboard_data = decoded_clipboard
