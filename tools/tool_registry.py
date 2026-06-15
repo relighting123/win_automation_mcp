@@ -27,6 +27,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
     from tools.data_analysis_tool import read_clipboard_as_dataframe
     from tools.oracle_db_tool import query_oracle_db
     from tools.source_edit_tool import find_text_in_file, replace_text_in_file
+    from tools.url_fetch_tool import fetch_url
 
     return {
         # app_mgmt_tool
@@ -56,4 +57,6 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "replace_text_in_file": replace_text_in_file,
         # oracle_db_tool
         "query_oracle_db": query_oracle_db,
+        # url_fetch_tool
+        "fetch_url": fetch_url,
     }

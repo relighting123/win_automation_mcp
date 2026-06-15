@@ -113,6 +113,7 @@ def register_all_tools() -> None:
     from tools.data_analysis_tool import register_data_analysis_tools
     from tools.oracle_db_tool import register_oracle_db_tools
     from tools.source_edit_tool import register_source_edit_tools
+    from tools.url_fetch_tool import register_url_fetch_tools
     from tools.skill_tool import register_skill_tools
     
     # 애플리케이션 관리 도구
@@ -129,6 +130,9 @@ def register_all_tools() -> None:
 
     # Oracle DB 조회 도구
     register_oracle_db_tools(mcp)
+
+    # URL HTTP 조회 도구
+    register_url_fetch_tools(mcp)
 
     # 고수준 Skill 기반 도구
     register_skill_tools(mcp)
