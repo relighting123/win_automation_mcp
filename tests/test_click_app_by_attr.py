@@ -261,6 +261,46 @@ class ClickAppByAttrPollingTest(unittest.TestCase):
         self.assertEqual(result.result, "success")
         self.assertEqual([call.args[0] for call in self._poll_sleep_calls(sleep_mock)], [0.2])
 
+    def test_string_timeout_and_poll_interval_enable_polling(self) -> None:
+        with patch("actions.app_ui_action.time.sleep") as sleep_mock:
+            result = self._run_click(timeout="20", poll_interval="1")
+        self.assertEqual(result.result, "success")
+        self.assertEqual(self._poll_sleep_calls(sleep_mock), [])
+
+    def test_focus_failure_continues_polling_until_element_found(self) -> None:
+        focus_results = [
+            MagicMock(result="error", is_success=False, message="no window"),
+            MagicMock(result="success", is_success=True),
+        ]
+        with patch("actions.app_ui_action.time.sleep") as sleep_mock:
+            with patch.object(self.action, "ensure_focus", side_effect=focus_results):
+                with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
+                    with patch.object(self.action, "_click_with_preferred_action", return_value="click_input"):
+                        result = self.action.click_element_by_attr(
+                            auto_id="Close",
+                            window_target="top",
+                            timeout=5.0,
+                            poll_interval=1.0,
+                        )
+        self.assertEqual(result.result, "success")
+        self.assertEqual([call.args[0] for call in self._poll_sleep_calls(sleep_mock)], [1.0])
+
+    def test_not_found_polls_until_timeout(self) -> None:
+        clock = {"now": 0.0}
+
+        def fake_monotonic() -> float:
+            return clock["now"]
+
+        def fake_sleep(seconds: float) -> None:
+            clock["now"] += seconds
+
+        with patch("actions.app_ui_action.time.monotonic", side_effect=fake_monotonic):
+            with patch("actions.app_ui_action.time.sleep", side_effect=fake_sleep):
+                with patch.object(self.action, "_find_first_matching_node", return_value=None):
+                    result = self._run_click(auto_id="Missing", timeout=2.0, poll_interval=1.0)
+        self.assertEqual(result.result, "error")
+        self.assertIn("찾지 못했습니다", result.message or "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -278,6 +278,22 @@ class AppUIAction:
             return int(float(stripped))
         raise ValueError(f"{name} must be a number, got {type(value).__name__}")
 
+    @staticmethod
+    def _coerce_optional_float(value: Any, *, name: str) -> Optional[float]:
+        """timeout/poll_interval 등 선택적 실수 인자를 정규화합니다."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a number")
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.lower() in {"null", "none"}:
+                return None
+            return float(stripped)
+        raise ValueError(f"{name} must be a number, got {type(value).__name__}")
+
     def ensure_focus(self, *, invalidate_cache: bool = False) -> AppUIActionResult:
         """애플리케이션 윈도우를 최상단으로 가져오고 포커스를 설정합니다."""
         try:
@@ -2637,15 +2653,19 @@ class AppUIAction:
         outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
 
         logger.info(
-            "[click_app_by_attr] 시작: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+            "[click_app_by_attr] 시작: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s, timeout=%s, poll_interval=%s",
             auto_id,
             title,
             child_window_title,
             child_window_auto_id,
             window_target,
+            timeout,
+            poll_interval,
         )
 
         try:
+            timeout = self._coerce_optional_float(timeout, name="timeout")
+            poll_interval = self._coerce_optional_float(poll_interval, name="poll_interval")
             use_polling = timeout is not None and timeout > 0
             actual_timeout = float(timeout) if use_polling else 0.0
             effective_poll_interval = (
@@ -2660,10 +2680,36 @@ class AppUIAction:
             matched_search_root = None
             matched_search_root_info = "none"
             scanned_top_labels: list[str] = []
+            attempt = 0
+            logger.info(
+                "[click_app_by_attr] 폴링 설정: use_polling=%s, timeout=%s, poll_interval=%s",
+                use_polling,
+                actual_timeout if use_polling else None,
+                effective_poll_interval if use_polling else None,
+            )
             while True:
+                attempt += 1
+                if attempt > 1:
+                    logger.info(
+                        "[click_app_by_attr] 폴링 재시도 %d회차 (elapsed=%.1fs, timeout=%s)",
+                        attempt,
+                        time.monotonic() - start,
+                        actual_timeout if use_polling else None,
+                    )
+
                 focus_result = self.ensure_focus(invalidate_cache=True)
                 if not focus_result.is_success:
-                    return AppUIActionResult(result="error", message=focus_result.message)
+                    if not use_polling:
+                        return AppUIActionResult(result="error", message=focus_result.message)
+                    logger.warning(
+                        "[click_app_by_attr] 포커스 설정 실패, 폴링 계속: %s",
+                        focus_result.message,
+                    )
+                    if time.monotonic() - start > actual_timeout:
+                        break
+                    if effective_poll_interval > 0:
+                        time.sleep(effective_poll_interval)
+                    continue
 
                 top_windows = self._iter_process_top_windows()
                 if not top_windows:
@@ -2740,7 +2786,17 @@ class AppUIAction:
                 if not use_polling:
                     break
                 if time.monotonic() - start > actual_timeout:
+                    logger.info(
+                        "[click_app_by_attr] 폴링 종료: timeout 초과 (elapsed=%.1fs, attempts=%d)",
+                        time.monotonic() - start,
+                        attempt,
+                    )
                     break
+                logger.info(
+                    "[click_app_by_attr] 폴링 대기: %.1fs 후 재시도 (attempt=%d)",
+                    effective_poll_interval,
+                    attempt,
+                )
                 if effective_poll_interval > 0:
                     time.sleep(effective_poll_interval)
 

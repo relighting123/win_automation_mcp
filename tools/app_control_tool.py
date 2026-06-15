@@ -292,12 +292,14 @@ def click_app_by_attr(
       - 양수: 지정한 간격(초)으로 재시도
     """
     logger.info(
-        "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s",
+        "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s, timeout=%s, poll_interval=%s",
         auto_id,
         title,
         child_window_title,
         child_window_auto_id,
         window_target,
+        timeout,
+        poll_interval,
     )
     action = get_app_ui_action()
 
