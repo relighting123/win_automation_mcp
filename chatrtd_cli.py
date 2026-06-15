@@ -654,6 +654,14 @@ class ChatRTDCLI:
             self.console.print(f"  [err]✗[/err]  [muted]query가 비어 있습니다.[/muted]\n")
             return
 
+        if not self.settings.get("api_key") or not self.settings.get("model"):
+            c = self.console
+            c.print(
+                "  [err]✗[/err]  [muted]/analyze는 LangGraph용 LLM 설정이 필요합니다. "
+                "/models add 후 /models select 를 먼저 실행하세요.[/muted]\n"
+            )
+            return
+
         c = self.console
         c.print()
         c.print(f"  [muted]Analyze[/muted]  [border]{'─' * 48}[/border]")
@@ -671,10 +679,13 @@ class ChatRTDCLI:
         async def _run():
             mcp = MCPClient(self.mcp_url)
             return await run_automation(
-                mcp       = mcp,
-                query     = query,
-                skill_ids = skill_ids,
-                mode      = mode,
+                mcp=mcp,
+                query=query,
+                skill_ids=skill_ids,
+                mode=mode,
+                model=self.settings.get("model"),
+                api_key=self.settings.get("api_key"),
+                base_url=self.settings.get("base_url"),
             )
 
         with c.status(
