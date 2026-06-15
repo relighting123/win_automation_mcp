@@ -1,0 +1,9 @@
+description: "URL을 열어 HTTP GET으로 내용을 조회합니다"
+tools:
+  - tool: fetch_url
+    args:
+      url: { mode: "ai" }
+      method: { mode: "fixed", value: "GET" }
+      as_json: { mode: "ai", value: false }
+      max_chars: { mode: "ai", value: 50000 }
+      timeout: { mode: "ai", value: 30 }

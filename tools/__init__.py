@@ -28,10 +28,17 @@ def register_source_edit_tools(*args, **kwargs):
     return _register_source_edit_tools(*args, **kwargs)
 
 
+def register_url_fetch_tools(*args, **kwargs):
+    from .url_fetch_tool import register_url_fetch_tools as _register_url_fetch_tools
+
+    return _register_url_fetch_tools(*args, **kwargs)
+
+
 __all__ = [
     "register_app_control_tools",
     "register_app_mgmt_tools",
     "register_data_analysis_tools",
     "register_source_edit_tools",
     "register_skill_tools",
+    "register_url_fetch_tools",
 ]
