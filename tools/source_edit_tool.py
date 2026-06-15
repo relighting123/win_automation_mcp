@@ -16,29 +16,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from core.file_path_policy import resolve_allowed_file
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_workspace_file(file_path: str) -> Path:
-    if not file_path or not str(file_path).strip():
-        raise ValueError("file_path는 비어 있을 수 없습니다.")
-
-    target = Path(file_path).expanduser()
-    if not target.is_absolute():
-        target = Path.cwd() / target
-    target = target.resolve()
-
-    workspace = Path.cwd().resolve()
-    if not str(target).startswith(str(workspace)):
-        raise ValueError(f"워크스페이스 외부 경로는 허용되지 않습니다: {file_path}")
-    if not target.exists():
-        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
-    if not target.is_file():
-        raise ValueError(f"file_path는 파일이어야 합니다: {file_path}")
-    return target
 
 
 def _find_occurrence_indices(
@@ -98,7 +81,7 @@ def find_text_in_file(
     )
 
     try:
-        target = _resolve_workspace_file(file_path)
+        target = resolve_allowed_file(file_path)
         if not search_text:
             raise ValueError("search_text는 비어 있을 수 없습니다.")
         if "\n" in search_text:
@@ -211,7 +194,7 @@ def replace_text_in_file(
     )
 
     try:
-        target = _resolve_workspace_file(file_path)
+        target = resolve_allowed_file(file_path)
         if not search_text:
             raise ValueError("search_text는 비어 있을 수 없습니다.")
         if "\n" in search_text:
@@ -409,7 +392,7 @@ def replace_text_with_context(
     )
 
     try:
-        target = _resolve_workspace_file(file_path)
+        target = resolve_allowed_file(file_path)
         if not search_text:
             raise ValueError("search_text는 비어 있을 수 없습니다.")
         if not context_text:
