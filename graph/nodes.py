@@ -300,51 +300,88 @@ class GraphNodes:
             "failed_steps": failed_steps,
         }
 
-    async def plan(self, state: AgentState):
-        """[auto] 모드일 경우 전체 실행 계획(Skill Sequence)을 AI가 자율적으로 수립"""
-        skills_config = self._get_skills_config()
-        valid_ids = list(skills_config.keys())
+    async def _plan_skills_auto(self, state: AgentState, skills_config: Dict[str, Any], valid_ids: List[str]) -> Dict[str, Any]:
+        """질의와 스킬 목록을 기반으로 실행할 skill_ids를 AI가 선정합니다."""
+        logger.info("--- [auto 계획] AI 스킬 계획 시작 ---")
 
-        if state.mode != "auto":
-            # [수정] semi/manual 모드에서도 입력된 skill_ids가 유효한지 검증 및 매핑
-            logger.info(f"[{state.mode} 모드] 기존 스킬 리스트 검증 및 매핑 시작")
-            mapped_ids = []
-            for sid in state.skill_ids:
-                mapped_ids.append(await self._map_skill_id(sid, skills_config))
-            return {"skill_ids": mapped_ids}
-
-        logger.info("--- [auto 모드] AI 스킬 계획 시작 ---")
-        
         if not valid_ids:
             logger.warning("사용 가능한 스킬이 정의되어 있지 않습니다.")
-            return {"skill_ids": []}
+            return {
+                "skill_ids": [],
+                "execution_halted": True,
+                "halt_reason": "config/skills.yaml 또는 skills/*/skill.yaml 에 등록된 스킬이 없습니다.",
+            }
 
         skills_info = "\n".join([f"- {sid}: {info.get('description', '')}" for sid, info in skills_config.items()])
 
-        # [최신 기법] Dynamic Literal을 사용한 Structured Output으로 Hallucination 방지
         SkillPlanModel = self._create_structured_plan_model(valid_ids)
         structured_llm = self.planner_llm.with_structured_output(SkillPlanModel)
-        
+
         try:
             plan = await structured_llm.ainvoke([
                 ("system", PLANNER_SYSTEM_PROMPT),
                 ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
             ])
-            
-            # Pydantic 모델이 리스트를 반환하므로 .skill_ids 접근
+
             result_ids = getattr(plan, "skill_ids", [])
             logger.info(f"AI 계획 결과: {result_ids}")
+            if not result_ids:
+                return {
+                    "skill_ids": [],
+                    "execution_halted": True,
+                    "halt_reason": "질의에 맞는 스킬을 찾지 못했습니다.",
+                }
             return {"skill_ids": result_ids}
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
-            # 실패 시 Fallback: 텍스트 기반으로 받고 수동 매핑
-            raw_res = await self.planner_llm.ainvoke(f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요.")
+            raw_res = await self.planner_llm.ainvoke(
+                f"질의: {state.query}\n목록: {valid_ids}\n적절한 스킬 ID들을 콤마로 구분해 답하세요."
+            )
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
             mapped_ids = [await self._map_skill_id(pid, skills_config) for pid in potential_ids]
+            mapped_ids = [sid for sid in mapped_ids if sid]
+            if not mapped_ids:
+                return {
+                    "skill_ids": [],
+                    "execution_halted": True,
+                    "halt_reason": f"스킬 계획 실패: {e}",
+                }
             return {"skill_ids": mapped_ids}
+
+    async def plan(self, state: AgentState):
+        """실행할 skill_ids를 결정합니다."""
+        skills_config = self._get_skills_config()
+        valid_ids = list(skills_config.keys())
+
+        if state.mode == "auto" or (state.mode == "semi" and not state.skill_ids):
+            if state.mode == "semi" and not state.skill_ids:
+                logger.info("[semi 모드] skill_ids 미지정 — AI 스킬 계획으로 fallback")
+            return await self._plan_skills_auto(state, skills_config, valid_ids)
+
+        logger.info(f"[{state.mode} 모드] 기존 스킬 리스트 검증 및 매핑 시작")
+        mapped_ids = []
+        for sid in state.skill_ids:
+            mapped_ids.append(await self._map_skill_id(sid, skills_config))
+        mapped_ids = [sid for sid in mapped_ids if sid]
+        if not mapped_ids:
+            return {
+                "skill_ids": [],
+                "execution_halted": True,
+                "halt_reason": f"{state.mode} 모드에서 유효한 skill_id를 찾지 못했습니다.",
+            }
+        return {"skill_ids": mapped_ids}
 
     async def check_situation(self, state: AgentState):
         """현재 화면 상태를 분석하여 스킬 실행 가능 여부 체크"""
+        if state.execution_halted or not state.skill_ids:
+            logger.warning("실행할 스킬이 없어 상황 체크를 건너뜁니다.")
+            return {
+                "check_status": state.halt_reason or "no skills to run",
+                "next_action": "abort",
+                "execution_halted": True,
+                "halt_reason": state.halt_reason or "실행할 스킬이 없습니다.",
+            }
+
         current_skill_id = state.skill_ids[state.current_index]
         logger.info(f"--- 상황 체크 시작: {current_skill_id} (Index: {state.current_index}) ---")
         
