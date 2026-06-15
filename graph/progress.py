@@ -82,6 +82,10 @@ def format_graph_progress_event(
         status = str(update.get("check_status", "")).strip()
         if next_action == "manual_bypass":
             lines.append(f"[{label}] manual 모드 — 건너뜀")
+        elif status == "user_skip":
+            lines.append(f"[{label}] 사용자 스킵")
+        elif status == "user_stop":
+            lines.append(f"[{label}] 사용자 중지|err")
         elif status:
             lines.append(f"[{label}] {next_action} — {status[:100]}")
         else:

@@ -1,12 +1,14 @@
 import json
 import logging
 import yaml
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field, create_model
 from langchain_core.prompts import ChatPromptTemplate
 from core.app_session import AppSession
 from core.state import AgentState, ToolCall, ToolCalls, SituationAnalysis
+from core.automation_run_control import get_active_control
 from graph.prompts import (
     PLANNER_SYSTEM_PROMPT, 
     ANALYST_SYSTEM_PROMPT, 
@@ -21,6 +23,13 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 logger = logging.getLogger(__name__)
 
+
+class UserInterrupt(Exception):
+    def __init__(self, action: str) -> None:
+        super().__init__(action)
+        self.action = action
+
+
 class GraphNodes:
     def __init__(self, mcp, execution_llm, planner_llm=None, analyst_llm=None, reporter_llm=None):
         self.mcp = mcp
@@ -32,6 +41,108 @@ class GraphNodes:
         self.llm = self.execution_llm
         self._skills_cache: Optional[Dict[str, Any]] = None
         self._mcp_tools_cache: Optional[List[Dict[str, Any]]] = None
+
+    def _interactive_modes(self) -> set[str]:
+        return {"semi", "manual"}
+
+    def _append_user_skip_history(
+        self,
+        history: List[Dict[str, Any]],
+        skill_id: str,
+        reason: str,
+    ) -> None:
+        history.append(
+            {
+                "skill": skill_id,
+                "tool": "__user_skip__",
+                "output": {
+                    "success": True,
+                    "status": "skipped",
+                    "reason": reason,
+                },
+            }
+        )
+
+    async def _handle_interactive_gate(
+        self,
+        state: AgentState,
+        *,
+        phase: str,
+        skill_id: str = "",
+        step_index: int = 0,
+        step_total: int = 0,
+    ) -> Optional[Dict[str, Any]]:
+        """semi/manual 실행 중 사용자 중지·스킵·일시정지를 처리합니다."""
+        if state.mode not in self._interactive_modes():
+            return None
+
+        control = get_active_control()
+        if control is None:
+            return None
+
+        current_skill = skill_id or (
+            state.skill_ids[state.current_index] if state.skill_ids else ""
+        )
+        control.set_context(
+            skill_id=current_skill,
+            phase=phase,
+            step_index=step_index,
+            step_total=step_total,
+            mode=state.mode,
+        )
+
+        await control.wait_if_paused()
+
+        if control.consume_stop():
+            return {
+                "execution_halted": True,
+                "halt_reason": "사용자가 실행을 중지했습니다.",
+                "next_action": "abort",
+            }
+
+        if control.consume_skip_skill():
+            history = list(state.history)
+            self._append_user_skip_history(
+                history,
+                current_skill,
+                "사용자가 현재 스킬을 건너뜀",
+            )
+            return {
+                "next_action": "skip",
+                "check_status": "user_skip",
+                "history": history,
+            }
+
+        return None
+
+    async def _await_with_interactive_control(self, state: AgentState, awaitable):
+        """LLM/MCP 대기 중에도 일시정지·중지·스킵을 감지합니다."""
+        if state.mode not in self._interactive_modes():
+            return await awaitable
+
+        control = get_active_control()
+        if control is None:
+            return await awaitable
+
+        task = asyncio.create_task(awaitable)
+        try:
+            while not task.done():
+                await control.wait_if_paused()
+                if control.consume_stop():
+                    task.cancel()
+                    raise UserInterrupt("stop")
+                if control.consume_skip_skill():
+                    task.cancel()
+                    raise UserInterrupt("skip")
+                await asyncio.sleep(0.05)
+            return task.result()
+        except asyncio.CancelledError:
+            if control.peek_stop() or control.consume_stop():
+                raise UserInterrupt("stop") from None
+            if control.peek_skip_skill() or control.consume_skip_skill():
+                raise UserInterrupt("skip") from None
+            raise
+
 
     async def _get_mcp_tools(self, refresh: bool = False) -> List[Dict[str, Any]]:
         """MCP 도구 목록을 그래프 실행 동안 캐시합니다."""
@@ -423,6 +534,20 @@ class GraphNodes:
 
         current_skill_id = state.skill_ids[state.current_index]
         logger.info(f"--- 상황 체크 시작: {current_skill_id} (Index: {state.current_index}) ---")
+
+        gate = await self._handle_interactive_gate(
+            state,
+            phase="check",
+            skill_id=current_skill_id,
+        )
+        if gate:
+            if gate.get("next_action") == "skip":
+                return gate
+            return {
+                **gate,
+                "check_status": gate.get("halt_reason", "user_stop"),
+                "next_action": "abort",
+            }
         
         if state.mode == "manual":
             logger.info("[manual 모드] 상황 체크를 건너뛰고 진행합니다.")
@@ -450,10 +575,33 @@ class GraphNodes:
         DynamicAnalysisModel = self._create_structured_analysis_model(valid_ids)
         structured_llm = self.analyst_llm.with_structured_output(DynamicAnalysisModel)
         
-        analysis = await structured_llm.ainvoke([
-            ("system", ANALYST_SYSTEM_PROMPT),
-            ("user", prompt)
-        ])
+        try:
+            analysis = await self._await_with_interactive_control(
+                state,
+                structured_llm.ainvoke([
+                    ("system", ANALYST_SYSTEM_PROMPT),
+                    ("user", prompt)
+                ]),
+            )
+        except UserInterrupt as interrupt:
+            if interrupt.action == "skip":
+                history = list(state.history)
+                self._append_user_skip_history(
+                    history,
+                    current_skill_id,
+                    "사용자가 상황 체크 중 스킬을 건너뜀",
+                )
+                return {
+                    "check_status": "user_skip",
+                    "next_action": "skip",
+                    "history": history,
+                }
+            return {
+                "check_status": "user_stop",
+                "next_action": "abort",
+                "execution_halted": True,
+                "halt_reason": "사용자가 실행을 중지했습니다.",
+            }
         
         logger.info(
             "상황 분석 결과: category=%s, next_action=%s, reason=%s",
@@ -523,6 +671,25 @@ class GraphNodes:
     async def extract(self, state: AgentState):
         """현재 인덱스의 Skill ID를 기반으로 도구 순서를 로드하고 파라미터 추출"""
         current_skill_id = state.skill_ids[state.current_index]
+
+        gate = await self._handle_interactive_gate(
+            state,
+            phase="extract",
+            skill_id=current_skill_id,
+        )
+        if gate:
+            if gate.get("next_action") == "skip":
+                return {
+                    **gate,
+                    "enriched_plan": [],
+                    "tool_sequence": [],
+                }
+            return {
+                **gate,
+                "enriched_plan": [],
+                "tool_sequence": [],
+                "execution_halted": True,
+            }
         
         skill = SequenceSkill(skill_name=current_skill_id)
         steps_metadata = skill.get_steps_with_metadata(state.model_dump())
@@ -573,14 +740,38 @@ class GraphNodes:
         tools_info = json.dumps(skill_tools, indent=2, ensure_ascii=False)
         
         chain = prompt_template | structured_llm
-        enriched = await chain.ainvoke({
-            "query": state.query,
-            "check_status": state.check_status,
-            "skill_id": current_skill_id,
-            "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
-            "allowed_tool_names": json.dumps(tool_sequence, ensure_ascii=False),
-            "tools_info": tools_info
-        })
+        try:
+            enriched = await self._await_with_interactive_control(
+                state,
+                chain.ainvoke({
+                    "query": state.query,
+                    "check_status": state.check_status,
+                    "skill_id": current_skill_id,
+                    "tool_constraints": json.dumps(steps_metadata, indent=2, ensure_ascii=False),
+                    "allowed_tool_names": json.dumps(tool_sequence, ensure_ascii=False),
+                    "tools_info": tools_info
+                }),
+            )
+        except UserInterrupt as interrupt:
+            if interrupt.action == "skip":
+                history = list(state.history)
+                self._append_user_skip_history(
+                    history,
+                    current_skill_id,
+                    "사용자가 파라미터 추출 중 스킬을 건너뜀",
+                )
+                return {
+                    "history": history,
+                    "enriched_plan": [],
+                    "tool_sequence": tool_sequence,
+                    "next_action": "skip",
+                }
+            return {
+                "execution_halted": True,
+                "halt_reason": "사용자가 실행을 중지했습니다.",
+                "enriched_plan": [],
+                "tool_sequence": tool_sequence,
+            }
 
         llm_calls = [call for call in enriched.calls if call.tool in tool_sequence]
         if len(llm_calls) < len(enriched.calls):
@@ -600,13 +791,40 @@ class GraphNodes:
 
     async def run(self, state: AgentState):
         """추출된 파라미터로 MCP 도구 순차 실행"""
+        if state.execution_halted:
+            return {
+                "history": list(state.history),
+                "execution_halted": True,
+                "halt_reason": state.halt_reason,
+            }
+
         results = list(state.history)
         current_skill_id = state.skill_ids[state.current_index]
         
         execution_halted = state.execution_halted
         halt_reason = state.halt_reason
+        total_steps = len(state.enriched_plan)
 
-        for call in state.enriched_plan:
+        for step_no, call in enumerate(state.enriched_plan, start=1):
+            gate = await self._handle_interactive_gate(
+                state,
+                phase="run",
+                skill_id=current_skill_id,
+                step_index=step_no,
+                step_total=total_steps,
+            )
+            if gate:
+                if gate.get("next_action") == "skip":
+                    self._append_user_skip_history(
+                        results,
+                        current_skill_id,
+                        "사용자가 남은 도구 단계를 건너뜀",
+                    )
+                    break
+                execution_halted = True
+                halt_reason = gate.get("halt_reason", "사용자가 실행을 중지했습니다.")
+                break
+
             logger.info("[Run] %s 실행 시작 (args=%s)", call.tool, call.args)
             out = await self.mcp.call_tool(call.tool, call.args)
             decoded = self._decode_tool_output(out)

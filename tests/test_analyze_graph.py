@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.state import AgentState
-from graph.nodes import GraphNodes
+from core.state import AgentState, ToolCall
+from graph.nodes import GraphNodes, UserInterrupt
+from core.automation_run_control import begin_run_control, end_run_control
 
 
 class AnalyzeGraphPlanTest(unittest.IsolatedAsyncioTestCase):
@@ -98,6 +99,58 @@ class AnalyzeGraphPlanTest(unittest.IsolatedAsyncioTestCase):
         result = await self.nodes.check_situation(state)
         self.assertEqual(result["next_action"], "abort")
         self.assertTrue(result["execution_halted"])
+
+
+class AnalyzeGraphInteractiveControlTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.nodes = GraphNodes(mcp=MagicMock(), execution_llm=MagicMock())
+        self.control = begin_run_control("semi")
+
+    def tearDown(self) -> None:
+        end_run_control()
+
+    async def test_run_stops_when_user_requests_stop(self) -> None:
+        state = AgentState(
+            query="demo",
+            skill_ids=["demo_skill"],
+            mode="semi",
+            enriched_plan=[
+                ToolCall(tool="wait", args={"seconds": 0.01}),
+                ToolCall(tool="wait", args={"seconds": 0.01}),
+            ],
+        )
+        self.control.request_stop()
+        result = await self.nodes.run(state)
+        self.assertTrue(result["execution_halted"])
+        self.assertIn("중지", result["halt_reason"])
+
+    async def test_run_skips_remaining_steps_on_user_skip(self) -> None:
+        self.nodes.mcp.call_tool = AsyncMock(return_value={"success": True})
+        state = AgentState(
+            query="demo",
+            skill_ids=["demo_skill"],
+            mode="manual",
+            enriched_plan=[
+                ToolCall(tool="wait", args={"seconds": 0.01}),
+                ToolCall(tool="wait", args={"seconds": 0.01}),
+            ],
+        )
+        self.control.request_skip_skill()
+        result = await self.nodes.run(state)
+        self.assertFalse(result["execution_halted"])
+        self.nodes.mcp.call_tool.assert_not_awaited()
+        self.assertTrue(any(item.get("tool") == "__user_skip__" for item in result["history"]))
+
+    async def test_manual_check_situation_honors_user_skip(self) -> None:
+        state = AgentState(
+            query="demo",
+            skill_ids=["demo_skill"],
+            mode="manual",
+            current_index=0,
+        )
+        self.control.request_skip_skill()
+        result = await self.nodes.check_situation(state)
+        self.assertEqual(result["next_action"], "skip")
 
 
 if __name__ == "__main__":
