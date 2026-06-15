@@ -269,7 +269,7 @@ chatRTD --api-key sk-xxx           # 이 세션만 API 키 변경
 |------|------|
 | `auto` | LLM이 자유롭게 계획 수립 및 개입 |
 | `semi` | 순차 실행 + 상황별 LLM 개입 (기본값) |
-| `manual` | 지정한 스킬만 순서대로 실행 |
+| `manual` | 질의로 스킬 선택, YAML 단계 엄격 실행 (상황 체크·LLM 인자 추출 생략) |
 
 ### 사용법
 
@@ -277,7 +277,7 @@ chatRTD --api-key sk-xxx           # 이 세션만 API 키 변경
 [task] > /analyze 메모장 열어서 오늘 날짜 입력해줘
 [task] > /analyze semi 로그인 후 재무 분석 실행하고 결과 내보내기
 [task] > /analyze auto 상황을 판단해서 최적의 분석 방법으로 실행해줘
-[task] > /analyze manual login_skill 지정 스킬로만 실행
+[task] > /analyze manual 로그인 후 데이터 파일 열어줘
 ```
 
 ### 자동화 그래프 아키텍처
