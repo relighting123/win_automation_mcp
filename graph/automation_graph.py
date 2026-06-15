@@ -102,7 +102,15 @@ async def run_automation(
         if not profile_settings.get("provider"):
             profile_settings["provider"] = execution_settings["provider"]
 
-    resolved_mode = mode or auto_settings["mode"]
+    resolved_mode = (mode if mode is not None else auto_settings["mode"]).strip().lower()
+    if resolved_mode not in {"auto", "semi", "manual"}:
+        resolved_mode = "semi"
+    logger.info(
+        "automation graph 실행: mode=%s (요청=%s, app_config=%s)",
+        resolved_mode,
+        mode,
+        auto_settings["mode"],
+    )
     
     agent = MiniHybridAgent(
         mcp=mcp,
@@ -127,7 +135,7 @@ async def run_automation(
     if on_progress is None:
         final = await agent.graph.ainvoke(initial_state)
     else:
-        on_progress("자동화 그래프 시작")
+        on_progress(f"자동화 그래프 시작 (mode={resolved_mode})")
         progress_context: Dict[str, Any] = {"history_len": 0}
         accumulated: Dict[str, Any] = dict(initial_state)
         async for chunk in agent.graph.astream(initial_state, stream_mode="updates"):
@@ -166,7 +174,6 @@ if __name__ == "__main__":
             mcp=mcp_client,
             query=my_query,
             skill_ids=my_skills,
-            mode=auto_settings["mode"]
         )
         print(f"\n[AI 자동화 보고서]\n{report_payload['report']}")
         print(f"\n[구조화 상세]\n{report_payload['report_details']}")

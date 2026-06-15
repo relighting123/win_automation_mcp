@@ -380,7 +380,11 @@ class GraphNodes:
         skills_config = self._get_skills_config()
         valid_ids = list(skills_config.keys())
 
-        if state.mode in {"auto", "manual"} or (state.mode == "semi" and not state.skill_ids):
+        use_ai_plan = (
+            state.mode == "auto"
+            or (state.mode in {"semi", "manual"} and not state.skill_ids)
+        )
+        if use_ai_plan:
             if state.mode == "semi" and not state.skill_ids:
                 logger.info("[semi 모드] skill_ids 미지정 — AI 스킬 계획으로 fallback")
             elif state.mode == "manual" and not state.skill_ids:

@@ -149,9 +149,25 @@ def get_mcp_settings(config_path: Optional[str] = None) -> Dict[str, str]:
 def get_automation_settings(config_path: Optional[str] = None) -> Dict[str, str]:
     """
     자동화 모드 설정을 반환합니다.
+
+    우선순위: load_app_config → AppSession 싱글톤 config (이미 로드된 경우)
     """
     config = load_app_config(config_path)
     auto_config = config.get("automation", {}) if isinstance(config, dict) else {}
-    mode = auto_config.get("mode", "semi")
-    return {"mode": str(mode)}
+
+    if not auto_config:
+        try:
+            from core.app_session import AppSession
+
+            session_config = AppSession.get_instance().config or {}
+            if isinstance(session_config, dict):
+                auto_config = session_config.get("automation", {}) or {}
+        except Exception:
+            pass
+
+    raw_mode = auto_config.get("mode", "semi") if isinstance(auto_config, dict) else "semi"
+    mode = str(raw_mode).strip().lower()
+    if mode not in {"auto", "semi", "manual"}:
+        mode = "semi"
+    return {"mode": mode}
 

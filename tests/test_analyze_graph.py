@@ -54,6 +54,27 @@ class AnalyzeGraphPlanTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["execution_halted"])
         self.assertEqual(result["skill_ids"], [])
 
+    async def test_manual_with_skill_ids_uses_provided_skills_not_ai_plan(self) -> None:
+        state = AgentState(query="demo run", skill_ids=["demo_skill"], mode="manual")
+        with patch.object(
+            self.nodes,
+            "_get_skills_config",
+            return_value={"demo_skill": {"tools": [{"tool": "wait"}]}},
+        ):
+            with patch.object(
+                self.nodes,
+                "_plan_skills_auto",
+                new=AsyncMock(return_value={"skill_ids": ["other_skill"]}),
+            ) as auto_plan:
+                with patch.object(
+                    self.nodes,
+                    "_map_skill_id",
+                    new=AsyncMock(return_value="demo_skill"),
+                ):
+                    result = await self.nodes.plan(state)
+        auto_plan.assert_not_awaited()
+        self.assertEqual(result["skill_ids"], ["demo_skill"])
+
     async def test_map_skill_id_ignores_unknown_query_text(self) -> None:
         with patch.object(self.nodes, "_get_skills_config", return_value={"demo_skill": {}}):
             mapped = await self.nodes._map_skill_id("분석해줘", {"demo_skill": {}})
