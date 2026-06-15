@@ -30,6 +30,22 @@ class AnalyzeGraphPlanTest(unittest.IsolatedAsyncioTestCase):
         auto_plan.assert_awaited_once()
         self.assertEqual(result["skill_ids"], ["demo_skill"])
 
+    async def test_manual_without_skill_ids_falls_back_to_auto_plan(self) -> None:
+        state = AgentState(query="demo run", skill_ids=[], mode="manual")
+        with patch.object(
+            self.nodes,
+            "_get_skills_config",
+            return_value={"demo_skill": {"description": "demo", "tools": [{"tool": "wait"}]}},
+        ):
+            with patch.object(
+                self.nodes,
+                "_plan_skills_auto",
+                new=AsyncMock(return_value={"skill_ids": ["demo_skill"]}),
+            ) as auto_plan:
+                result = await self.nodes.plan(state)
+        auto_plan.assert_awaited_once()
+        self.assertEqual(result["skill_ids"], ["demo_skill"])
+
     async def test_manual_with_unknown_skill_halts(self) -> None:
         state = AgentState(query="run", skill_ids=["missing_skill"], mode="manual")
         with patch.object(self.nodes, "_get_skills_config", return_value={"demo_skill": {"tools": [{"tool": "wait"}]}}):

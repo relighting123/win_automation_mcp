@@ -135,7 +135,7 @@ HELP_TEXT = f"""
   [text]/analyze <query>[/text]                    auto 모드 — graph가 스킬 자동 선택·조합 (기본)
   [text]/analyze auto <query>[/text]               auto 모드 — 스킬 자동 선택·조합
   [text]/analyze semi <query>[/text]               semi 모드 — YAML 단계 엄격 실행
-  [text]/analyze manual <skill_id> [query][/text]  manual 모드 — 스킬 1개 고정 실행
+  [text]/analyze manual <query>[/text]               manual 모드 — 질의로 스킬 선택, YAML 단계 엄격 실행
 
 [secondary]Config[/secondary]
   [text]/config[/text]                   현재 설정 확인
@@ -157,7 +157,7 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/analyze",        "자동화 실행 (스킬 자동 선택)"),
     ("/analyze auto",   "auto 모드 — 스킬 자동 선택·조합"),
     ("/analyze semi",   "semi 모드 — YAML 단계 엄격 실행"),
-    ("/analyze manual", "manual 모드 — 스킬 고정 실행"),
+    ("/analyze manual", "manual 모드 — 질의로 스킬 선택·YAML 엄격 실행"),
     ("/config",         "현재 설정 확인"),
     ("/config set",     "설정 변경  (/config set mcp-url <url>)"),
 ]
@@ -637,18 +637,8 @@ class ChatRTDCLI:
             mode  = "auto"
             rest  = args
 
-        # manual 모드: 첫 토큰을 skill_id로 사용
-        if mode == "manual":
-            if not rest:
-                self.console.print(
-                    f"  [err]usage:[/err] /analyze manual <skill_id> [query]\n"
-                )
-                return
-            skill_ids = [rest[0]]
-            query     = " ".join(rest[1:]) or rest[0]
-        else:
-            skill_ids = []
-            query     = " ".join(rest)
+        skill_ids = []
+        query = " ".join(rest)
 
         if not query:
             self.console.print(f"  [err]✗[/err]  [muted]query가 비어 있습니다.[/muted]\n")

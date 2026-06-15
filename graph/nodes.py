@@ -349,7 +349,7 @@ class GraphNodes:
                     "execution_halted": True,
                     "halt_reason": (
                         f"질의 '{state.query}'에 맞는 스킬을 찾지 못했습니다. "
-                        f"/skills 로 확인 후 /analyze manual <skill_id> <질의> 를 사용하세요."
+                        f"/skills 로 확인 후 /analyze manual <질의> 를 사용하세요."
                     ),
                 }
             return {"skill_ids": result_ids}
@@ -370,7 +370,7 @@ class GraphNodes:
                     "skill_ids": [],
                     "execution_halted": True,
                     "halt_reason": (
-                        f"스킬 계획 실패: {e}. /analyze manual <skill_id> <질의> 형식을 사용하세요."
+                        f"스킬 계획 실패: {e}. /analyze manual <질의> 형식을 사용하세요."
                     ),
                 }
             return {"skill_ids": mapped_ids}
@@ -380,9 +380,11 @@ class GraphNodes:
         skills_config = self._get_skills_config()
         valid_ids = list(skills_config.keys())
 
-        if state.mode == "auto" or (state.mode == "semi" and not state.skill_ids):
+        if state.mode in {"auto", "manual"} or (state.mode == "semi" and not state.skill_ids):
             if state.mode == "semi" and not state.skill_ids:
                 logger.info("[semi 모드] skill_ids 미지정 — AI 스킬 계획으로 fallback")
+            elif state.mode == "manual" and not state.skill_ids:
+                logger.info("[manual 모드] skill_ids 미지정 — AI 스킬 계획으로 스킬 선택")
             return await self._plan_skills_auto(state, skills_config, valid_ids)
 
         logger.info(f"[{state.mode} 모드] 기존 스킬 리스트 검증 및 매핑 시작")
@@ -399,7 +401,7 @@ class GraphNodes:
                 "execution_halted": True,
                 "halt_reason": (
                     f"{state.mode} 모드에서 유효한 skill_id를 찾지 못했습니다. "
-                    f"/skills 로 ID를 확인하고 /analyze manual <skill_id> <질의> 를 사용하세요."
+                    f"/skills 로 확인하고 /analyze manual <질의> 를 사용하세요."
                 ),
             }
         return {"skill_ids": mapped_ids}
@@ -528,7 +530,7 @@ class GraphNodes:
             raise ValueError(
                 f"Skill '{current_skill_id}'에 유효한 도구가 없습니다. "
                 f"질의 문장을 skill_id로 쓰지 말고 /skills 에서 확인한 ID를 사용하세요. "
-                f"예: /analyze manual demo_app_control_tools {state.query!r}. "
+                f"예: /analyze manual {state.query!r}. "
                 f"사용 가능 스킬: {available}"
             )
 
