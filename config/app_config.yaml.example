@@ -68,6 +68,13 @@ automation:
   # 자동화 모드 설정 (auto: 자유 계획 및 개입, semi: 순차 실행 + 상황 개입, manual: 순차 실행 전용)
   mode: "manual"
 
+file_access:
+  # 소스 파일 검색/치환(find_text_in_file 등) 허용 경로
+  allow_workspace: true
+  allowed_paths:
+    - "D:\\개발\\폴더"
+    # - "C:\\Rules"
+
 llm:
   # 기본 provider: OpenAI 호환 API
   provider: "openai_compatible"
