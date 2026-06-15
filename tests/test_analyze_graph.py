@@ -32,11 +32,23 @@ class AnalyzeGraphPlanTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_manual_with_unknown_skill_halts(self) -> None:
         state = AgentState(query="run", skill_ids=["missing_skill"], mode="manual")
-        with patch.object(self.nodes, "_get_skills_config", return_value={"demo_skill": {}}):
+        with patch.object(self.nodes, "_get_skills_config", return_value={"demo_skill": {"tools": [{"tool": "wait"}]}}):
             with patch.object(self.nodes, "_map_skill_id", new=AsyncMock(return_value="")):
                 result = await self.nodes.plan(state)
         self.assertTrue(result["execution_halted"])
         self.assertEqual(result["skill_ids"], [])
+
+    async def test_map_skill_id_ignores_unknown_query_text(self) -> None:
+        with patch.object(self.nodes, "_get_skills_config", return_value={"demo_skill": {}}):
+            mapped = await self.nodes._map_skill_id("분석해줘", {"demo_skill": {}})
+        self.assertEqual(mapped, "")
+
+    async def test_runnable_skill_ids_require_tools(self) -> None:
+        skills = {
+            "empty_skill": {"description": "no tools"},
+            "demo_skill": {"tools": [{"tool": "wait"}]},
+        }
+        self.assertEqual(self.nodes._get_runnable_skill_ids(skills), ["demo_skill"])
 
     async def test_check_situation_skips_when_no_skills(self) -> None:
         state = AgentState(
