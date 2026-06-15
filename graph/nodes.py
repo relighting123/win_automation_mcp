@@ -314,7 +314,7 @@ class GraphNodes:
 
     async def _plan_skills_auto(self, state: AgentState, skills_config: Dict[str, Any], valid_ids: List[str]) -> Dict[str, Any]:
         """질의와 스킬 목록을 기반으로 실행할 skill_ids를 AI가 선정합니다."""
-        logger.info("--- [auto 계획] AI 스킬 계획 시작 ---")
+        logger.info("--- [%s 계획] AI 스킬 계획 시작 ---", state.mode)
 
         runnable_ids = self._get_runnable_skill_ids(skills_config)
         if not runnable_ids:

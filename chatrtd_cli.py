@@ -132,7 +132,7 @@ HELP_TEXT = f"""
   [text]/models remove <name>[/text]                                     모델 삭제
 
 [secondary]Analyze (automation graph)[/secondary]
-  [text]/analyze <query>[/text]                    auto 모드 — graph가 스킬 자동 선택·조합 (기본)
+  [text]/analyze <query>[/text]                    app_config 모드 (기본 semi) — 스킬 자동 선택
   [text]/analyze auto <query>[/text]               auto 모드 — 스킬 자동 선택·조합
   [text]/analyze semi <query>[/text]               semi 모드 — YAML 단계 엄격 실행
   [text]/analyze manual <query>[/text]               manual 모드 — 질의로 스킬 선택, YAML 단계 엄격 실행
@@ -628,8 +628,11 @@ class ChatRTDCLI:
     # ── /analyze ──────────────────────────────────────────────────────────────
 
     def _cmd_analyze(self, args: list) -> None:
-        """automation graph 실행. 모드 선택 가능 (기본: semi)"""
+        """automation graph 실행. 모드 선택 가능 (미지정 시 app_config.automation.mode)"""
+        from core.llm_config import get_automation_settings
+
         _MODES = {"auto", "semi", "manual"}
+        config_mode = get_automation_settings().get("mode", "semi")
 
         if not args:
             self.console.print(
@@ -637,13 +640,13 @@ class ChatRTDCLI:
             )
             return
 
-        # 첫 번째 토큰이 모드명이면 분리, 아니면 auto 기본값 (스킬 ID 없이 질의만으로 실행)
+        # 첫 번째 토큰이 모드명이면 분리, 아니면 app_config.automation.mode 사용
         if args[0].lower() in _MODES:
-            mode  = args[0].lower()
-            rest  = args[1:]
+            mode = args[0].lower()
+            rest = args[1:]
         else:
-            mode  = "auto"
-            rest  = args
+            mode = config_mode if config_mode in _MODES else "semi"
+            rest = args
 
         skill_ids = []
         query = " ".join(rest)
