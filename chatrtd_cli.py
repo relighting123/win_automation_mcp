@@ -365,6 +365,14 @@ class ChatRTDCLI:
             self._automation_mcp = MCPClient(self.mcp_url)
         return self._automation_mcp
 
+    def _print_analyze_progress(self, line: str) -> None:
+        """automation graph 중간 진행 로그를 CLI에 즉시 출력합니다."""
+        tone = "secondary"
+        if "|" in line:
+            line, tone_key = line.rsplit("|", 1)
+            tone = {"ok": "ok", "err": "err", "muted": "muted"}.get(tone_key, "secondary")
+        self.console.print(f"  [muted]›[/muted] [{tone}]{line}[/{tone}]")
+
     def _init_llm_client(self) -> None:
         self.model  = self.settings["model"]
         self.client = OpenAI(
@@ -676,17 +684,14 @@ class ChatRTDCLI:
                 model=self.settings.get("model"),
                 api_key=self.settings.get("api_key"),
                 base_url=self.settings.get("base_url"),
+                on_progress=self._print_analyze_progress,
             )
 
-        with c.status(
-            f"[muted]analyzing... ({mode})[/muted]", spinner="dots",
-            spinner_style=f"bold {_C['primary']}",
-        ):
-            try:
-                result = asyncio.run(_run())
-            except Exception as e:
-                c.print(f"  [err]✗  automation error:[/err] {e}\n")
-                return
+        try:
+            result = asyncio.run(_run())
+        except Exception as e:
+            c.print(f"  [err]✗  automation error:[/err] {e}\n")
+            return
 
         report  = result.get("report", "")
         details = result.get("report_details", {})
@@ -695,15 +700,25 @@ class ChatRTDCLI:
         c.print(f"  {report}")
 
         if details:
-            history = details.get("history", [])
-            if history:
+            history = details.get("execution", {}).get("failed_steps", [])
+            executed = details.get("execution", {}).get("executed_steps")
+            if executed is not None:
                 c.print()
-                c.print(f"  [muted]─ execution log ({'─' * 30})[/muted]")
+                c.print(
+                    f"  [muted]─ summary: executed={executed}, "
+                    f"failed={len(history)}[/muted]"
+                )
+            elif history:
+                c.print()
+                c.print(f"  [muted]─ failed steps ({'─' * 28})[/muted]")
                 for item in history:
-                    skill   = item.get("skill_id", "")
-                    status  = item.get("status", "")
-                    color   = "ok" if status in ("done", "success") else "err"
-                    c.print(f"  [tool]◆[/tool]  [secondary]{skill:<30}[/secondary] [{color}]{status}[/{color}]")
+                    skill = item.get("skill", "")
+                    tool = item.get("tool", "")
+                    reason = item.get("reason", "")
+                    c.print(
+                        f"  [tool]◆[/tool]  [secondary]{skill}[/secondary] "
+                        f"[muted]{tool}[/muted] [err]{reason}[/err]"
+                    )
         c.print()
 
     # ── /models ───────────────────────────────────────────────────────────────
