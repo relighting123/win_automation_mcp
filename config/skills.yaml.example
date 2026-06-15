@@ -140,14 +140,7 @@ skills:
           delimiter: null
           header: true
           max_preview_rows: 20
-
-  analyze_json_table:
-    description: "JSON 표 데이터를 로드해 분석 리포트에 반영 (chatRTD 캐시 저장)"
-    tools:
-      - tool: load_json_as_dataframe
-        args:
-          json_data: { mode: "ai", value: null }
-          max_preview_rows: 20
+          save_json: true
 
   open_guide_based_rule:
     description: "사용자 요청에 따라 가이드 문서를 참조하여 적절한 .rul 파일을 선택하고 실행"

@@ -639,30 +639,10 @@ class GraphNodes:
         query_lower = state.query.lower()
         query_wants_clipboard = any(
             token in query_lower
-            for token in [
-                "ctrl+c",
-                "ctrl c",
-                "clipboard",
-                "복사",
-                "데이터프레임",
-                "dataframe",
-                "표",
-                "json",
-                "캐시",
-                "cache",
-            ]
-        )
-        dataset_tools = (
-            "read_clipboard_as_dataframe",
-            "load_json_as_dataframe",
-            "get_cached_dataset_summary",
+            for token in ["ctrl+c", "ctrl c", "clipboard", "복사", "데이터프레임", "dataframe", "표"]
         )
         clipboard_entry = next(
-            (
-                h
-                for h in reversed(history)
-                if h.get("tool") in dataset_tools
-            ),
+            (h for h in reversed(history) if h.get("tool") == "read_clipboard_as_dataframe"),
             None,
         )
 
@@ -681,10 +661,7 @@ class GraphNodes:
                     "raw": decoded_clipboard,
                 }
         elif query_wants_clipboard:
-            live_clipboard = await self.mcp.call_tool("get_cached_dataset_summary", {})
-            decoded_cache = self._decode_tool_output(live_clipboard)
-            if not (isinstance(decoded_cache, dict) and decoded_cache.get("success")):
-                live_clipboard = await self.mcp.call_tool("read_clipboard_as_dataframe", {})
+            live_clipboard = await self.mcp.call_tool("read_clipboard_as_dataframe", {})
             decoded_clipboard = self._decode_tool_output(live_clipboard)
             if isinstance(decoded_clipboard, dict):
                 clipboard_data = decoded_clipboard
