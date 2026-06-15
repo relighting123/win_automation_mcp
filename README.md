@@ -263,6 +263,16 @@ chatRTD --api-key sk-xxx           # 이 세션만 API 키 변경
 
 복잡한 다단계 자동화는 `/analyze` 명령어로 LangGraph 오케스트레이터를 호출합니다.
 
+실행 중 chatRTD CLI에는 스킬 계획, 상황 체크, 도구 실행 등 **중간 진행 로그**가 실시간으로 표시됩니다.
+
+```
+› 자동화 그래프 시작
+› [계획] 스킬 선택: login_skill, open_data
+› [상황 체크] proceed — ...
+› [실행] (login_skill) launch_application — ok
+› [실행] (login_skill) click_app_by_attr — not found
+```
+
 ### 모드 선택
 
 | 모드 | 설명 |

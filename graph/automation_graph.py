@@ -2,6 +2,7 @@ import logging
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any, Callable, Dict, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.mcp_client import MCPClient
 from core.llm_config import (
@@ -13,9 +14,11 @@ from core.llm_config import (
 try:
     from .builder import build_automation_graph
     from .llm_factory import create_chat_llm
+    from .progress import format_graph_progress_event
 except ImportError:
     from graph.builder import build_automation_graph
     from graph.llm_factory import create_chat_llm
+    from graph.progress import format_graph_progress_event
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -53,6 +56,7 @@ async def run_automation(
     base_url=None,
     provider=None,
     include_details: bool = True,
+    on_progress: Optional[Callable[[str], None]] = None,
 ):
     """
     외부에서 자동화 워크플로우를 실행하기 위한 엔트리 포인트
@@ -114,12 +118,31 @@ async def run_automation(
     elif hasattr(mcp, "list_tools") and callable(getattr(mcp, "list_tools")):
         await mcp.list_tools()
     
-    # 그래프 실행
-    final = await agent.graph.ainvoke({
-        "query": query, 
-        "skill_ids": skill_ids, 
-        "mode": resolved_mode
-    })
+    initial_state = {
+        "query": query,
+        "skill_ids": skill_ids,
+        "mode": resolved_mode,
+    }
+
+    if on_progress is None:
+        final = await agent.graph.ainvoke(initial_state)
+    else:
+        on_progress("자동화 그래프 시작")
+        progress_context: Dict[str, Any] = {"history_len": 0}
+        accumulated: Dict[str, Any] = dict(initial_state)
+        async for chunk in agent.graph.astream(initial_state, stream_mode="updates"):
+            for node_name, update in chunk.items():
+                if not isinstance(update, dict):
+                    continue
+                accumulated.update(update)
+                for line in format_graph_progress_event(
+                    node_name,
+                    update,
+                    context=progress_context,
+                ):
+                    on_progress(line)
+        final = accumulated
+        on_progress("자동화 그래프 완료")
     if include_details:
         return {
             "report": final.get("report", ""),
