@@ -313,5 +313,44 @@ class ClickAtFocusTest(unittest.TestCase):
         uia_focus.assert_not_called()
 
 
+class ForegroundFocusTest(unittest.TestCase):
+    def setUp(self) -> None:
+        session = MagicMock()
+        session.is_connected = True
+        session.config = {"timeouts": {"after_focus_delay": 0, "ui_delay": 0}}
+        session.app = MagicMock()
+        session.app.process = 4242
+        session.app.windows.return_value = []
+        self.action = AppUIAction(session=session)
+
+    def test_is_hwnd_foreground_accepts_same_root(self) -> None:
+        fake_win32gui = MagicMock()
+        fake_win32gui.GetForegroundWindow.return_value = 2000
+        with patch.dict(sys.modules, {"win32gui": fake_win32gui}):
+            with patch.object(self.action, "_get_hwnd_root", side_effect=lambda h: 1000 if h == 2000 else h):
+                with patch.object(self.action, "_get_connected_process_ids", return_value={4242}):
+                    with patch.object(self.action, "_pid_from_hwnd", return_value=4242):
+                        self.assertTrue(self.action._is_hwnd_foreground(1000))
+
+    def test_is_hwnd_foreground_accepts_connected_process_pid(self) -> None:
+        fake_win32gui = MagicMock()
+        fake_win32gui.GetForegroundWindow.return_value = 3000
+        with patch.dict(sys.modules, {"win32gui": fake_win32gui}):
+            with patch.object(self.action, "_get_hwnd_root", side_effect=lambda h: h):
+                with patch.object(self.action, "_get_connected_process_ids", return_value={4242}):
+                    with patch.object(self.action, "_pid_from_hwnd", side_effect=lambda h: 4242 if h == 3000 else 9999):
+                        self.assertTrue(self.action._is_hwnd_foreground(5000))
+
+    def test_activate_window_prefers_bring_hwnd(self) -> None:
+        wrapper = MagicMock()
+        wrapper.is_minimized.return_value = False
+        with patch.object(self.action, "_get_wrapper_handle", return_value=7777):
+            with patch.object(self.action, "_bring_hwnd_to_foreground", return_value=True) as bring:
+                activated = self.action._activate_window(wrapper, max_attempts=1)
+        self.assertTrue(activated)
+        bring.assert_called_once_with(7777)
+        wrapper.set_focus.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

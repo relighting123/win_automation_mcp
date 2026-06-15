@@ -888,6 +888,66 @@ class AppUIAction:
         except Exception:
             return None
 
+    def _get_hwnd_root(self, hwnd: int) -> int:
+        """top-level(root) HWND를 반환합니다."""
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            GA_ROOT = 2
+            return int(user32.GetAncestor(int(hwnd), GA_ROOT) or int(hwnd))
+        except Exception:
+            return int(hwnd)
+
+    def _release_foreground_lock(self) -> None:
+        """Windows foreground lock 우회를 위해 Alt 키를 잠깐 누릅니다."""
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            VK_MENU = 0x12
+            KEYEVENTF_KEYUP = 0x0002
+            user32.keybd_event(VK_MENU, 0, 0, 0)
+            user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        except Exception:
+            pass
+
+    def _switch_to_hwnd(self, hwnd: int) -> None:
+        """SetForegroundWindow가 막힐 때 SwitchToThisWindow로 보조 전환합니다."""
+        try:
+            import ctypes
+
+            ctypes.windll.user32.SwitchToThisWindow(int(hwnd), True)
+        except Exception:
+            pass
+
+    def _is_hwnd_foreground(self, hwnd: int) -> bool:
+        """대상 HWND(또는 동일 root/프로세스)가 foreground인지 확인합니다."""
+        try:
+            import win32gui
+
+            fg_hwnd = win32gui.GetForegroundWindow()
+            if not fg_hwnd:
+                return False
+
+            target_root = self._get_hwnd_root(hwnd)
+            fg_root = self._get_hwnd_root(fg_hwnd)
+            if int(fg_hwnd) == int(hwnd) or fg_root == target_root:
+                return True
+
+            pids = self._get_connected_process_ids()
+            if not pids:
+                return False
+
+            fg_pid = self._pid_from_hwnd(fg_hwnd)
+            target_pid = self._pid_from_hwnd(hwnd)
+            if fg_pid and (fg_pid in pids or (target_pid and fg_pid == target_pid)):
+                return True
+            return False
+        except Exception as e:
+            logger.debug("hwnd foreground 확인 실패: %s", e)
+            return False
+
     def _bring_hwnd_to_foreground(self, hwnd: int) -> bool:
         """
         임의의 top-level hwnd(모달 다이얼로그 포함)를 foreground로 가져옵니다.
@@ -902,11 +962,12 @@ class AppUIAction:
 
             user32 = ctypes.windll.user32
             kernel32 = ctypes.windll.kernel32
-            GA_ROOT = 2
-            root = int(user32.GetAncestor(int(hwnd), GA_ROOT) or int(hwnd))
+            root = self._get_hwnd_root(hwnd)
 
             if win32gui.IsIconic(root):
                 win32gui.ShowWindow(root, win32con.SW_RESTORE)
+
+            self._release_foreground_lock()
 
             fg = user32.GetForegroundWindow()
             target_tid = user32.GetWindowThreadProcessId(root, None)
@@ -924,7 +985,16 @@ class AppUIAction:
                 for tid in attached:
                     user32.AttachThreadInput(tid, target_tid, False)
 
-            return int(user32.GetForegroundWindow()) == root
+            after_focus_delay = float(
+                self._session.config.get("timeouts", {}).get("after_focus_delay", 0.1)
+            )
+            for _ in range(3):
+                if self._is_hwnd_foreground(root):
+                    return True
+                self._switch_to_hwnd(root)
+                time.sleep(after_focus_delay)
+
+            return self._is_hwnd_foreground(root)
         except Exception as e:
             logger.debug("[click_at_focus] foreground 전환 실패(hwnd=%s): %s", hwnd, e)
             return False
@@ -1280,29 +1350,16 @@ class AppUIAction:
 
     def _is_wrapper_foreground(self, wrapper: Any) -> bool:
         """대상 윈도우(또는 동일 프로세스)가 foreground인지 확인합니다."""
-        try:
-            import win32gui
-            import win32process
-
-            fg_hwnd = win32gui.GetForegroundWindow()
-            if not fg_hwnd:
-                return False
-
-            wrapper_hwnd = self._get_wrapper_handle(wrapper)
-            if wrapper_hwnd and fg_hwnd == wrapper_hwnd:
-                return True
-
-            _, fg_pid = win32process.GetWindowThreadProcessId(fg_hwnd)
-            target_pid = getattr(self._session.app, "process", None)
-            return bool(target_pid and fg_pid == target_pid)
-        except Exception as e:
-            logger.debug("foreground 확인 실패: %s", e)
-            return False
+        wrapper_hwnd = self._get_wrapper_handle(wrapper)
+        if wrapper_hwnd:
+            return self._is_hwnd_foreground(wrapper_hwnd)
+        return False
 
     def _activate_window(self, wrapper: Any, *, max_attempts: int = 3) -> bool:
         """윈도우를 앞으로 가져오고 foreground 전환을 재시도합니다."""
         after_focus_delay = self._session.config.get("timeouts", {}).get("after_focus_delay", 0.5)
         ui_delay = self._session.config.get("timeouts", {}).get("ui_delay", 0.5)
+        wrapper_hwnd = self._get_wrapper_handle(wrapper)
 
         for attempt in range(1, max_attempts + 1):
             is_minimized = self._safe_call(lambda: wrapper.is_minimized(), False)
@@ -1310,6 +1367,10 @@ class AppUIAction:
                 logger.info("윈도우가 최소화되어 있어 복구를 시도합니다.")
                 self._safe_call(wrapper.restore, None)
                 time.sleep(ui_delay)
+
+            if wrapper_hwnd and self._bring_hwnd_to_foreground(wrapper_hwnd):
+                self._session.cached_window = wrapper
+                return True
 
             try:
                 wrapper.set_focus()
