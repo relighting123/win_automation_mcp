@@ -6,7 +6,7 @@
 
 import logging
 import json
-import asyncio
+import time as time_lib
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 from actions.app_ui_action import get_app_ui_action
@@ -17,20 +17,74 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def wait(seconds: float = 0.5) -> str:
+def _coerce_wait_seconds(
+    seconds: Any = None,
+    *,
+    duration: Any = None,
+    delay: Any = None,
+    time_seconds: Any = None,
+) -> float:
+    """wait 도구의 대기 시간(초)을 정규화합니다."""
+    candidates = {
+        "seconds": seconds,
+        "duration": duration,
+        "delay": delay,
+        "time": time_seconds,
+    }
+    for name, value in candidates.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a number")
+        if isinstance(value, (int, float)):
+            return max(0.0, float(value))
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.lower() in {"null", "none"}:
+                continue
+            return max(0.0, float(stripped))
+        raise ValueError(f"{name} must be a number, got {type(value).__name__}")
+    return 1.0
+
+
+def wait(
+    seconds: Any = None,
+    duration: Any = None,
+    delay: Any = None,
+    time: Any = None,
+) -> str:
     """
-    지정한 시간(초) 동안 대기합니다.
+    지정한 시간(초) 동안 실제로 대기합니다.
     스킬 시퀀스나 UI 로딩 대기 등에 사용합니다.
+
+    seconds/duration/delay/time 중 하나로 대기 시간을 지정할 수 있습니다.
+    모두 생략하면 1초 대기합니다.
     """
-    if seconds < 0:
+    try:
+        actual_seconds = _coerce_wait_seconds(
+            seconds,
+            duration=duration,
+            delay=delay,
+            time_seconds=time,
+        )
+    except ValueError as exc:
         return json.dumps(
-            {"success": False, "message": "seconds는 0 이상이어야 합니다."},
+            {"success": False, "message": str(exc)},
             ensure_ascii=False,
         )
-    logger.info("[Tool] wait 호출: seconds=%s", seconds)
-    await asyncio.sleep(seconds)
+
+    started = time_lib.monotonic()
+    logger.info("[Tool] wait 시작: %.3fs", actual_seconds)
+    time_lib.sleep(actual_seconds)
+    elapsed = time_lib.monotonic() - started
+    logger.info("[Tool] wait 완료: requested=%.3fs, elapsed=%.3fs", actual_seconds, elapsed)
     return json.dumps(
-        {"success": True, "message": f"{seconds}초 대기 완료"},
+        {
+            "success": True,
+            "message": f"{actual_seconds}초 대기 완료",
+            "seconds": actual_seconds,
+            "elapsed": round(elapsed, 3),
+        },
         ensure_ascii=False,
     )
 
