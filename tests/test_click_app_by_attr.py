@@ -182,7 +182,7 @@ class ClickAppByAttrOutlineTest(unittest.TestCase):
             "timeout": 0.1,
         }
         defaults.update(kwargs)
-        with patch.object(self.action, "ensure_focus", return_value=MagicMock(result="success", is_success=True)):
+        with patch.object(self.action, "_activate_attr_search_context", return_value=MagicMock(result="success", is_success=True)):
             with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
                 return self.action.click_element_by_attr(**defaults)
 
@@ -231,7 +231,7 @@ class ClickAppByAttrPollingTest(unittest.TestCase):
             "draw_outline": False,
         }
         defaults.update(kwargs)
-        with patch.object(self.action, "ensure_focus", return_value=MagicMock(result="success", is_success=True)):
+        with patch.object(self.action, "_activate_attr_search_context", return_value=MagicMock(result="success", is_success=True)):
             with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
                 with patch.object(self.action, "_click_with_preferred_action", return_value="click_input"):
                     return self.action.click_element_by_attr(**defaults)
@@ -273,7 +273,7 @@ class ClickAppByAttrPollingTest(unittest.TestCase):
             MagicMock(result="success", is_success=True),
         ]
         with patch("actions.app_ui_action.time.sleep") as sleep_mock:
-            with patch.object(self.action, "ensure_focus", side_effect=focus_results):
+            with patch.object(self.action, "_activate_attr_search_context", side_effect=focus_results):
                 with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
                     with patch.object(self.action, "_click_with_preferred_action", return_value="click_input"):
                         result = self.action.click_element_by_attr(
@@ -300,6 +300,50 @@ class ClickAppByAttrPollingTest(unittest.TestCase):
                     result = self._run_click(auto_id="Missing", timeout=2.0, poll_interval=1.0)
         self.assertEqual(result.result, "error")
         self.assertIn("찾지 못했습니다", result.message or "")
+
+
+class ClickAppByAttrActivationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.session = MagicMock()
+        self.session.config = {"timeouts": {"after_focus_delay": 0.0, "ui_delay": 0.0}}
+        self.session.is_connected = True
+        self.action = AppUIAction(session=self.session)
+        self.mock_child = _MockNode(title="ezDFS2 Login", control_type="Window", automation_id="LoginDlg")
+
+    def test_activate_attr_search_context_brings_child_hwnd(self) -> None:
+        with patch.object(self.action, "_launcher") as mock_launcher:
+            mock_launcher.ensure_running.return_value = None
+            with patch.object(
+                self.action,
+                "_resolve_attr_search_root",
+                return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
+            ):
+                with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
+                    result = self.action._activate_attr_search_context(
+                        child_window_title="ezDFS2 Login",
+                        window_target="child",
+                    )
+        self.assertTrue(result.is_success)
+        activate.assert_called_once()
+
+    def test_activate_attr_search_context_falls_back_to_app_top(self) -> None:
+        with patch.object(self.action, "_launcher") as mock_launcher:
+            mock_launcher.ensure_running.return_value = None
+            with patch.object(
+                self.action,
+                "_resolve_attr_search_root",
+                return_value=(None, "child_not_found"),
+            ):
+                with patch.object(
+                    self.action,
+                    "_bring_connected_app_to_front",
+                    return_value=MagicMock(result="success", is_success=True),
+                ) as bring_front:
+                    result = self.action._activate_attr_search_context(
+                        child_window_title="ezDFS2 Login",
+                    )
+        self.assertTrue(result.is_success)
+        bring_front.assert_called_once()
 
 
 if __name__ == "__main__":

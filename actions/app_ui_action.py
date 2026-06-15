@@ -961,9 +961,118 @@ class AppUIAction:
         """연결된 앱의 활성 창(모달 다이얼로그 포함)을 foreground로 가져옵니다."""
         hwnd = self._get_connected_app_top_hwnd()
         if hwnd and self._bring_hwnd_to_foreground(hwnd):
+            try:
+                from pywinauto.controls.hwndwrapper import HwndWrapper
+
+                self._session.cached_window = HwndWrapper(hwnd)
+            except Exception:
+                pass
+            after_focus_delay = float(
+                self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2)
+            )
+            time.sleep(after_focus_delay)
             return AppUIActionResult(result="success", message=f"foreground hwnd={hwnd}")
         # 폴백: 기존 메인 윈도우 활성화 경로
         return self.ensure_focus()
+
+    def _activate_window_wrapper(self, wrapper: Any, *, label: str = "") -> bool:
+        """특정 wrapper HWND를 foreground로 올리고 세션 캐시를 갱신합니다."""
+        hwnd = self._get_wrapper_handle(wrapper)
+        if hwnd and self._bring_hwnd_to_foreground(hwnd):
+            self._session.cached_window = wrapper
+            after_focus_delay = float(
+                self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2)
+            )
+            time.sleep(after_focus_delay)
+            logger.info(
+                "[click_app_by_attr] HWND foreground 활성화: %s (hwnd=%s, %s)",
+                self._format_window_label(wrapper),
+                hwnd,
+                label or "target",
+            )
+            return True
+
+        activated = self._activate_window(wrapper)
+        if activated:
+            logger.info(
+                "[click_app_by_attr] set_focus 폴백 활성화: %s (%s)",
+                self._format_window_label(wrapper),
+                label or "target",
+            )
+        return activated
+
+    def _activate_attr_search_context(
+        self,
+        *,
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        window_target: str = "auto",
+        allow_invisible_children: bool = False,
+        invalidate_cache: bool = False,
+    ) -> AppUIActionResult:
+        """
+        click_app_by_attr 탐색 전 대상 HWND(모달/child/login 포함)를 foreground로 올립니다.
+
+        child_window_title/auto_id가 있으면 해당 child HWND를 우선 활성화하고,
+        없거나 찾지 못하면 app.top_window()(모달) 또는 ensure_focus로 폴백합니다.
+        """
+        try:
+            self._launcher.ensure_running()
+
+            if not self._session.is_connected:
+                try:
+                    self._session.connect()
+                except Exception as e:
+                    return AppUIActionResult(
+                        result="error",
+                        message=f"애플리케이션 연결 실패: {e}",
+                    )
+
+            if invalidate_cache:
+                self._session.cached_window = None
+
+            child_title = (child_window_title or "").strip()
+            child_auto_id = (child_window_auto_id or "").strip()
+            target_mode = (window_target or "auto").strip().lower()
+            resolve_mode = target_mode if target_mode in {"child", "auto"} else "auto"
+
+            if child_title or child_auto_id:
+                matched_child, info = self._resolve_attr_search_root(
+                    window_target=resolve_mode,
+                    child_window_title=child_window_title,
+                    child_window_auto_id=child_window_auto_id,
+                    child_window_match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                    allow_invisible_children=allow_invisible_children,
+                )
+                if matched_child is not None:
+                    if self._activate_window_wrapper(matched_child, label=info):
+                        return AppUIActionResult(
+                            result="success",
+                            message=(
+                                "child window foreground 활성화: "
+                                f"{self._format_window_label(matched_child)} ({info})"
+                            ),
+                        )
+                    logger.warning(
+                        "[click_app_by_attr] child HWND 활성화 실패, app top으로 폴백: %s",
+                        info,
+                    )
+                else:
+                    logger.warning(
+                        "[click_app_by_attr] child window 미발견, app top으로 폴백: %s",
+                        info,
+                    )
+
+            return self._bring_connected_app_to_front()
+        except Exception as e:
+            logger.error("[click_app_by_attr] 탐색 컨텍스트 활성화 실패: %s", e)
+            return AppUIActionResult(
+                result="error",
+                message=f"탐색 컨텍스트 활성화 실패: {e}",
+            )
 
     def _get_caret_focus_click_point(self) -> Optional[tuple[int, int, dict]]:
         """GetGUIThreadInfo 기반 캐럿/포커스 HWND 위치를 반환합니다."""
@@ -2592,6 +2701,7 @@ class AppUIAction:
         outline_colour: str = "red",
         search_outline_colour: str = "green",
         outline_scope: str = "all",
+        allow_invisible_children: bool = False,
     ) -> AppUIActionResult:
         """
         속성 기반으로 특정 요소를 찾아 클릭합니다.
@@ -2605,6 +2715,8 @@ class AppUIAction:
           - None: 기본 간격(0.2초)으로 재시도
           - 0: 재시도 사이 대기 없음
           - 양수: 지정한 간격(초)으로 재시도
+        allow_invisible_children:
+          - True: 보이지 않는 child window도 탐색·활성화 후보에 포함
 
         draw_outline=True 시 outline_scope에 따라 테두리 표시:
           - search: 순회 중인 search_root(창)만
@@ -2697,12 +2809,20 @@ class AppUIAction:
                         actual_timeout if use_polling else None,
                     )
 
-                focus_result = self.ensure_focus(invalidate_cache=True)
+                focus_result = self._activate_attr_search_context(
+                    child_window_title=child_window_title,
+                    child_window_auto_id=child_window_auto_id,
+                    child_window_match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                    window_target=window_target,
+                    allow_invisible_children=allow_invisible_children,
+                    invalidate_cache=True,
+                )
                 if not focus_result.is_success:
                     if not use_polling:
                         return AppUIActionResult(result="error", message=focus_result.message)
                     logger.warning(
-                        "[click_app_by_attr] 포커스 설정 실패, 폴링 계속: %s",
+                        "[click_app_by_attr] 탐색 컨텍스트 활성화 실패, 폴링 계속: %s",
                         focus_result.message,
                     )
                     if time.monotonic() - start > actual_timeout:
@@ -2736,6 +2856,7 @@ class AppUIAction:
                         child_window_match_mode=child_window_match_mode,
                         case_sensitive=case_sensitive,
                         top_window_override=top_window,
+                        allow_invisible_children=allow_invisible_children,
                     )
                     for search_root, search_root_info in search_roots:
                         if search_root is None:
