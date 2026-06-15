@@ -24,11 +24,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         launch_application,
         restart_application,
     )
-    from tools.data_analysis_tool import (
-        get_cached_dataset_summary,
-        load_json_as_dataframe,
-        read_clipboard_as_dataframe,
-    )
+    from tools.data_analysis_tool import read_clipboard_as_dataframe
     from tools.oracle_db_tool import query_oracle_db
     from tools.source_edit_tool import find_text_in_file, replace_text_in_file
 
@@ -55,8 +51,6 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "wait": wait,
         # data_analysis_tool
         "read_clipboard_as_dataframe": read_clipboard_as_dataframe,
-        "load_json_as_dataframe": load_json_as_dataframe,
-        "get_cached_dataset_summary": get_cached_dataset_summary,
         # source_edit_tool
         "find_text_in_file": find_text_in_file,
         "replace_text_in_file": replace_text_in_file,
