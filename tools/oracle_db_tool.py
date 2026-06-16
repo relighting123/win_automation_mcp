@@ -80,7 +80,7 @@ async def query_oracle_db(
 ) -> str:
     """
     Oracle DB에서 SELECT 쿼리를 실행하고 결과를 반환합니다.
-    접속 정보는 .env 의 ORACLE_DB_{별칭}_* 또는 레거시 ORACLE_USER 등을 사용합니다.
+    접속 정보는 config/oracle_databases.yaml 또는 .env 의 ORACLE_DB_{별칭}_* 를 사용합니다.
 
     Args:
         sql: 실행할 SELECT (또는 WITH) 쿼리
@@ -94,8 +94,9 @@ async def query_oracle_db(
                 {
                     "success": False,
                     "message": (
-                        ".env 에 ORACLE_DB_{별칭}_USER/PASSWORD/TNS 를 설정하세요. "
-                        "예: ORACLE_DB_PROD_USER, ORACLE_DB_PROD_PASSWORD, ORACLE_DB_PROD_TNS"
+                        "config/oracle_databases.yaml (권장) 또는 "
+                        ".env 의 ORACLE_DB_{별칭}_USER/PASSWORD/TNS 를 설정하세요. "
+                        "예: alias=prd, user/password/host/service_name"
                     ),
                 },
                 ensure_ascii=False,
