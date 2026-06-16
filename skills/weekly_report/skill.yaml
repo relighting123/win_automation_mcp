@@ -1,0 +1,6 @@
+description: "일일 MD 보고서를 모아 기간별 주간 보고서를 생성합니다"
+tools:
+  - tool: build_weekly_report
+    args:
+      start_date: { mode: "ai" }
+      end_date: { mode: "ai" }

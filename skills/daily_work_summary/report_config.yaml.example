@@ -1,0 +1,23 @@
+title: "일일 업무 정리"
+urls:
+  - name: "사내 포털"
+    url: "https://internal.example.com/dashboard"
+  # - name: "팀 위키"
+  #   url: "https://wiki.example.com/team"
+
+oracle_queries:
+  # - name: "오늘 배치 현황"
+  #   sql: "SELECT job_name, status FROM batch_log WHERE run_date = TRUNC(SYSDATE)"
+  #   db: prod
+  #   max_rows: 20
+
+sections:
+  - title: "오늘 완료"
+    content: |
+      - (수동 메모 또는 /analyze 결과를 여기에 정리)
+  - title: "내일 할 일"
+    content: |
+      -
+
+notes:
+  - "skill.md의 수집 규칙을 참고해 URL/DB 항목을 report_config.yaml에 추가하세요."
