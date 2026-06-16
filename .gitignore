@@ -4,6 +4,7 @@ __pycache__/
 .env
 config/app_config.yaml
 config/skills.yaml
+config/oracle_databases.yaml
 .venv
 venv/
 ENV/

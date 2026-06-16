@@ -8,7 +8,7 @@ urls:
 oracle_queries:
   # - name: "오늘 배치 현황"
   #   sql: "SELECT job_name, status FROM batch_log WHERE run_date = TRUNC(SYSDATE)"
-  #   db: prod
+  #   db: prd
   #   max_rows: 20
 
 sections:
