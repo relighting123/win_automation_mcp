@@ -132,3 +132,42 @@ def resolve_allowed_file(
     if not target.is_file():
         raise ValueError(f"file_path는 파일이어야 합니다: {file_path}")
     return target
+
+
+def resolve_allowed_output_path(
+    file_path: str,
+    *,
+    workspace: Optional[Path] = None,
+    config_path: Optional[str] = None,
+    create_parent: bool = True,
+) -> Path:
+    """
+    새 파일 생성/덮어쓰기용 경로를 검증합니다.
+
+    기존 resolve_allowed_file 과 달리 파일이 없어도 허용합니다.
+    """
+    if not file_path or not str(file_path).strip():
+        raise ValueError("file_path는 비어 있을 수 없습니다.")
+
+    target = Path(file_path).expanduser()
+    if not target.is_absolute():
+        target = (workspace or Path.cwd()) / target
+    target = target.resolve()
+
+    allowed_roots = get_allowed_file_roots(workspace=workspace, config_path=config_path)
+    if not allowed_roots:
+        raise ValueError(
+            "허용된 파일 접근 경로가 없습니다. "
+            "file_access.allow_workspace=true 또는 file_access.allowed_paths를 설정하세요."
+        )
+
+    if not is_path_allowed(target, roots=allowed_roots):
+        roots_text = ", ".join(str(root) for root in allowed_roots)
+        raise ValueError(
+            f"허용되지 않은 경로입니다: {file_path} "
+            f"(허용 루트: {roots_text})"
+        )
+
+    if create_parent:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    return target

@@ -1,0 +1,6 @@
+description: "오늘 업무를 report_config 기반으로 수집해 일일 MD 보고서를 저장합니다"
+tools:
+  - tool: build_daily_work_report
+    args:
+      report_date: { mode: "ai" }
+      config_path: { mode: "ai" }

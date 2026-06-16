@@ -89,6 +89,12 @@ file_access:
     - "D:\\개발\\폴더"
     # - "C:\\Rules"
 
+reports:
+  # 일일/주간 업무 보고서 저장 경로 (워크스페이스 기준 상대경로 가능)
+  daily_dir: "reports/daily"
+  weekly_dir: "reports/weekly"
+  config_file: "skills/daily_work_summary/report_config.yaml"
+
 llm:
   # 기본 provider: OpenAI 호환 API
   provider: "openai_compatible"
