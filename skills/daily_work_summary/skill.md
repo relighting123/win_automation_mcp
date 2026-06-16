@@ -40,7 +40,21 @@ reports:
 
 `reports/daily/2026-06-16.md`
 
-## 예약 실행 (Windows 작업 스케줄러)
+## 예약 실행 (chatRTD)
+
+chatRTD에서 Windows 작업 스케줄러에 직접 등록할 수 있습니다.
+
+```
+/schedule add daily 18:00
+/schedule add weekly 18:30 FRI
+/schedule
+/schedule run daily
+/schedule remove chatRTD-DailySummary
+```
+
+수동 등록이 필요하면 아래 PowerShell을 사용하세요.
+
+## 예약 실행 (Windows 작업 스케줄러 수동)
 
 매일 18:00 자동 실행 예:
 
