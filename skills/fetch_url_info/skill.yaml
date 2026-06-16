@@ -1,9 +1,8 @@
-description: "URL을 열어 HTTP GET으로 내용을 조회합니다"
+description: "Chrome DevTools MCP로 URL을 열고 본문 텍스트를 가져옵니다 (사내 SSO)"
 tools:
-  - tool: fetch_url
+  - tool: chrome-devtools/navigate
     args:
       url: { mode: "ai" }
-      method: { mode: "fixed", value: "GET" }
-      as_json: { mode: "ai", value: false }
-      max_chars: { mode: "ai", value: 50000 }
-      timeout: { mode: "ai", value: 30 }
+  - tool: chrome-devtools/evaluate
+    args:
+      script: { mode: "fixed", value: "document.body.innerText" }
