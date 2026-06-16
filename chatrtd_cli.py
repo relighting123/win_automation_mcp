@@ -206,6 +206,32 @@ def get_active_settings(cli_config: dict, overrides: Optional[dict] = None) -> d
 
 # ── MCP helpers ───────────────────────────────────────────────────────────────
 
+_MCP_HUB = None
+_MCP_HUB_URL: Optional[str] = None
+
+
+def _reset_mcp_hub() -> None:
+    global _MCP_HUB, _MCP_HUB_URL
+    if _MCP_HUB is not None:
+        try:
+            asyncio.run(_MCP_HUB.aclose())
+        except Exception:
+            pass
+    _MCP_HUB = None
+    _MCP_HUB_URL = None
+
+
+def _get_mcp_hub(mcp_url: str):
+    global _MCP_HUB, _MCP_HUB_URL
+    from core.mcp_client import create_mcp_client
+
+    if _MCP_HUB is None or _MCP_HUB_URL != mcp_url:
+        _reset_mcp_hub()
+        _MCP_HUB = create_mcp_client(base_url=mcp_url)
+        _MCP_HUB_URL = mcp_url
+    return _MCP_HUB
+
+
 def _mcp_headers() -> dict:
     return {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
@@ -238,52 +264,17 @@ def _parse_sse_result(res: requests.Response) -> Optional[dict]:
 
 
 def fetch_mcp_tools(mcp_url: str) -> list:
-    headers = _mcp_headers()
-    sid = _mcp_init(mcp_url, headers)
-    if not sid:
-        return []
-    headers["mcp-session-id"] = sid
     try:
-        res = requests.post(
-            mcp_url, json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-            headers=headers, timeout=15,
-        )
-        if res.status_code == 200:
-            result = _parse_sse_result(res)
-            if result and "tools" in result:
-                return [
-                    {"type": "function", "function": {
-                        "name": t["name"],
-                        "description": t.get("description", ""),
-                        "parameters": t.get("inputSchema", {}),
-                    }}
-                    for t in result["tools"]
-                ]
+        hub = _get_mcp_hub(mcp_url)
+        return asyncio.run(hub.list_openai_tools())
     except Exception:
-        pass
-    return []
+        return []
 
 
 def call_mcp_tool(mcp_url: str, name: str, arguments: dict) -> dict:
-    headers = _mcp_headers()
-    sid = _mcp_init(mcp_url, headers)
-    if not sid:
-        return {"error": "MCP 서버에 연결할 수 없습니다"}
-    headers["mcp-session-id"] = sid
     try:
-        requests.post(mcp_url, json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                      headers=headers, timeout=2)
-        payload = {
-            "jsonrpc": "2.0", "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-            "id": int(time.time() * 1000),
-        }
-        res = requests.post(mcp_url, json=payload, headers=headers, timeout=60, stream=True)
-        if res.status_code == 200:
-            result = _parse_sse_result(res)
-            if result is not None:
-                return result
-        return {"error": f"HTTP {res.status_code}"}
+        hub = _get_mcp_hub(mcp_url)
+        return asyncio.run(hub.call_tool(name, arguments))
     except Exception as e:
         return {"error": str(e)}
 
@@ -361,8 +352,8 @@ class ChatRTDCLI:
     def _get_automation_mcp(self):
         """automation graph 실행용 MCP 클라이언트를 재사용합니다."""
         if self._automation_mcp is None:
-            from core.mcp_client import MCPClient
-            self._automation_mcp = MCPClient(self.mcp_url)
+            from core.mcp_client import create_mcp_client
+            self._automation_mcp = create_mcp_client(base_url=self.mcp_url)
         return self._automation_mcp
 
     def _print_analyze_progress(self, line: str) -> None:
@@ -672,13 +663,14 @@ class ChatRTDCLI:
 
         try:
             from graph.automation_graph import run_automation
-            from core.mcp_client import MCPClient
+            from core.mcp_client import create_mcp_client
         except ImportError as e:
             c.print(f"  [err]✗  import error:[/err] {e}\n")
             return
 
         async def _run():
-            mcp = MCPClient(self.mcp_url)
+            from core.mcp_client import create_mcp_client
+            mcp = create_mcp_client(base_url=self.mcp_url)
             return await run_automation(
                 mcp=mcp,
                 query=query,
@@ -828,6 +820,8 @@ class ChatRTDCLI:
         if key == "mcp-url":
             self.cli_config["mcp_url"] = value
             self.mcp_url = value
+            self._automation_mcp = None
+            _reset_mcp_hub()
             save_cli_config(self.cli_config)
             self.console.print(f"  [ok]✓[/ok]  mcp-url [muted]→[/muted] {value}\n")
         else:

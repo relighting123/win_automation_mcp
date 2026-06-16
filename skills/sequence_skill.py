@@ -8,6 +8,7 @@ from core.app_session import AppSession
 from core.launch_paths import pick_launch_target, resolve_launch_paths
 from skills.base_skill import BaseSkill
 from tools.tool_registry import get_skill_tool_registry
+from core.mcp_client import get_shared_extra_mcp_hub
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +177,30 @@ class SequenceSkill(BaseSkill):
         }
 
     def _normalize_result(self, raw_result: Any) -> Dict[str, Any]:
-        """tool 반환값(JSON 문자열/딕셔너리 등)을 공통 딕셔너리 형태로 통일"""
+        """tool 반환값(JSON 문자열/딕셔너리/MCP content)을 공통 딕셔너리 형태로 통일"""
         if isinstance(raw_result, dict):
+            if "error" in raw_result and "content" not in raw_result:
+                return {"success": False, "message": str(raw_result.get("error"))}
+
+            content_blocks = raw_result.get("content")
+            if isinstance(content_blocks, list):
+                text_blocks = [
+                    block.get("text")
+                    for block in content_blocks
+                    if isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                ]
+                if text_blocks:
+                    combined = "\n".join(text_blocks).strip()
+                    try:
+                        parsed = json.loads(combined)
+                        return parsed if isinstance(parsed, dict) else {"success": True, "result": parsed}
+                    except json.JSONDecodeError:
+                        return {"success": True, "text": combined}
+
+            if raw_result.get("isError") is True:
+                return {"success": False, "message": str(raw_result)}
             return raw_result
         if isinstance(raw_result, str):
             try:
@@ -203,6 +226,21 @@ class SequenceSkill(BaseSkill):
 
                 tool_func = tool_registry.get(tool_name)
                 if tool_func is None:
+                    extra_hub = await get_shared_extra_mcp_hub()
+                    if extra_hub is not None and extra_hub.has_tool(tool_name):
+                        raw_result = await extra_hub.call_tool(tool_name, tool_args)
+                        normalized = self._normalize_result(raw_result)
+                        step_results.append(
+                            {
+                                "index": index,
+                                "tool": tool_name,
+                                "args": tool_args,
+                                "result": normalized,
+                            }
+                        )
+                        if isinstance(normalized, dict) and normalized.get("success") is False:
+                            raise RuntimeError(f"step 실패: tool={tool_name}, detail={normalized}")
+                        continue
                     raise ValueError(f"알 수 없는 tool 이름입니다: {tool_name}")
 
                 if inspect.iscoroutinefunction(tool_func):

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from core.mcp_client import MCPClient
+from core.mcp_client import create_mcp_client
 from core.automation_run_control import begin_run_control, end_run_control
 from core.llm_config import (
     get_llm_profile_settings,
@@ -171,7 +171,7 @@ if __name__ == "__main__":
         mcp_settings = get_mcp_settings()
         auto_settings = get_automation_settings()
 
-        mcp_client = MCPClient(base_url=mcp_settings["base_url"])
+        mcp_client = create_mcp_client(base_url=mcp_settings["base_url"])
         my_skills = ["demo_mixed_args"]
         my_query = "스케줄링 업무 요청, 문의 해주세요"
         
