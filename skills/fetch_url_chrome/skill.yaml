@@ -1,0 +1,12 @@
+description: "Chrome(Playwright)으로 URL을 열어 사내 SSO 세션을 활용해 내용을 조회합니다"
+tools:
+  - tool: fetch_url_chrome
+    args:
+      url: { mode: "ai" }
+      profile_dir: { mode: "ai" }
+      headless: { mode: "ai", value: false }
+      wait_seconds: { mode: "ai", value: 0 }
+      timeout: { mode: "ai", value: 60 }
+      max_chars: { mode: "ai", value: 50000 }
+      return_html: { mode: "ai", value: false }
+      channel: { mode: "ai", value: "chrome" }
