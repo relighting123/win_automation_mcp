@@ -241,9 +241,16 @@ class StdioMCPBackend:
             logger.info("[%s] stdio MCP 세션 시작", self.config.id)
 
     async def aclose(self) -> None:
-        await self._stack.aclose()
-        self._session = None
-        self._tools_cache = None
+        try:
+            await self._stack.aclose()
+        except RuntimeError as exc:
+            logger.debug("[%s] stdio MCP 종료(RuntimeError): %s", self.config.id, exc)
+        except Exception as exc:
+            logger.debug("[%s] stdio MCP 종료 오류: %s", self.config.id, exc)
+        finally:
+            self._session = None
+            self._tools_cache = None
+            self._stack = AsyncExitStack()
 
     async def list_tools(self, refresh: bool = False) -> List[Dict[str, Any]]:
         if self._tools_cache is not None and not refresh:

@@ -40,6 +40,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from core.llm_config import get_llm_settings, get_mcp_settings
+from core.async_loop_runner import run_async, shutdown_async_runner
 from core.tool_call_utils import parse_kv_args, parse_text_tool_calls
 
 # ── Version ───────────────────────────────────────────────────────────────────
@@ -215,7 +216,7 @@ def _reset_mcp_hub() -> None:
     global _MCP_HUB, _MCP_HUB_URL
     if _MCP_HUB is not None:
         try:
-            asyncio.run(_MCP_HUB.aclose())
+            run_async(_MCP_HUB.aclose())
         except Exception:
             pass
     _MCP_HUB = None
@@ -267,7 +268,7 @@ def _parse_sse_result(res: requests.Response) -> Optional[dict]:
 def fetch_mcp_tools(mcp_url: str) -> list:
     try:
         hub = _get_mcp_hub(mcp_url)
-        return asyncio.run(hub.list_openai_tools())
+        return run_async(hub.list_openai_tools())
     except Exception:
         return []
 
@@ -275,7 +276,7 @@ def fetch_mcp_tools(mcp_url: str) -> list:
 def call_mcp_tool(mcp_url: str, name: str, arguments: dict) -> dict:
     try:
         hub = _get_mcp_hub(mcp_url)
-        return asyncio.run(hub.call_tool(name, arguments))
+        return run_async(hub.call_tool(name, arguments))
     except Exception as e:
         return {"error": str(e)}
 
@@ -774,19 +775,22 @@ class ChatRTDCLI:
         async def _run():
             from core.mcp_client import create_mcp_client
             mcp = create_mcp_client(base_url=self.mcp_url)
-            return await run_automation(
-                mcp=mcp,
-                query=query,
-                skill_ids=skill_ids,
-                mode=mode,
-                model=self.settings.get("model"),
-                api_key=self.settings.get("api_key"),
-                base_url=self.settings.get("base_url"),
-                on_progress=self._print_analyze_progress,
-            )
+            try:
+                return await run_automation(
+                    mcp=mcp,
+                    query=query,
+                    skill_ids=skill_ids,
+                    mode=mode,
+                    model=self.settings.get("model"),
+                    api_key=self.settings.get("api_key"),
+                    base_url=self.settings.get("base_url"),
+                    on_progress=self._print_analyze_progress,
+                )
+            finally:
+                await mcp.aclose()
 
         try:
-            result = asyncio.run(_run())
+            result = run_async(_run())
         except Exception as e:
             c.print(f"  [err]✗  automation error:[/err] {e}\n")
             return
@@ -1031,6 +1035,8 @@ def main() -> None:
     try:
         cli.run(single_query=args.query)
     finally:
+        _reset_mcp_hub()
+        shutdown_async_runner()
         if server_proc:
             server_proc.terminate()
 
