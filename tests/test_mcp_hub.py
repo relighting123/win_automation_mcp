@@ -26,7 +26,7 @@ class MultiMCPClientTest(unittest.IsolatedAsyncioTestCase):
     async def test_routes_prefixed_tool_to_backend(self) -> None:
         automation = MagicMock()
         automation.list_tools = AsyncMock(
-            return_value=[{"name": "fetch_url", "description": "http fetch", "inputSchema": {}}]
+            return_value=[{"name": "describe_current_state", "description": "state", "inputSchema": {}}]
         )
         automation.call_tool = AsyncMock(return_value={"content": [{"type": "text", "text": "ok"}]})
 
@@ -48,7 +48,7 @@ class MultiMCPClientTest(unittest.IsolatedAsyncioTestCase):
 
         tools = await hub.list_tools()
         names = [tool["name"] for tool in tools]
-        self.assertIn("fetch_url", names)
+        self.assertIn("describe_current_state", names)
         self.assertIn("chrome-devtools/navigate", names)
 
         result = await hub.call_tool("chrome-devtools/navigate", {"url": "https://example.com"})
@@ -63,7 +63,7 @@ class MultiMCPClientTest(unittest.IsolatedAsyncioTestCase):
 
     def test_name_helpers(self) -> None:
         self.assertEqual(_openai_tool_name("chrome-devtools", "navigate", use_prefix=True), "chrome-devtools/navigate")
-        self.assertEqual(_openai_tool_name("automation", "fetch_url", use_prefix=False), "fetch_url")
+        self.assertEqual(_openai_tool_name("automation", "describe_current_state", use_prefix=False), "describe_current_state")
         self.assertEqual(_split_tool_name("chrome-devtools/evaluate"), ("chrome-devtools", "evaluate"))
 
 
