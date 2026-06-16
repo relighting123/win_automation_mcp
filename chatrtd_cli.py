@@ -139,6 +139,13 @@ HELP_TEXT = f"""
   [text]/analyze semi <query>[/text]               semi 모드 — YAML 단계 엄격 실행
   [text]/analyze manual <query>[/text]               manual 모드 — 질의로 스킬 선택, YAML 단계 엄격 실행
 
+[secondary]Schedule (Windows 작업 스케줄러)[/secondary]
+  [text]/schedule[/text]                              등록된 chatRTD 예약 작업 목록
+  [text]/schedule add daily <HH:MM>[/text]              일일 보고서 예약 (예: 18:00)
+  [text]/schedule add weekly <HH:MM> [FRI][/text]       주간 보고서 예약 (기본 금요일)
+  [text]/schedule remove <name>[/text]                  예약 작업 삭제
+  [text]/schedule run daily|weekly[/text]               지금 즉시 실행
+
 [secondary]Config[/secondary]
   [text]/config[/text]                   현재 설정 확인
   [text]/config set mcp-url <url>[/text] MCP 서버 URL 변경
@@ -160,6 +167,10 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/analyze auto",   "auto 모드 — 스킬 자동 선택·조합"),
     ("/analyze semi",   "semi 모드 — YAML 단계 엄격 실행"),
     ("/analyze manual", "manual 모드 — 질의로 스킬 선택·YAML 엄격 실행"),
+    ("/schedule",       "예약 작업 목록/등록 (Windows)"),
+    ("/schedule add",   "예약 작업 등록"),
+    ("/schedule remove","예약 작업 삭제"),
+    ("/schedule run",   "예약 작업 즉시 실행"),
     ("/config",         "현재 설정 확인"),
     ("/config set",     "설정 변경  (/config set mcp-url <url>)"),
 ]
@@ -636,6 +647,97 @@ class ChatRTDCLI:
 
         self._print_skill_result(skill_id, result)
 
+    # ── /schedule ─────────────────────────────────────────────────────────────
+
+    def _cmd_schedule(self, args: list[str]) -> None:
+        from core.windows_scheduler import (
+            is_windows_scheduler_available,
+            list_chatrtd_tasks,
+            register_preset_task,
+            remove_task,
+            run_preset_now,
+        )
+
+        c = self.console
+        if not is_windows_scheduler_available():
+            c.print(
+                "  [warn]⚠[/warn]  [muted]예약 작업 등록은 Windows 작업 스케줄러에서만 지원됩니다.[/muted]"
+            )
+            c.print(
+                "  [muted]Linux/macOS에서는 scripts/run_daily_summary.py 를 cron으로 등록하세요.[/muted]\n"
+            )
+            return
+
+        if not args:
+            tasks = list_chatrtd_tasks()
+            if not tasks:
+                c.print("  [muted]등록된 chatRTD 예약 작업이 없습니다.[/muted]")
+                c.print("  [muted]예: /schedule add daily 18:00[/muted]\n")
+                return
+
+            t = Table(show_header=True, header_style=f"bold {_C['muted']}",
+                      border_style=_C["border"], show_edge=False, pad_edge=True)
+            t.add_column("task", style=_C["secondary"], min_width=28)
+            t.add_column("next", style=_C["text"], min_width=18)
+            t.add_column("status", style=_C["text"])
+            for item in tasks:
+                t.add_row(item.name, item.next_run, item.status)
+            c.print(t)
+            c.print()
+            return
+
+        sub = args[0].lower()
+        if sub == "add":
+            if len(args) < 3:
+                c.print(
+                    "  [err]usage:[/err] /schedule add daily <HH:MM>  |  "
+                    "/schedule add weekly <HH:MM> [MON|...|FRI]\n"
+                )
+                return
+            preset = args[1].lower()
+            time_value = args[2]
+            weekday = args[3].upper() if len(args) > 3 else None
+            result = register_preset_task(preset, time_hhmm=time_value, weekday=weekday)
+            if result.get("success"):
+                c.print(f"  [ok]✓[/ok]  {result.get('message')} ({result.get('task_name')})\n")
+            else:
+                c.print(f"  [err]✗[/err]  {result.get('message')}\n")
+            return
+
+        if sub == "remove":
+            if len(args) < 2:
+                c.print("  [err]usage:[/err] /schedule remove <task_name>\n")
+                return
+            result = remove_task(args[1])
+            if result.get("success"):
+                c.print(f"  [ok]✓[/ok]  {result.get('message')}\n")
+            else:
+                c.print(f"  [err]✗[/err]  {result.get('message')}\n")
+            return
+
+        if sub == "run":
+            if len(args) < 2:
+                c.print("  [err]usage:[/err] /schedule run daily|weekly\n")
+                return
+            with c.status(
+                f"[muted]running {args[1]}...[/muted]", spinner="dots",
+                spinner_style=f"bold {_C['primary']}",
+            ):
+                result = run_preset_now(args[1])
+            if result.get("success"):
+                c.print(f"  [ok]✓[/ok]  {result.get('message')}\n")
+            else:
+                c.print(f"  [err]✗[/err]  {result.get('message')}\n")
+            if result.get("output"):
+                c.print(result["output"])
+                c.print()
+            return
+
+        c.print(
+            "  [err]usage:[/err] /schedule | add | remove | run  "
+            "[muted](/help 참고)[/muted]\n"
+        )
+
     # ── Slash command dispatcher ──────────────────────────────────────────────
 
     def _handle_command(self, cmd: str) -> None:
@@ -675,6 +777,9 @@ class ChatRTDCLI:
                 self._cmd_models_remove(parts[2] if len(parts) > 2 else "")
             else:
                 self._cmd_models_list()
+
+        elif command == "/schedule":
+            self._cmd_schedule(parts[1:])
 
         elif command == "/config":
             if len(parts) >= 4 and parts[1].lower() == "set":

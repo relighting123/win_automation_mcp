@@ -15,7 +15,15 @@
 
 `reports/weekly/weekly_YYYY-MM-DD_YYYY-MM-DD.md`
 
-## 예약 실행
+## 예약 실행 (chatRTD)
+
+```
+/schedule add weekly 18:30 FRI
+/schedule run weekly
+/schedule
+```
+
+## 예약 실행 (수동)
 
 매주 금요일 18:30:
 
