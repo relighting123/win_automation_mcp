@@ -40,6 +40,9 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from mcp.server.fastmcp import FastMCP
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 로깅 설정
 def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:

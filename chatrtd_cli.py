@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 from openai import OpenAI
@@ -40,6 +40,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from core.llm_config import get_llm_settings, get_mcp_settings
+from core.tool_call_utils import parse_kv_args, parse_text_tool_calls
 
 # ── Version ───────────────────────────────────────────────────────────────────
 VERSION = "0.1.0"
@@ -123,7 +124,7 @@ HELP_TEXT = f"""
 [secondary]Tools & Skills[/secondary]
   [text]/tools[/text]             사용 가능한 도구 목록
   [text]/skills[/text]            스킬 목록
-  [text]/skill <id>[/text]        스킬 직접 실행
+  [text]/skill <id>[/text]        스킬 직접 실행  (/skill fetch_url_info url=https://...)
 
 [secondary]Model Management[/secondary]
   [text]/models[/text]                                                   등록된 모델 목록
@@ -449,6 +450,60 @@ class ChatRTDCLI:
 
     # ── Chat / tool-calling loop ───────────────────────────────────────────────
 
+    def _run_tool_call(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        *,
+        execution_shown: bool,
+        step_count: int,
+    ) -> tuple[bool, int, dict]:
+        c = self.console
+        t0 = time.time()
+        result = call_mcp_tool(self.mcp_url, tool_name, args)
+        elapsed = time.time() - t0
+
+        if _tool_ok(result):
+            status = f"[ok]✓[/ok]  [muted]{elapsed:.2f}s[/muted]"
+        else:
+            err = str(result.get("error", result))[:120]
+            status = f"[err]✗[/err]  [muted]{err}[/muted]"
+
+        if not execution_shown:
+            c.print(f"  [border]{'─' * 53}[/border]")
+            execution_shown = True
+
+        step_count += 1
+        name_col = f"[tool]◆[/tool]  [secondary]{tool_name}[/secondary]"
+        c.print(f"  {name_col:<52}{status}")
+        return execution_shown, step_count, result
+
+    def _print_skill_result(self, skill_id: str, result: dict) -> None:
+        c = self.console
+        c.print()
+        c.print(f"  [muted]Skill[/muted]  [border]{'─' * 48}[/border]")
+        c.print(f"  [secondary]{skill_id}[/secondary]")
+
+        if "error" in result:
+            c.print(f"  [err]✗[/err]  {result['error']}\n")
+            return
+
+        text = ""
+        for item in result.get("content", []):
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = str(item.get("text", ""))
+                break
+
+        if text:
+            try:
+                payload = json.loads(text)
+                c.print(json.dumps(payload, ensure_ascii=False, indent=2))
+            except json.JSONDecodeError:
+                c.print(text)
+        else:
+            c.print(json.dumps(result, ensure_ascii=False, indent=2))
+        c.print()
+
     def chat(self, user_message: str) -> None:
         c = self.console
 
@@ -473,6 +528,7 @@ class ChatRTDCLI:
                         model    = self.model,
                         messages = self.messages,
                         tools    = self.tools or None,
+                        tool_choice="auto" if self.tools else None,
                     )
                 except Exception as e:
                     c.print(f"  [err]✗  LLM error:[/err] {e}\n")
@@ -480,33 +536,65 @@ class ChatRTDCLI:
                     return
 
             msg = response.choices[0].message
+            tool_calls = list(msg.tool_calls or [])
+            content = (msg.content or "").strip()
 
-            if msg.tool_calls:
-                self.messages.append(msg)
+            if not tool_calls and content:
+                parsed_calls = parse_text_tool_calls(content)
+                if parsed_calls:
+                    tool_calls = [
+                        type(
+                            "ToolCall",
+                            (),
+                            {
+                                "id": call.id,
+                                "function": type(
+                                    "Function",
+                                    (),
+                                    {
+                                        "name": call.name,
+                                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                                    },
+                                )(),
+                            },
+                        )()
+                        for call in parsed_calls
+                    ]
 
-                if not execution_shown:
-                    c.print(f"  [border]{'─' * 53}[/border]")
-                    execution_shown = True
+            if tool_calls:
+                if hasattr(msg, "model_dump"):
+                    assistant_record = msg.model_dump()
+                else:
+                    assistant_record = {
+                        "role": "assistant",
+                        "content": content or None,
+                    }
+                if not msg.tool_calls:
+                    assistant_record["tool_calls"] = [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in tool_calls
+                    ]
+                self.messages.append(assistant_record)
 
-                for tc in msg.tool_calls:
-                    step_count += 1
+                for tc in tool_calls:
                     try:
                         args = json.loads(tc.function.arguments or "{}")
                     except json.JSONDecodeError:
                         args = {}
 
-                    t0     = time.time()
-                    result = call_mcp_tool(self.mcp_url, tc.function.name, args)
-                    elapsed = time.time() - t0
-
-                    if _tool_ok(result):
-                        status = f"[ok]✓[/ok]  [muted]{elapsed:.2f}s[/muted]"
-                    else:
-                        err = str(result.get("error", result))[:80]
-                        status = f"[err]✗[/err]  [muted]{err}[/muted]"
-
-                    name_col = f"[tool]◆[/tool]  [secondary]{tc.function.name}[/secondary]"
-                    c.print(f"  {name_col:<52}{status}")
+                    execution_shown, step_count, result = self._run_tool_call(
+                        tc.function.name,
+                        args,
+                        execution_shown=execution_shown,
+                        step_count=step_count,
+                    )
 
                     self.messages.append({
                         "role":         "tool",
@@ -527,6 +615,25 @@ class ChatRTDCLI:
 
                 self.messages.append({"role": "assistant", "content": content})
                 break
+
+    def _cmd_skill(self, parts: list[str]) -> None:
+        skill_id = parts[1] if len(parts) > 1 else ""
+        if not skill_id:
+            self.console.print(f"  [err]usage:[/err] /skill <skill_id> [key=value ...]\n")
+            return
+
+        args = parse_kv_args(parts[2:])
+        self.console.print()
+        self.console.print(f"  [muted]Skill[/muted]  [border]{'─' * 48}[/border]")
+        self.console.print(f"  [secondary]{skill_id}[/secondary]  [muted]{args or '{}'}[/muted]")
+
+        with self.console.status(
+            f"[muted]running skill...[/muted]", spinner="dots",
+            spinner_style=f"bold {_C['primary']}",
+        ):
+            result = call_mcp_tool(self.mcp_url, skill_id, args)
+
+        self._print_skill_result(skill_id, result)
 
     # ── Slash command dispatcher ──────────────────────────────────────────────
 
@@ -552,11 +659,7 @@ class ChatRTDCLI:
             self._cmd_skills()
 
         elif command == "/skill":
-            sid = parts[1] if len(parts) > 1 else ""
-            if sid:
-                self.chat(f"스킬 '{sid}'를 실행해줘")
-            else:
-                self.console.print(f"  [err]usage:[/err] /skill <skill_id>\n")
+            self._cmd_skill(parts)
 
         elif command == "/analyze":
             self._cmd_analyze(parts[1:])

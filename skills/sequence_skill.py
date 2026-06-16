@@ -227,6 +227,15 @@ class SequenceSkill(BaseSkill):
                 tool_func = tool_registry.get(tool_name)
                 if tool_func is None:
                     extra_hub = await get_shared_extra_mcp_hub()
+                    if extra_hub is None and (
+                        tool_name.startswith("chrome-devtools/")
+                        or tool_name.startswith("chrome-devtools:")
+                    ):
+                        raise ValueError(
+                            "Chrome DevTools MCP가 활성화되지 않았습니다. "
+                            ".env에 MCP_CHROME_DEVTOOLS_ENABLED=true 를 설정하고 "
+                            "MCP 서버(chatRTD)를 재시작하세요."
+                        )
                     if extra_hub is not None and extra_hub.has_tool(tool_name):
                         raw_result = await extra_hub.call_tool(tool_name, tool_args)
                         normalized = self._normalize_result(raw_result)
