@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, Coroutine, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,19 @@ class AsyncLoopRunner:
         self._loop.run_forever()
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
+        from core.automation_run_control import drain_overlay_shutdown, pump_overlay
+
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result()
+        while not future.done():
+            pump_overlay()
+            try:
+                future.result(timeout=0.02)
+            except FutureTimeoutError:
+                continue
+        try:
+            return future.result()
+        finally:
+            drain_overlay_shutdown()
 
     def shutdown(self, timeout: float = 3.0) -> None:
         if self._loop.is_closed():

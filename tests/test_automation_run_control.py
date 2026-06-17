@@ -1,7 +1,7 @@
-import asyncio
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
@@ -9,8 +9,9 @@ sys.path.insert(0, str(project_root))
 from core.automation_run_control import (
     AutomationRunControl,
     begin_run_control,
+    drain_overlay_shutdown,
     end_run_control,
-    get_active_control,
+    pump_overlay,
 )
 
 
@@ -22,22 +23,8 @@ class AutomationRunControlTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(begin_run_control("auto"))
         control = begin_run_control("semi")
         self.assertIsNotNone(control)
-        self.assertIs(control, get_active_control())
+        self.assertEqual(control.mode, "semi")
         end_run_control()
-        self.assertIsNone(get_active_control())
-
-    async def test_wait_if_paused_unblocks_on_resume(self) -> None:
-        control = AutomationRunControl()
-        control.pause()
-
-        async def _resume_later() -> None:
-            await asyncio.sleep(0.05)
-            control.resume()
-
-        waiter = asyncio.create_task(control.wait_if_paused())
-        resumer = asyncio.create_task(_resume_later())
-        await asyncio.wait_for(waiter, timeout=1.0)
-        await resumer
 
     def test_stop_and_skip_flags(self) -> None:
         control = AutomationRunControl()
@@ -47,6 +34,35 @@ class AutomationRunControlTest(unittest.IsolatedAsyncioTestCase):
 
         control.request_skip_skill()
         self.assertTrue(control.consume_skip_skill())
+        self.assertFalse(control.consume_skip_skill())
+
+    async def test_wait_if_paused_unblocks_on_resume(self) -> None:
+        import asyncio
+
+        control = AutomationRunControl()
+        control.pause()
+        task = asyncio.create_task(control.wait_if_paused())
+        await asyncio.sleep(0.05)
+        self.assertFalse(task.done())
+        control.resume()
+        await task
+        self.assertTrue(task.done())
+
+    @patch("core.automation_run_control.overlay_supported", return_value=True)
+    def test_pump_overlay_drains_pending_shutdown(self, _supported: MagicMock) -> None:
+        control = begin_run_control("semi")
+        overlay = control._overlay
+        self.assertIsNotNone(overlay)
+
+        with patch.object(overlay, "pump") as pump_mock:
+            overlay._shutdown_done.clear()
+            overlay.stop()
+            end_run_control()
+            pump_overlay()
+            self.assertGreaterEqual(pump_mock.call_count, 1)
+
+        overlay._shutdown_done.set()
+        drain_overlay_shutdown(timeout=0.05, interval=0.01)
 
 
 if __name__ == "__main__":
