@@ -381,6 +381,7 @@ class AppSession:
         """
         from errors.automation_error import ConnectionError
         from core.wait_utils import wait_until
+        from core.timing_log import log_timing
         
         try:
             from pywinauto import Application
@@ -413,7 +414,8 @@ class AppSession:
             connect_exe_path = self._resolve_connect_executable_path(kwargs.get("connect_path"))
 
             if is_executable:
-                self._app.start(exe_path, **start_kwargs)
+                with log_timing("app_session.start", detail=f"Application.start {exe_path}"):
+                    self._app.start(exe_path, **start_kwargs)
             else:
                 import os
 
@@ -433,22 +435,24 @@ class AppSession:
                 )
                 os.startfile(exe_path)
 
-                wait_until(
-                    condition=lambda: self._try_connect(
-                        path=connect_exe_path,
-                        title=kwargs.get("title"),
-                        **{k: v for k, v in kwargs.items() if k not in {"connect_path", "title"}},
-                    ),
-                    timeout=startup_timeout,
-                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({exe_path})",
-                )
+                with log_timing("app_session.start", detail=f"데이터파일 연결 대기 timeout={startup_timeout}s"):
+                    wait_until(
+                        condition=lambda: self._try_connect(
+                            path=connect_exe_path,
+                            title=kwargs.get("title"),
+                            **{k: v for k, v in kwargs.items() if k not in {"connect_path", "title"}},
+                        ),
+                        timeout=startup_timeout,
+                        timeout_message=f"애플리케이션 파일 연동 시작 대기 ({exe_path})",
+                    )
 
             # 메인 윈도우 대기
-            wait_until(
-                condition=lambda: len(self._app.windows()) > 0,
-                timeout=startup_timeout,
-                timeout_message=f"애플리케이션 윈도우 생성 대기 ({exe_path})"
-            )
+            with log_timing("app_session.start", detail=f"윈도우 생성 대기 timeout={startup_timeout}s"):
+                wait_until(
+                    condition=lambda: len(self._app.windows()) > 0,
+                    timeout=startup_timeout,
+                    timeout_message=f"애플리케이션 윈도우 생성 대기 ({exe_path})"
+                )
             
             self._state = SessionState.CONNECTED
             logger.info("애플리케이션 실행 및 연결 성공")
