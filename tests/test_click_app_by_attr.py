@@ -212,6 +212,27 @@ class ClickAppByAttrOutlineTest(unittest.TestCase):
         close_node = self.top.find._cached_descendants[1]
         self.assertEqual(getattr(close_node, "_last_outline_colour", None), "red")
 
+    def test_outline_scope_traverse_highlights_all_tops(self) -> None:
+        second_top = _MockNode(title="Login", control_type="Window", automation_id="LoginWnd")
+        tops = [self.top, second_top]
+        with patch.object(self.action, "_draw_window_outline_batch") as batch_draw:
+            with patch.object(self.action, "_activate_attr_search_context", return_value=MagicMock(result="success", is_success=True)):
+                with patch.object(self.action, "_iter_process_top_windows", return_value=tops):
+                    result = self.action.click_element_by_attr(
+                        auto_id="Close",
+                        window_target="top",
+                        draw_outline=True,
+                        outline_scope="traverse",
+                        top_outline_colour="blue",
+                        timeout=0.1,
+                    )
+        self.assertEqual(result.result, "success")
+        batch_draw.assert_called_once()
+        args, kwargs = batch_draw.call_args
+        self.assertEqual(list(args[0]), tops)
+        self.assertEqual(kwargs.get("colour"), "blue")
+        self.assertEqual(kwargs.get("label_prefix"), "top")
+
 
 class ClickAppByAttrPollingTest(unittest.TestCase):
     def setUp(self) -> None:
