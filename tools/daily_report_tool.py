@@ -47,33 +47,10 @@ def _load_report_config(config_path: Optional[str] = None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _extract_mcp_text(result: dict[str, Any]) -> str:
-    if result.get("isError"):
-        return f"[오류] {result}"
-    for block in result.get("content", []):
-        if isinstance(block, dict) and block.get("type") == "text":
-            return str(block.get("text", ""))
-    if isinstance(result.get("text"), str):
-        return result["text"]
-    return json.dumps(result, ensure_ascii=False, default=str)
+async def _fetch_url_via_browser(url: str) -> str:
+    from core.browser_mcp_fetch import fetch_url_via_browser_mcp
 
-
-async def _fetch_url_via_chrome(url: str) -> str:
-    from core.mcp_client import get_shared_extra_mcp_hub
-
-    hub = await get_shared_extra_mcp_hub()
-    if hub is None:
-        return "[Chrome DevTools MCP 미활성화] MCP_CHROME_DEVTOOLS_ENABLED=true 설정 필요"
-
-    navigate = await hub.call_tool("chrome-devtools/navigate", {"url": url})
-    if navigate.get("error"):
-        return f"[navigate 오류] {navigate['error']}"
-
-    evaluate = await hub.call_tool(
-        "chrome-devtools/evaluate",
-        {"script": "document.body.innerText"},
-    )
-    return _extract_mcp_text(evaluate)
+    return await fetch_url_via_browser_mcp(url)
 
 
 async def _run_oracle_query(entry: dict[str, Any]) -> str:
@@ -135,7 +112,7 @@ async def build_daily_work_report(
                     continue
                 lines.append(f"### {name}")
                 lines.append(f"- URL: {url}")
-                body = await _fetch_url_via_chrome(url)
+                body = await _fetch_url_via_browser(url)
                 preview = body[:8000] + ("..." if len(body) > 8000 else "")
                 lines.append("")
                 lines.append("```text")

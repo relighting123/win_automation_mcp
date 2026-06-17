@@ -93,6 +93,7 @@ class AppUIActionResult:
     shortcut: Optional[str] = None
     button: Optional[str] = None
     matched_text: Optional[str] = None
+    search_trace: Optional[list[str]] = None
 
     @property
     def is_success(self) -> bool:
@@ -117,6 +118,8 @@ class AppUIActionResult:
             payload["offset_x"] = self.offset_x
         if self.offset_y is not None:
             payload["offset_y"] = self.offset_y
+        if self.search_trace:
+            payload["search_trace"] = list(self.search_trace)
         return payload
 
 
@@ -726,6 +729,18 @@ class AppUIAction:
             info["hwnd"],
             scope or "-",
         )
+
+    def _append_search_trace(
+        self,
+        trace: Optional[list[str]],
+        message: str,
+        *,
+        log: bool = True,
+    ) -> None:
+        if trace is not None:
+            trace.append(message)
+        if log:
+            logger.info("[traverse] %s", message)
 
     def _safe_draw_outline(
         self,
@@ -3059,6 +3074,7 @@ class AppUIAction:
         top_outline_colour: str = "blue",
         outline_scope: str = "all",
         allow_invisible_children: bool = False,
+        log_search_trace: Optional[bool] = None,
     ) -> AppUIActionResult:
         """
         속성 기반으로 특정 요소를 찾아 클릭합니다.
@@ -3081,6 +3097,9 @@ class AppUIAction:
           - all: search_root + target (기본)
           - traverse: 모든 top window + 각 search_root + target (탐색 디버깅용)
         top_outline_colour: traverse 모드에서 top-level 창 테두리 색 (기본 blue)
+        log_search_trace:
+          - True: CLI용 탐색 로그(search_trace) 수집
+          - None(기본): outline_scope=traverse 일 때만 수집
         """
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
@@ -3123,6 +3142,9 @@ class AppUIAction:
         outline_traverse_tops = draw_outline and outline_scope == "traverse"
         outline_target = draw_outline and outline_scope in {"target", "all", "traverse"}
         outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
+        if log_search_trace is None:
+            log_search_trace = outline_scope == "traverse"
+        search_trace: Optional[list[str]] = [] if log_search_trace else None
 
         logger.info(
             "[click_app_by_attr] 시작: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s, timeout=%s, poll_interval=%s",
@@ -3162,6 +3184,10 @@ class AppUIAction:
             while True:
                 attempt += 1
                 if attempt > 1:
+                    self._append_search_trace(
+                        search_trace,
+                        f"폴링 재시도 {attempt}회차 (elapsed={time.monotonic() - start:.1f}s)",
+                    )
                     logger.info(
                         "[click_app_by_attr] 폴링 재시도 %d회차 (elapsed=%.1fs, timeout=%s)",
                         attempt,
@@ -3198,6 +3224,10 @@ class AppUIAction:
 
                 top_labels = [self._format_window_label(w) for w in top_windows]
                 scanned_top_labels = top_labels
+                self._append_search_trace(
+                    search_trace,
+                    f"top window {len(top_labels)}개: {', '.join(top_labels) or '(없음)'}",
+                )
                 logger.info(
                     "[click_app_by_attr] 순회 top window 목록 (%d개): %s",
                     len(top_labels),
@@ -3212,10 +3242,15 @@ class AppUIAction:
                         pause=outline_pause,
                     )
 
-                for top_window in top_windows:
+                for top_index, top_window in enumerate(top_windows, start=1):
+                    top_label = self._format_window_label(top_window)
+                    self._append_search_trace(
+                        search_trace,
+                        f"top[{top_index}/{len(top_windows)}] {top_label}",
+                    )
                     logger.info(
                         "[click_app_by_attr] top window 순회 시작: %s",
-                        self._format_window_label(top_window),
+                        top_label,
                     )
                     search_roots = self._iter_attr_search_roots(
                         window_target=window_target,
@@ -3226,8 +3261,12 @@ class AppUIAction:
                         top_window_override=top_window,
                         allow_invisible_children=allow_invisible_children,
                     )
-                    for search_root, search_root_info in search_roots:
+                    for root_index, (search_root, search_root_info) in enumerate(search_roots, start=1):
                         if search_root is None:
+                            self._append_search_trace(
+                                search_trace,
+                                f"top[{top_index}] search_root[{root_index}] 없음 — {search_root_info}",
+                            )
                             logger.info(
                                 "[click_app_by_attr] search_root 없음: top=%s, info=%s",
                                 self._format_window_label(top_window),
@@ -3235,6 +3274,11 @@ class AppUIAction:
                             )
                             continue
 
+                        identity = self._format_search_window_log(search_root)
+                        self._append_search_trace(
+                            search_trace,
+                            f"top[{top_index}] search_root[{root_index}] {search_root_info} — {identity}",
+                        )
                         self._log_search_window(
                             tool="click_app_by_attr",
                             wrapper=search_root,
@@ -3266,6 +3310,11 @@ class AppUIAction:
                         if target is not None:
                             matched_search_root = search_root
                             matched_search_root_info = search_root_info
+                            self._append_search_trace(
+                                search_trace,
+                                f"매칭 발견: title={self._safe_call(target.window_text, '') or '-'}, "
+                                f"search_root={search_root_info}",
+                            )
                             break
                     if target is not None:
                         break
@@ -3307,6 +3356,7 @@ class AppUIAction:
                         f"child_window_auto_id={child_window_auto_id}, top_windows={scanned_top_labels}, "
                         f"search_root={search_root_info}"
                     ),
+                    search_trace=search_trace,
                 )
             
             search_root = matched_search_root
@@ -3351,6 +3401,7 @@ class AppUIAction:
                     f"matched_auto_id={matched_auto_id}, matched_control_type={matched_type}, "
                     f"search_root={search_root_info}, method={click_method}"
                 ),
+                search_trace=search_trace,
             )
         except Exception as e:
             logger.error("[click_app_by_attr] 예외: %s", e)

@@ -5,7 +5,7 @@
 ## 역할
 
 - Windows 프로그램 UI 자동화 (pywinauto)
-- 사내 URL 수집 (`fetch_url_info`, Chrome DevTools MCP)
+- 사내 URL 수집 (`fetch_url_info`, Browser MCP)
 - Oracle DB 조회 (`query_oracle_db`, `db=prd` 등)
 - 일일/주간 업무 보고서 (`daily_work_summary`, `weekly_report`)
 

@@ -233,6 +233,20 @@ class ClickAppByAttrOutlineTest(unittest.TestCase):
         self.assertEqual(kwargs.get("colour"), "blue")
         self.assertEqual(kwargs.get("label_prefix"), "top")
 
+    def test_log_search_trace_collects_traverse_lines(self) -> None:
+        with patch.object(self.action, "_activate_attr_search_context", return_value=MagicMock(result="success", is_success=True)):
+            with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
+                with patch.object(self.action, "_click_with_preferred_action", return_value="click_input"):
+                    result = self.action.click_element_by_attr(
+                        auto_id="Close",
+                        window_target="top",
+                        log_search_trace=True,
+                    )
+        self.assertEqual(result.result, "success")
+        self.assertIsInstance(result.search_trace, list)
+        self.assertTrue(any("top[" in line for line in result.search_trace or []))
+        self.assertTrue(any("search_root[" in line for line in result.search_trace or []))
+
 
 class ClickAppByAttrPollingTest(unittest.TestCase):
     def setUp(self) -> None:

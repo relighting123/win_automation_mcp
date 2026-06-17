@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -349,6 +350,82 @@ def _tool_ok(result: dict) -> bool:
     return True
 
 
+_MCP_LOG_PATH = _PROJECT_ROOT / "win_mcp" / "logs" / "mcp_server.log"
+
+
+def _should_watch_traverse_log(tool_name: str, args: dict[str, Any]) -> bool:
+    if tool_name != "click_app_by_attr":
+        return False
+    if args.get("log_search_trace") is True:
+        return True
+    outline_scope = str(args.get("outline_scope") or "").strip().lower()
+    if outline_scope == "traverse":
+        return True
+    if args.get("draw_outline") and outline_scope in {"", "all", "search", "traverse"}:
+        return True
+    return False
+
+
+def _extract_tool_payload(result: dict) -> dict[str, Any]:
+    for item in result.get("content", []):
+        if isinstance(item, dict) and item.get("type") == "text":
+            try:
+                parsed = json.loads(str(item.get("text", "")))
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+    return {}
+
+
+class _TraverseLogWatcher:
+    """MCP 서버 로그에서 [traverse] 줄을 실시간으로 CLI에 표시합니다."""
+
+    def __init__(self, console: Console) -> None:
+        self._console = console
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if not _MCP_LOG_PATH.exists():
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+
+    def _run(self) -> None:
+        try:
+            with open(_MCP_LOG_PATH, "r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(0, 2)
+                while not self._stop.is_set():
+                    line = handle.readline()
+                    if not line:
+                        time.sleep(0.08)
+                        continue
+                    if "[traverse]" not in line:
+                        continue
+                    message = line.split("[traverse]", 1)[-1].strip()
+                    if " - INFO - " in message:
+                        message = message.split(" - INFO - ", 1)[-1].strip()
+                    if message:
+                        self._console.print(f"  [muted]›[/muted] [secondary]{message}[/secondary]")
+        except OSError:
+            return
+
+
+def _print_search_trace(console: Console, payload: dict[str, Any]) -> None:
+    trace = payload.get("search_trace")
+    if not isinstance(trace, list) or not trace:
+        return
+    console.print(f"  [muted]탐색 로그[/muted]  [border]{'─' * 44}[/border]")
+    for line in trace:
+        console.print(f"  [muted]›[/muted] [secondary]{line}[/secondary]")
+
+
 # ── Main CLI class ─────────────────────────────────────────────────────────────
 
 class ChatRTDCLI:
@@ -471,8 +548,17 @@ class ChatRTDCLI:
         step_count: int,
     ) -> tuple[bool, int, dict]:
         c = self.console
+        traverse_watcher: Optional[_TraverseLogWatcher] = None
+        if _should_watch_traverse_log(tool_name, args):
+            traverse_watcher = _TraverseLogWatcher(c)
+            traverse_watcher.start()
+
         t0 = time.time()
-        result = call_mcp_tool(self.mcp_url, tool_name, args)
+        try:
+            result = call_mcp_tool(self.mcp_url, tool_name, args)
+        finally:
+            if traverse_watcher is not None:
+                traverse_watcher.stop()
         elapsed = time.time() - t0
 
         if _tool_ok(result):
@@ -488,6 +574,11 @@ class ChatRTDCLI:
         step_count += 1
         name_col = f"[tool]◆[/tool]  [secondary]{tool_name}[/secondary]"
         c.print(f"  {name_col:<52}{status}")
+
+        payload = _extract_tool_payload(result)
+        if payload:
+            _print_search_trace(c, payload)
+
         return execution_shown, step_count, result
 
     def _print_skill_result(self, skill_id: str, result: dict) -> None:

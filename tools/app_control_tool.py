@@ -311,6 +311,7 @@ def click_app_by_attr(
     top_outline_colour: str = "blue",
     outline_scope: str = "all",
     allow_invisible_children: bool = False,
+    log_search_trace: Optional[bool] = None,
 ) -> str:
     """
     pywinauto(UIA) 속성 기반으로 요소를 직접 찾아 클릭합니다.
@@ -350,6 +351,9 @@ def click_app_by_attr(
       - 양수: 지정한 간격(초)으로 재시도
     allow_invisible_children:
       - True: 보이지 않는 child window(로그인 모달 등)도 탐색·HWND 활성화 후보에 포함
+    log_search_trace:
+      - True: 탐색 중 본 창/요소를 search_trace로 반환 (CLI 표시용)
+      - None(기본): outline_scope=traverse 일 때만 수집
     """
     logger.info(
         "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s, timeout=%s, poll_interval=%s",
@@ -386,6 +390,7 @@ def click_app_by_attr(
         top_outline_colour=top_outline_colour,
         outline_scope=outline_scope,
         allow_invisible_children=allow_invisible_children,
+        log_search_trace=log_search_trace,
     )
     payload = result.to_dict()
     logger.info(
