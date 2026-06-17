@@ -476,6 +476,50 @@ class AppSession:
         self._skipped_data_file_reopen = False
         self._state = SessionState.DISCONNECTED
         logger.info("애플리케이션 연결 해제")
+
+    def is_session_alive(self) -> bool:
+        """pywinauto 연결이 살아 있고 최소 1개 윈도우 핸들이 있는지 확인합니다."""
+        if not self.is_connected or self._app is None:
+            return False
+        try:
+            return len(self._app.windows()) > 0
+        except Exception:
+            return False
+
+    def has_usable_window(self) -> bool:
+        """연결된 앱에 존재하는(visible/minimized) 윈도우가 있는지 확인합니다."""
+        if not self.is_session_alive():
+            return False
+        try:
+            for window in self._app.windows():
+                wrapper = window.wrapper_object() if hasattr(window, "wrapper_object") else window
+                if not wrapper.exists():
+                    continue
+                if self._safe_wrapper_visible_or_minimized(wrapper):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
+    def _safe_wrapper_visible_or_minimized(wrapper: Any) -> bool:
+        try:
+            return bool(wrapper.is_visible() or wrapper.is_minimized())
+        except Exception:
+            return False
+
+    def refresh_stale_connection(self) -> bool:
+        """
+        끊긴 연결을 정리합니다.
+        Returns: 정리( disconnect )가 발생했으면 True
+        """
+        if not self.is_connected:
+            return False
+        if self.is_session_alive():
+            return False
+        logger.warning("stale 세션 감지: pywinauto 연결을 해제합니다.")
+        self.disconnect()
+        return True
     
     def reconnect(self) -> "AppSession":
         """
@@ -573,14 +617,26 @@ class AppSession:
             and normalized
             and self._last_opened_data_file == normalized
         ):
-            logger.info(
-                "[launch] 이미 연결됨 및 동일 데이터 파일 사용 중 - 포커스만 복원: %s",
-                path,
-            )
-            self._skipped_data_file_reopen = True
-            if self.is_connected:
-                self._bring_to_front()
-            return self
+            if not self.is_session_alive():
+                logger.warning(
+                    "[launch] 동일 데이터 파일 캐시가 있으나 세션이 끊어져 재오픈합니다: %s",
+                    path,
+                )
+                self.disconnect()
+            elif not self.has_usable_window():
+                logger.warning(
+                    "[launch] 동일 데이터 파일 캐시가 있으나 사용 가능한 창이 없어 재오픈합니다: %s",
+                    path,
+                )
+            else:
+                logger.info(
+                    "[launch] 이미 연결됨 및 동일 데이터 파일 사용 중 - 포커스만 복원: %s",
+                    path,
+                )
+                self._skipped_data_file_reopen = True
+                if self.is_connected:
+                    self._bring_to_front()
+                return self
 
         logger.info("[launch] 연결 유지 상태에서 데이터 파일 열기: %s", path)
         os.startfile(path)

@@ -84,6 +84,8 @@ class AppLauncher:
 
         self._session._skipped_data_file_reopen = False
 
+        self._session.refresh_stale_connection()
+
         if self._session.is_connected:
             reopen_data_file = bool(kwargs.pop("reopen_data_file", False))
             if launch_path and not self._session._is_executable_path(launch_path):
@@ -152,14 +154,10 @@ class AppLauncher:
             연결된 AppSession
         """
         if self._session.is_connected:
-            # 연결 상태 확인
-            try:
-                windows = self._session.app.windows()
-                if windows:
-                    return self._session
-            except Exception:
-                logger.warning("기존 연결이 유효하지 않음, 재연결 시도")
-                self._session.disconnect()
+            if self._session.is_session_alive():
+                return self._session
+            logger.warning("기존 연결이 유효하지 않음, 재연결 시도")
+            self._session.disconnect()
         
         # 이미 실행 중인지 확인 후 연결 시도
         try:

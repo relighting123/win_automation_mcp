@@ -349,18 +349,20 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
         self.mock_child = _MockNode(title="ezDFS2 Login", control_type="Window", automation_id="LoginDlg")
 
     def test_activate_attr_search_context_brings_child_hwnd(self) -> None:
+        top = _MockNode(title="Main", control_type="Window", automation_id="MainWnd")
         with patch.object(self.action, "_launcher") as mock_launcher:
             mock_launcher.ensure_running.return_value = None
-            with patch.object(
-                self.action,
-                "_resolve_attr_search_root",
-                return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
-            ):
-                with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
-                    result = self.action._activate_attr_search_context(
-                        child_window_title="ezDFS2 Login",
-                        window_target="child",
-                    )
+            with patch.object(self.action, "_iter_click_attr_top_windows", return_value=[top]):
+                with patch.object(
+                    self.action,
+                    "_resolve_attr_search_root",
+                    return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
+                ):
+                    with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
+                        result = self.action._activate_attr_search_context(
+                            child_window_title="ezDFS2 Login",
+                            window_target="child",
+                        )
         self.assertTrue(result.is_success)
         activate.assert_called_once()
 

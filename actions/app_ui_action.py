@@ -1071,6 +1071,14 @@ class AppUIAction:
             )
         return activated
 
+    def _iter_click_attr_top_windows(self) -> list[Any]:
+        """click_app_by_attr 탐색에 사용할 top window 목록을 반환합니다."""
+        top_windows = self._iter_process_top_windows()
+        if top_windows:
+            return top_windows
+        picked = self._pick_target_window() or self._session.get_top_window()
+        return [picked] if picked is not None else []
+
     def _activate_attr_search_context(
         self,
         *,
@@ -1109,15 +1117,28 @@ class AppUIAction:
             resolve_mode = target_mode if target_mode in {"child", "auto"} else "auto"
 
             if child_title or child_auto_id:
-                matched_child, info = self._resolve_attr_search_root(
-                    window_target=resolve_mode,
-                    child_window_title=child_window_title,
-                    child_window_auto_id=child_window_auto_id,
-                    child_window_match_mode=child_window_match_mode,
-                    case_sensitive=case_sensitive,
-                    allow_invisible_children=allow_invisible_children,
+                top_windows = self._iter_click_attr_top_windows()
+                logger.info(
+                    "[click_app_by_attr] child 활성화 top window 후보 (%d개)",
+                    len(top_windows),
                 )
-                if matched_child is not None:
+                for top_window in top_windows:
+                    matched_child, info = self._resolve_attr_search_root(
+                        window_target=resolve_mode,
+                        child_window_title=child_window_title,
+                        child_window_auto_id=child_window_auto_id,
+                        child_window_match_mode=child_window_match_mode,
+                        case_sensitive=case_sensitive,
+                        top_window_override=top_window,
+                        allow_invisible_children=allow_invisible_children,
+                    )
+                    if matched_child is None:
+                        logger.info(
+                            "[click_app_by_attr] child 미발견: top=%s, info=%s",
+                            self._format_window_label(top_window),
+                            info,
+                        )
+                        continue
                     if self._activate_window_wrapper(matched_child, label=info):
                         return AppUIActionResult(
                             result="success",
@@ -1127,14 +1148,15 @@ class AppUIAction:
                             ),
                         )
                     logger.warning(
-                        "[click_app_by_attr] child HWND 활성화 실패, app top으로 폴백: %s",
+                        "[click_app_by_attr] child HWND 활성화 실패: top=%s, %s",
+                        self._format_window_label(top_window),
                         info,
                     )
-                else:
-                    logger.warning(
-                        "[click_app_by_attr] child window 미발견, app top으로 폴백: %s",
-                        info,
-                    )
+                logger.warning(
+                    "[click_app_by_attr] child window 미발견, app top으로 폴백: title=%s, auto_id=%s",
+                    child_title or "-",
+                    child_auto_id or "-",
+                )
 
             return self._bring_connected_app_to_front()
         except Exception as e:
@@ -2898,10 +2920,7 @@ class AppUIAction:
                         time.sleep(effective_poll_interval)
                     continue
 
-                top_windows = self._iter_process_top_windows()
-                if not top_windows:
-                    picked = self._pick_target_window() or self._session.get_top_window()
-                    top_windows = [picked] if picked is not None else []
+                top_windows = self._iter_click_attr_top_windows()
 
                 top_labels = [self._format_window_label(w) for w in top_windows]
                 scanned_top_labels = top_labels
@@ -2917,6 +2936,7 @@ class AppUIAction:
                         "[click_app_by_attr] top window 순회 시작: %s",
                         top_label,
                     )
+                    self._activate_window_wrapper(top_window, label=f"poll_top={top_label}")
                     if outline_top:
                         self._safe_draw_outline(
                             top_window,
