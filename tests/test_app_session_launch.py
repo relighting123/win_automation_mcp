@@ -79,8 +79,9 @@ class AppSessionLaunchTest(unittest.TestCase):
         )
         with patch("os.startfile", create=True) as mock_startfile:
             with patch.object(self.session, "_bring_to_front") as mock_focus:
-                with patch.object(self.session, "has_usable_window", return_value=True):
-                    self.session.open_associated_file(r"D:\Rules\report.rul")
+                with patch.object(self.session, "is_session_alive", return_value=True):
+                    with patch.object(self.session, "has_usable_window", return_value=True):
+                        self.session.open_associated_file(r"D:\Rules\report.rul")
         mock_startfile.assert_not_called()
         mock_focus.assert_called_once()
         self.assertTrue(self.session._skipped_data_file_reopen)
@@ -96,8 +97,21 @@ class AppSessionLaunchTest(unittest.TestCase):
             with patch.object(self.session, "_bring_to_front"):
                 self.session.open_associated_file(r"D:\Rules\report.rul")
         self.assertEqual(self.session.state, SessionState.DISCONNECTED)
-        mock_startfile.assert_called_once_with(r"D:\Rules\report.rul")
+        mock_startfile.assert_not_called()
         self.assertFalse(self.session._skipped_data_file_reopen)
+
+    def test_launcher_relaunches_after_program_closed_clears_session(self) -> None:
+        launcher = AppLauncher(session=self.session)
+        self.session._state = SessionState.CONNECTED
+        self.session._app = MagicMock()
+        self.session._last_opened_data_file = self.session._normalize_data_file_path(
+            r"D:\Rules\report.rul"
+        )
+        with patch.object(self.session, "is_session_alive", return_value=False):
+            with patch.object(self.session, "start", return_value=self.session) as mock_start:
+                launcher.launch(path=r"D:\Rules\report.rul", connect_path=r"C:\Apps\Tool.exe")
+        self.assertEqual(self.session.state, SessionState.DISCONNECTED)
+        mock_start.assert_called_once()
 
     def test_open_associated_file_reopens_when_no_usable_window(self) -> None:
         self.session._state = SessionState.CONNECTED
@@ -114,12 +128,21 @@ class AppSessionLaunchTest(unittest.TestCase):
         mock_startfile.assert_called_once_with(r"D:\Rules\report.rul")
         self.assertFalse(self.session._skipped_data_file_reopen)
 
+    def test_is_session_alive_false_when_process_not_running(self) -> None:
+        self.session._state = SessionState.CONNECTED
+        self.session._app = MagicMock()
+        self.session._app.windows.return_value = [MagicMock()]
+        with patch.object(self.session, "_get_connected_process_id", return_value=1234):
+            with patch.object(self.session, "_is_connected_process_running", return_value=False):
+                self.assertFalse(self.session.is_session_alive())
+
     def test_refresh_stale_connection_disconnects_dead_session(self) -> None:
         self.session._state = SessionState.CONNECTED
         self.session._app = MagicMock()
         self.session._app.windows.side_effect = RuntimeError("stale")
         self.session._last_opened_data_file = "cached"
-        self.assertTrue(self.session.refresh_stale_connection())
+        with patch.object(self.session, "_is_connected_process_running", return_value=False):
+            self.assertTrue(self.session.refresh_stale_connection())
         self.assertEqual(self.session.state, SessionState.DISCONNECTED)
         self.assertIsNone(self.session._last_opened_data_file)
 
@@ -139,8 +162,9 @@ class AppSessionLaunchTest(unittest.TestCase):
         launcher = AppLauncher(session=self.session)
         self.session._state = SessionState.CONNECTED
         self.session._app = MagicMock()
-        with patch.object(self.session, "open_associated_file", return_value=self.session) as mock_open:
-            result = launcher.launch(path=r"D:\Rules\report.rul")
+        with patch.object(self.session, "is_session_alive", return_value=True):
+            with patch.object(self.session, "open_associated_file", return_value=self.session) as mock_open:
+                result = launcher.launch(path=r"D:\Rules\report.rul")
         mock_open.assert_called_once()
         self.assertFalse(mock_open.call_args.kwargs.get("force"))
         self.assertIs(result, self.session)
@@ -149,8 +173,9 @@ class AppSessionLaunchTest(unittest.TestCase):
         launcher = AppLauncher(session=self.session)
         self.session._state = SessionState.CONNECTED
         self.session._app = MagicMock()
-        with patch.object(self.session, "open_associated_file", return_value=self.session) as mock_open:
-            launcher.launch(path=r"D:\Rules\report.rul", reopen_data_file=True)
+        with patch.object(self.session, "is_session_alive", return_value=True):
+            with patch.object(self.session, "open_associated_file", return_value=self.session) as mock_open:
+                launcher.launch(path=r"D:\Rules\report.rul", reopen_data_file=True)
         self.assertTrue(mock_open.call_args.kwargs.get("force"))
 
 

@@ -93,13 +93,19 @@ class AppLauncher:
                     logger.info("[launch] 이미 연결됨 - 데이터 파일 다시 열기: %s", launch_path)
                 else:
                     logger.info("[launch] 이미 연결됨 - 데이터 파일 처리: %s", launch_path)
-                return self._session.open_associated_file(
+                self._session.open_associated_file(
                     launch_path,
                     force=reopen_data_file,
                     **kwargs,
                 )
-            logger.info("이미 연결된 세션이 있습니다")
-            return self._session
+            else:
+                logger.info("이미 연결된 세션이 있습니다")
+            if self._session.is_connected:
+                return self._session
+            logger.info(
+                "[launch] 프로그램 종료로 세션이 해제되어 전체 실행으로 전환: %s",
+                launch_path,
+            )
         
         if not launch_path:
             raise ConnectionError(

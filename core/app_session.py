@@ -477,9 +477,46 @@ class AppSession:
         self._state = SessionState.DISCONNECTED
         logger.info("애플리케이션 연결 해제")
 
+    def _get_connected_process_id(self) -> Optional[int]:
+        """현재 pywinauto 세션에 연결된 프로세스 PID를 반환합니다."""
+        if self._app is None:
+            return None
+        pid = getattr(self._app, "process", None)
+        if pid:
+            try:
+                return int(pid)
+            except (TypeError, ValueError):
+                pass
+        try:
+            windows = self._app.windows()
+            if not windows:
+                return None
+            wrapper = windows[0].wrapper_object() if hasattr(windows[0], "wrapper_object") else windows[0]
+            process_id = getattr(getattr(wrapper, "element_info", None), "process_id", None)
+            if process_id:
+                return int(process_id)
+        except Exception:
+            return None
+        return None
+
+    def _is_connected_process_running(self) -> bool:
+        """연결된 대상 프로세스가 아직 실행 중인지 확인합니다."""
+        pid = self._get_connected_process_id()
+        if pid is None:
+            return False
+        try:
+            import psutil
+
+            proc = psutil.Process(pid)
+            return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+        except Exception:
+            return False
+
     def is_session_alive(self) -> bool:
-        """pywinauto 연결이 살아 있고 최소 1개 윈도우 핸들이 있는지 확인합니다."""
+        """pywinauto 연결이 살아 있고 대상 프로세스/윈도우가 있는지 확인합니다."""
         if not self.is_connected or self._app is None:
+            return False
+        if not self._is_connected_process_running():
             return False
         try:
             return len(self._app.windows()) > 0
@@ -515,11 +552,13 @@ class AppSession:
         """
         if not self.is_connected:
             return False
-        if self.is_session_alive():
-            return False
-        logger.warning("stale 세션 감지: pywinauto 연결을 해제합니다.")
-        self.disconnect()
-        return True
+        if not self.is_session_alive():
+            logger.warning(
+                "stale 세션 감지: 대상 프로그램이 종료된 것으로 보여 연결을 해제합니다."
+            )
+            self.disconnect()
+            return True
+        return False
     
     def reconnect(self) -> "AppSession":
         """
@@ -619,10 +658,11 @@ class AppSession:
         ):
             if not self.is_session_alive():
                 logger.warning(
-                    "[launch] 동일 데이터 파일 캐시가 있으나 세션이 끊어져 재오픈합니다: %s",
+                    "[launch] 대상 프로그램이 종료된 것으로 보입니다. 세션 해제 후 재실행합니다: %s",
                     path,
                 )
                 self.disconnect()
+                return self
             elif not self.has_usable_window():
                 logger.warning(
                     "[launch] 동일 데이터 파일 캐시가 있으나 사용 가능한 창이 없어 재오픈합니다: %s",
@@ -637,6 +677,9 @@ class AppSession:
                 if self.is_connected:
                     self._bring_to_front()
                 return self
+
+        if not self.is_connected:
+            return self
 
         logger.info("[launch] 연결 유지 상태에서 데이터 파일 열기: %s", path)
         os.startfile(path)
