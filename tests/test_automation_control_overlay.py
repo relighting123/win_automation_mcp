@@ -54,7 +54,22 @@ class AutomationControlOverlayTest(unittest.TestCase):
         overlay = AutomationControlOverlay(control)
         root = MagicMock()
         overlay._root = root
+        overlay._poll_after_id = "poll-1"
         overlay._commands.put("stop")
+
+        overlay._process_commands()
+
+        root.after_cancel.assert_called_once_with("poll-1")
+        root.quit.assert_called_once()
+        root.destroy.assert_called_once()
+        root.after.assert_not_called()
+
+    def test_process_commands_skips_poll_when_closing(self) -> None:
+        control = MagicMock()
+        overlay = AutomationControlOverlay(control)
+        root = MagicMock()
+        overlay._root = root
+        overlay._closing = True
 
         overlay._process_commands()
 

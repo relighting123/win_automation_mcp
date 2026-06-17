@@ -29,23 +29,32 @@ class AutomationControlOverlay:
         self._pause_btn: ttk.Button | None = None
         self._commands: queue.Queue[str] = queue.Queue()
         self._closing = False
+        self._poll_after_id: str | None = None
+        self._shutdown_done = threading.Event()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
         self._closing = False
+        self._shutdown_done.clear()
         self._thread = threading.Thread(target=self._run_ui, name="automation-overlay", daemon=True)
         self._thread.start()
         self._ready.wait(timeout=3.0)
 
     def stop(self) -> None:
         if self._closing:
+            self._shutdown_done.wait(timeout=5.0)
             return
         self._closing = True
-        self._commands.put("stop")
-        if self._thread:
-            self._thread.join(timeout=2.0)
-        self._root = None
+        try:
+            self._commands.put_nowait("stop")
+        except queue.Full:
+            self._commands.put("stop")
+        if self._thread and self._thread.is_alive():
+            self._shutdown_done.wait(timeout=5.0)
+            self._thread.join(timeout=1.0)
+        else:
+            self._shutdown_done.set()
         self._thread = None
 
     def schedule_update(self) -> None:
@@ -54,6 +63,34 @@ class AutomationControlOverlay:
         try:
             self._commands.put_nowait("update")
         except queue.Full:
+            pass
+
+    def _cancel_poll(self, root: tk.Tk) -> None:
+        if self._poll_after_id is None:
+            return
+        try:
+            root.after_cancel(self._poll_after_id)
+        except tk.TclError:
+            pass
+        self._poll_after_id = None
+
+    def _schedule_poll(self, root: tk.Tk) -> None:
+        if self._closing:
+            return
+        try:
+            self._poll_after_id = root.after(_QUEUE_POLL_MS, self._process_commands)
+        except tk.TclError:
+            self._poll_after_id = None
+
+    def _shutdown_ui(self, root: tk.Tk) -> None:
+        self._cancel_poll(root)
+        try:
+            root.quit()
+        except tk.TclError:
+            pass
+        try:
+            root.destroy()
+        except tk.TclError:
             pass
 
     def _process_commands(self) -> None:
@@ -68,26 +105,16 @@ class AutomationControlOverlay:
                 if command == "stop":
                     should_stop = True
                     break
-                if command == "update":
+                if command == "update" and not self._closing:
                     self._refresh_labels()
         except queue.Empty:
             pass
 
-        if should_stop:
-            try:
-                root.quit()
-            except tk.TclError:
-                pass
-            try:
-                root.destroy()
-            except tk.TclError:
-                pass
+        if should_stop or self._closing:
+            self._shutdown_ui(root)
             return
 
-        try:
-            root.after(_QUEUE_POLL_MS, self._process_commands)
-        except tk.TclError:
-            pass
+        self._schedule_poll(root)
 
     def _run_ui(self) -> None:
         try:
@@ -145,7 +172,9 @@ class AutomationControlOverlay:
             logger.warning("자동화 오버레이 UI 실행 실패: %s", exc)
             self._ready.set()
         finally:
+            self._poll_after_id = None
             self._root = None
+            self._shutdown_done.set()
 
     def _on_toggle_pause(self) -> None:
         self._control.toggle_pause()
