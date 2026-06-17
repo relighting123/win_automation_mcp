@@ -400,6 +400,91 @@ win_automation_mcp/
 
 ---
 
+## Gemini CLI 연동 (chatRTD 브랜딩)
+
+[Gemini CLI](https://github.com/google-gemini/gemini-cli)를 프론트엔드로 쓰고, MCP 서버·스킬은 이 프로젝트 것을 그대로 사용할 수 있습니다.
+
+### 빠른 시작
+
+```bash
+# 1) Gemini CLI 설치
+npm install -g @google/gemini-cli
+
+# 2) 설정 복사 (최초 1회, 런처가 자동 생성하기도 함)
+mkdir .gemini
+copy config\gemini_settings.json.example .gemini\settings.json
+
+# 3) 실행
+python scripts/start_chatrtd_gemini.py
+```
+
+런처가 하는 일:
+
+- chatRTD 시작 배너 출력
+- MCP 서버(`http://localhost:8000/mcp`) 자동 기동·연결
+- `config/app_config.yaml` LLM 설정 **호환성 검사**
+- `GEMINI.md` 프로젝트 컨텍스트 로드 (Gemini CLI 기본)
+
+### MCP 설정 (`.gemini/settings.json`)
+
+```json
+{
+  "mcpServers": {
+    "win-automation": {
+      "httpUrl": "http://localhost:8000/mcp",
+      "trust": true,
+      "timeout": 600000
+    }
+  }
+}
+```
+
+gemini 안에서 `/mcp` 로 연결 상태를 확인합니다.
+
+### LLM / API 키 호환성
+
+| 설정 | Gemini CLI 지원 |
+|------|----------------|
+| `GEMINI_API_KEY` (Google Gemini API) | ✅ |
+| `GOOGLE_GEMINI_BASE_URL` (사내 Gemini 게이트웨이) | ✅ Gemini API 형식일 때 |
+| Groq / OpenAI 호환 (`api.groq.com/openai/v1`) | ❌ 직접 불가 |
+
+`app_config.yaml`에 Groq 등 OpenAI 호환 URL이 있으면 런처가 경고 후 종료합니다.  
+이 경우 **chatRTD CLI**(`chatRTD`)를 쓰거나, **Gemini API 키**를 별도로 설정하세요.
+
+```dotenv
+GEMINI_API_KEY=your_gemini_key
+# 사내 Gemini 프록시가 있을 때만:
+# GOOGLE_GEMINI_BASE_URL=https://your-gemini-gateway.example.com
+```
+
+### UI에 chatRTD 로고 표시
+
+| 수준 | 방법 |
+|------|------|
+| 기본 | 런처 배너 + `CLI_TITLE=chatRTD` (터미널 타이틀) |
+| 완전 | gemini-cli 포크에 브랜딩 패치 적용 |
+
+완전 브랜딩(헤더에 **chatRTD** ASCII 로고):
+
+```powershell
+# Windows
+.\scripts\apply_gemini_cli_branding.ps1
+$env:CHATRTD_GEMINI_BRANDED = "1"
+python scripts\start_chatrtd_gemini.py
+```
+
+```bash
+# Linux/macOS
+bash scripts/apply_gemini_cli_branding.sh
+export CHATRTD_GEMINI_BRANDED=1
+python scripts/start_chatrtd_gemini.py
+```
+
+패치 파일: `patches/gemini-cli/chatrtd-branding.patch`
+
+---
+
 ## MCP 서버만 단독 실행
 
 chatRTD를 사용하지 않고 MCP 서버만 별도로 실행할 수도 있습니다:

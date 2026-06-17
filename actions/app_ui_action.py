@@ -879,6 +879,201 @@ class AppUIAction:
                 pids.add(int(pid))
         return pids
 
+    def _enum_process_top_level_hwnds(self, pids: Optional[set[int]] = None) -> list[int]:
+        """연결된 프로세스의 top-level HWND 목록을 반환합니다 (Z-order 순)."""
+        target_pids = pids or self._get_connected_process_ids()
+        if not target_pids:
+            return []
+
+        hwnds: list[int] = []
+        try:
+            import win32gui
+
+            def _callback(hwnd: int, _: Any) -> bool:
+                if not win32gui.IsWindow(hwnd):
+                    return True
+                if win32gui.GetParent(hwnd):
+                    return True
+                pid = self._pid_from_hwnd(hwnd)
+                if pid and pid in target_pids:
+                    hwnds.append(int(hwnd))
+                return True
+
+            win32gui.EnumWindows(_callback, None)
+        except Exception as e:
+            logger.debug("[click_app_by_attr] EnumWindows 실패: %s", e)
+        return hwnds
+
+    def _wrapper_from_hwnd(self, hwnd: int) -> Optional[Any]:
+        try:
+            from pywinauto.controls.hwndwrapper import HwndWrapper
+
+            wrapper = HwndWrapper(int(hwnd))
+            if self._safe_call(lambda: wrapper.exists(), False):
+                return wrapper
+        except Exception as e:
+            logger.debug("[click_app_by_attr] HWND wrapper 생성 실패(hwnd=%s): %s", hwnd, e)
+        return None
+
+    def _score_window_for_attr_search(
+        self,
+        wrapper: Any,
+        *,
+        child_window_title: str = "",
+        child_window_auto_id: str = "",
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+    ) -> int:
+        """로그인/모달 창 우선 활성화를 위한 점수 (높을수록 우선)."""
+        score = 0
+        if self._safe_call(lambda: wrapper.is_visible(), False):
+            score += 10
+        if self._safe_call(lambda: wrapper.is_enabled(), True):
+            score += 2
+
+        titles = self._get_node_title_candidates(wrapper)
+        joined = " ".join(titles).lower()
+        for keyword in ("로그인", "login", "sign in", "signin", "인증", "password", "비밀번호"):
+            if keyword in joined:
+                score += 40
+
+        if child_window_title or child_window_auto_id:
+            if self._matches_child_window_spec(
+                wrapper,
+                child_title=child_window_title,
+                child_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                score += 100
+
+        try:
+            descendant_count = len(self._safe_call(wrapper.descendants, []) or [])
+            if descendant_count > 0:
+                score += min(30, descendant_count)
+        except Exception:
+            pass
+
+        handle = self._get_wrapper_handle(wrapper) or 0
+        score += min(20, handle % 1000 // 50)
+        return score
+
+    def _activate_process_windows_for_attr_search(
+        self,
+        *,
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        allow_invisible_children: bool = False,
+    ) -> AppUIActionResult:
+        """
+        연결 프로세스의 모든 top-level 창(로그인 모달 포함)을 순회하며 foreground로 올립니다.
+
+        사용자가 로그인 창을 수동 클릭해야만 click_app_by_attr 이 동작하던 경우,
+        포커스 전 UIA descendants 가 비어 있는 창을 자동 활성화합니다.
+        """
+        pids = self._get_connected_process_ids()
+        if not pids:
+            return AppUIActionResult(result="error", message="연결된 프로세스 없음")
+
+        child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
+        wrappers: list[Any] = []
+        seen: set[int] = set()
+
+        for hwnd in self._enum_process_top_level_hwnds(pids):
+            wrapper = self._wrapper_from_hwnd(hwnd)
+            if wrapper is None:
+                continue
+            if not self._verify_process_path(wrapper):
+                continue
+            is_visible = self._safe_call(lambda: wrapper.is_visible(), False)
+            if not is_visible and not allow_invisible_children:
+                continue
+            handle = self._get_wrapper_handle(wrapper) or hwnd
+            if handle in seen:
+                continue
+            seen.add(handle)
+            wrappers.append(wrapper)
+
+        for w in self._iter_process_top_windows():
+            handle = self._get_wrapper_handle(w)
+            if handle and handle not in seen:
+                seen.add(handle)
+                wrappers.append(w)
+
+        if not wrappers:
+            return AppUIActionResult(result="error", message="활성화할 프로세스 창 없음")
+
+        wrappers.sort(
+            key=lambda w: self._score_window_for_attr_search(
+                w,
+                child_window_title=child_title,
+                child_window_auto_id=child_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            ),
+            reverse=True,
+        )
+
+        after_focus_delay = float(
+            self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2)
+        )
+        uia_refresh_delay = float(
+            self._session.config.get("timeouts", {}).get("uia_refresh_delay", 0.15)
+        )
+
+        activated_labels: list[str] = []
+        best_wrapper: Optional[Any] = None
+        best_descendants = -1
+
+        for wrapper in wrappers:
+            label = self._format_window_label(wrapper)
+            if not self._activate_window_wrapper(wrapper, label="process_scan"):
+                continue
+            activated_labels.append(label)
+            time.sleep(uia_refresh_delay)
+            descendant_count = len(self._safe_call(wrapper.descendants, []) or [])
+            if descendant_count > best_descendants:
+                best_descendants = descendant_count
+                best_wrapper = wrapper
+            if descendant_count > 0 and (
+                not child_title
+                or self._matches_child_window_spec(
+                    wrapper,
+                    child_title=child_title,
+                    child_auto_id=child_auto_id,
+                    child_window_match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                )
+            ):
+                self._session.cached_window = wrapper
+                return AppUIActionResult(
+                    result="success",
+                    message=(
+                        f"로그인/모달 창 활성화: {label} (descendants={descendant_count})"
+                    ),
+                )
+
+        if best_wrapper is not None:
+            self._activate_window_wrapper(best_wrapper, label="best_descendants")
+            time.sleep(after_focus_delay)
+            self._session.cached_window = best_wrapper
+            return AppUIActionResult(
+                result="success",
+                message=(
+                    "프로세스 창 활성화(최다 descendants): "
+                    f"{self._format_window_label(best_wrapper)} "
+                    f"(tried={len(activated_labels)}, descendants={best_descendants})"
+                ),
+            )
+
+        return AppUIActionResult(
+            result="success",
+            message=f"프로세스 창 활성화 시도: {activated_labels[:5]}",
+        )
+
     def _pid_from_hwnd(self, hwnd: int) -> Optional[int]:
         try:
             import win32process
@@ -1102,6 +1297,19 @@ class AppUIAction:
 
             if invalidate_cache:
                 self._session.cached_window = None
+
+            scan_result = self._activate_process_windows_for_attr_search(
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                allow_invisible_children=allow_invisible_children,
+            )
+            if not scan_result.is_success:
+                logger.warning(
+                    "[click_app_by_attr] 프로세스 창 스캔 활성화 실패: %s",
+                    scan_result.message,
+                )
 
             child_title = (child_window_title or "").strip()
             child_auto_id = (child_window_auto_id or "").strip()
@@ -1408,12 +1616,25 @@ class AppUIAction:
             return []
 
         windows: list[Any] = []
+        seen: set[int] = set()
         for w in self._session.app.windows():
             wrapper = self._safe_call(lambda: w.wrapper_object(), None) or w
             if not self._verify_process_path(wrapper):
                 continue
             if not self._safe_call(lambda: wrapper.exists(), False):
                 continue
+            handle = self._get_wrapper_handle(wrapper)
+            if handle:
+                seen.add(handle)
+            windows.append(wrapper)
+
+        for hwnd in self._enum_process_top_level_hwnds():
+            if hwnd in seen:
+                continue
+            wrapper = self._wrapper_from_hwnd(hwnd)
+            if wrapper is None or not self._verify_process_path(wrapper):
+                continue
+            seen.add(hwnd)
             windows.append(wrapper)
         return windows
 
@@ -1515,6 +1736,18 @@ class AppUIAction:
                 "[click_app_by_attr] search_root 아래 descendants가 0개입니다: %s",
                 self._format_window_label(root),
             )
+            if self._activate_window_wrapper(root, label="empty_descendants_retry"):
+                uia_refresh_delay = float(
+                    self._session.config.get("timeouts", {}).get("uia_refresh_delay", 0.15)
+                )
+                time.sleep(uia_refresh_delay)
+                descendants = self._safe_call(root.descendants, []) or []
+                nodes = [root]
+                nodes.extend(descendants)
+                logger.info(
+                    "[click_app_by_attr] 포커스 후 descendants 재조회: %d개",
+                    len(descendants),
+                )
 
         for node in nodes:
             node_auto_id = str(self._safe_call(lambda: node.element_info.automation_id, "") or "")
