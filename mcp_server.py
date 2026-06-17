@@ -30,6 +30,7 @@ LLM이 Windows 애플리케이션을 도구(tool)처럼 제어할 수 있게 합
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -80,6 +81,9 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
 
 # 로깅 초기화
 setup_logging(level="INFO", log_file="win_mcp/logs/mcp_server.log")
+from core.timing_log import configure_mcp_debug_logging
+
+configure_mcp_debug_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -111,37 +115,23 @@ LLM은 제공되는 도구들을 통해 다음 작업을 수행할 수 있습니
 
 def register_all_tools() -> None:
     """모든 도구를 FastMCP 서버에 등록"""
-    from tools.app_mgmt_tool import register_app_mgmt_tools
-    from tools.app_control_tool import register_app_control_tools
-    from tools.data_analysis_tool import register_data_analysis_tools
-    from tools.oracle_db_tool import register_oracle_db_tools
-    from tools.source_edit_tool import register_source_edit_tools
-    from tools.report_file_tool import register_report_file_tools
-    from tools.daily_report_tool import register_daily_report_tools
-    from tools.skill_tool import register_skill_tools
-    
-    # 애플리케이션 관리 도구
-    register_app_mgmt_tools(mcp)
-    
-    # 애플리케이션 UI 제어 도구 (Title/AutoID/OCR)
-    register_app_control_tools(mcp)
+    from core.timing_log import log_timing
 
-    # 클립보드/데이터프레임 분석 보조 도구
-    register_data_analysis_tools(mcp)
+    registrations = [
+        ("app_mgmt", lambda: __import__("tools.app_mgmt_tool", fromlist=["register_app_mgmt_tools"]).register_app_mgmt_tools(mcp)),
+        ("app_control", lambda: __import__("tools.app_control_tool", fromlist=["register_app_control_tools"]).register_app_control_tools(mcp)),
+        ("data_analysis", lambda: __import__("tools.data_analysis_tool", fromlist=["register_data_analysis_tools"]).register_data_analysis_tools(mcp)),
+        ("source_edit", lambda: __import__("tools.source_edit_tool", fromlist=["register_source_edit_tools"]).register_source_edit_tools(mcp)),
+        ("oracle_db", lambda: __import__("tools.oracle_db_tool", fromlist=["register_oracle_db_tools"]).register_oracle_db_tools(mcp)),
+        ("report_file", lambda: __import__("tools.report_file_tool", fromlist=["register_report_file_tools"]).register_report_file_tools(mcp)),
+        ("daily_report", lambda: __import__("tools.daily_report_tool", fromlist=["register_daily_report_tools"]).register_daily_report_tools(mcp)),
+        ("skills", lambda: __import__("tools.skill_tool", fromlist=["register_skill_tools"]).register_skill_tools(mcp)),
+    ]
 
-    # 단일 서버용 소스 검색/치환 도구
-    register_source_edit_tools(mcp)
+    for name, register_fn in registrations:
+        with log_timing("mcp_server.register", detail=name):
+            register_fn()
 
-    # Oracle DB 조회 도구
-    register_oracle_db_tools(mcp)
-
-    # 업무 보고서 파일/생성 도구
-    register_report_file_tools(mcp)
-    register_daily_report_tools(mcp)
-
-    # 고수준 Skill 기반 도구
-    register_skill_tools(mcp)
-    
     logger.info("모든 도구 등록 완료")
 
 
@@ -312,6 +302,11 @@ def main():
         description="Windows Automation MCP Server"
     )
     parser.add_argument(
+        "--request-timing",
+        action="store_true",
+        help="구간별 소요 시간 로그 출력 (MCP_REQUEST_TIMING=true 와 동일)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -351,6 +346,12 @@ def main():
     )
     
     args = parser.parse_args()
+
+    if args.request_timing:
+        os.environ["MCP_REQUEST_TIMING"] = "true"
+        from core.timing_log import configure_mcp_debug_logging
+
+        configure_mcp_debug_logging()
     
     if args.reload:
         run_with_reloader(args)

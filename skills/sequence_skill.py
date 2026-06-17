@@ -228,13 +228,15 @@ class SequenceSkill(BaseSkill):
                 if tool_func is None:
                     extra_hub = await get_shared_extra_mcp_hub()
                     if extra_hub is None and (
-                        tool_name.startswith("chrome-devtools/")
+                        tool_name.startswith("browsermcp/")
+                        or tool_name.startswith("browsermcp:")
+                        or tool_name.startswith("chrome-devtools/")
                         or tool_name.startswith("chrome-devtools:")
                     ):
                         raise ValueError(
-                            "Chrome DevTools MCP가 활성화되지 않았습니다. "
-                            ".env에 MCP_CHROME_DEVTOOLS_ENABLED=true 를 설정하고 "
-                            "MCP 서버(chatRTD)를 재시작하세요."
+                            "Browser MCP가 활성화되지 않았습니다. "
+                            ".env에 MCP_BROWSER_MCP_ENABLED=true 를 설정하고 "
+                            "Chrome 확장에서 Connect를 누른 뒤 chatRTD를 재시작하세요."
                         )
                     if extra_hub is not None and extra_hub.has_tool(tool_name):
                         raw_result = await extra_hub.call_tool(tool_name, tool_args)

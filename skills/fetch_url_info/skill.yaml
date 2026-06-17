@@ -1,8 +1,7 @@
-description: "Chrome DevTools MCP로 URL을 열고 본문 텍스트를 가져옵니다 (사내 SSO)"
+description: "Browser MCP로 URL을 열고 본문 텍스트를 가져옵니다 (사내 SSO)"
 tools:
-  - tool: chrome-devtools/navigate
+  - tool: browsermcp/browser_navigate
     args:
       url: { mode: "ai" }
-  - tool: chrome-devtools/evaluate
-    args:
-      script: { mode: "fixed", value: "document.body.innerText" }
+  - tool: browsermcp/browser_snapshot
+    args: {}

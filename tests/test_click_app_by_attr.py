@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from actions.app_ui_action import AppUIAction
+from actions.app_ui_action import AppUIAction, AppUIActionResult
 
 
 _handle_counter = 0
@@ -212,6 +212,41 @@ class ClickAppByAttrOutlineTest(unittest.TestCase):
         close_node = self.top.find._cached_descendants[1]
         self.assertEqual(getattr(close_node, "_last_outline_colour", None), "red")
 
+    def test_outline_scope_traverse_highlights_all_tops(self) -> None:
+        second_top = _MockNode(title="Login", control_type="Window", automation_id="LoginWnd")
+        tops = [self.top, second_top]
+        with patch.object(self.action, "_draw_window_outline_batch") as batch_draw:
+            with patch.object(self.action, "_activate_attr_search_context", return_value=MagicMock(result="success", is_success=True)):
+                with patch.object(self.action, "_iter_process_top_windows", return_value=tops):
+                    result = self.action.click_element_by_attr(
+                        auto_id="Close",
+                        window_target="top",
+                        draw_outline=True,
+                        outline_scope="traverse",
+                        top_outline_colour="blue",
+                        timeout=0.1,
+                    )
+        self.assertEqual(result.result, "success")
+        batch_draw.assert_called_once()
+        args, kwargs = batch_draw.call_args
+        self.assertEqual(list(args[0]), tops)
+        self.assertEqual(kwargs.get("colour"), "blue")
+        self.assertEqual(kwargs.get("label_prefix"), "top")
+
+    def test_log_search_trace_collects_traverse_lines(self) -> None:
+        with patch.object(self.action, "_activate_attr_search_context", return_value=MagicMock(result="success", is_success=True)):
+            with patch.object(self.action, "_iter_process_top_windows", return_value=[self.top]):
+                with patch.object(self.action, "_click_with_preferred_action", return_value="click_input"):
+                    result = self.action.click_element_by_attr(
+                        auto_id="Close",
+                        window_target="top",
+                        log_search_trace=True,
+                    )
+        self.assertEqual(result.result, "success")
+        self.assertIsInstance(result.search_trace, list)
+        self.assertTrue(any("top[" in line for line in result.search_trace or []))
+        self.assertTrue(any("search_root[" in line for line in result.search_trace or []))
+
 
 class ClickAppByAttrPollingTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -315,14 +350,19 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
             mock_launcher.ensure_running.return_value = None
             with patch.object(
                 self.action,
-                "_resolve_attr_search_root",
-                return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
+                "_activate_process_windows_for_attr_search",
+                return_value=AppUIActionResult(result="success", message="scan"),
             ):
-                with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
-                    result = self.action._activate_attr_search_context(
-                        child_window_title="ezDFS2 Login",
-                        window_target="child",
-                    )
+                with patch.object(
+                    self.action,
+                    "_resolve_attr_search_root",
+                    return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
+                ):
+                    with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
+                        result = self.action._activate_attr_search_context(
+                            child_window_title="ezDFS2 Login",
+                            window_target="child",
+                        )
         self.assertTrue(result.is_success)
         activate.assert_called_once()
 
@@ -331,19 +371,38 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
             mock_launcher.ensure_running.return_value = None
             with patch.object(
                 self.action,
-                "_resolve_attr_search_root",
-                return_value=(None, "child_not_found"),
+                "_activate_process_windows_for_attr_search",
+                return_value=AppUIActionResult(result="success", message="scan"),
             ):
                 with patch.object(
                     self.action,
-                    "_bring_connected_app_to_front",
-                    return_value=MagicMock(result="success", is_success=True),
-                ) as bring_front:
-                    result = self.action._activate_attr_search_context(
-                        child_window_title="ezDFS2 Login",
-                    )
+                    "_resolve_attr_search_root",
+                    return_value=(None, "child_not_found"),
+                ):
+                    with patch.object(
+                        self.action,
+                        "_bring_connected_app_to_front",
+                        return_value=MagicMock(result="success", is_success=True),
+                    ) as bring_front:
+                        result = self.action._activate_attr_search_context(
+                            child_window_title="ezDFS2 Login",
+                        )
         self.assertTrue(result.is_success)
         bring_front.assert_called_once()
+
+
+class LoginWindowScoreTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.action = AppUIAction(session=MagicMock())
+
+    def test_login_title_scores_higher_than_blank(self) -> None:
+        login = _MockNode(title="ezDFS2 Login", control_type="Window", automation_id="LoginDlg")
+        blank = _MockNode(title="", control_type="Window", automation_id="MainWnd")
+        login_score = self.action._score_window_for_attr_search(
+            login, child_window_title="Login", child_window_match_mode="contains"
+        )
+        blank_score = self.action._score_window_for_attr_search(blank)
+        self.assertGreater(login_score, blank_score)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """
 MCP 서버 설정 로더.
 
-chatRTD는 기본 automation MCP(HTTP) 외에 Chrome DevTools 등 추가 MCP 서버를
+chatRTD는 기본 automation MCP(HTTP) 외에 Browser MCP 등 추가 MCP 서버를
 병렬로 연결할 수 있습니다.
 """
 
@@ -66,25 +66,21 @@ class MCPServerConfig:
         )
 
 
-def _chrome_devtools_server_from_env() -> Optional[MCPServerConfig]:
-    if not _is_truthy(os.getenv("MCP_CHROME_DEVTOOLS_ENABLED")):
+def _browser_mcp_enabled_from_env() -> bool:
+    return _is_truthy(os.getenv("MCP_BROWSER_MCP_ENABLED")) or _is_truthy(
+        os.getenv("MCP_CHROME_DEVTOOLS_ENABLED")
+    )
+
+
+def _browser_mcp_server_from_env() -> Optional[MCPServerConfig]:
+    if not _browser_mcp_enabled_from_env():
         return None
 
-    args = ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics", "--slim"]
-    if _is_truthy(os.getenv("MCP_CHROME_DEVTOOLS_AUTO_CONNECT", "true")):
-        args.append("--autoConnect")
-
-    browser_url = os.getenv("MCP_CHROME_DEVTOOLS_BROWSER_URL", "").strip()
-    if browser_url:
-        args.extend(["--browser-url", browser_url])
-
-    user_data_dir = os.getenv("MCP_CHROME_DEVTOOLS_USER_DATA_DIR", "").strip()
-    if user_data_dir:
-        args.extend(["--user-data-dir", user_data_dir])
+    args = ["-y", "@browsermcp/mcp@latest"]
 
     if sys.platform == "win32":
         return MCPServerConfig(
-            id="chrome-devtools",
+            id="browsermcp",
             transport="stdio",
             command="cmd",
             args=["/c", "npx", *args],
@@ -92,7 +88,7 @@ def _chrome_devtools_server_from_env() -> Optional[MCPServerConfig]:
         )
 
     return MCPServerConfig(
-        id="chrome-devtools",
+        id="browsermcp",
         transport="stdio",
         command="npx",
         args=args,
@@ -135,9 +131,9 @@ def load_mcp_servers(
             except ValueError as exc:
                 raise ValueError(f"MCP extra_servers 설정 오류: {exc}") from exc
 
-    chrome_server = _chrome_devtools_server_from_env()
-    if chrome_server and not any(server.id == chrome_server.id for server in servers):
-        servers.append(chrome_server)
+    browser_server = _browser_mcp_server_from_env()
+    if browser_server and not any(server.id == browser_server.id for server in servers):
+        servers.append(browser_server)
 
     return [server for server in servers if server.enabled]
 

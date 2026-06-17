@@ -60,13 +60,16 @@ async def launch_application(
     }
 
     try:
-        launcher = get_launcher()
-        app_config = launcher._session.config.get("application", {})
-        target_path, resolved_connect_path, _ = resolve_launch_paths(
-            raw_args,
-            app_config.get("executable_path"),
-            app_config.get("connect_path"),
-        )
+        from core.timing_log import log_timing
+
+        with log_timing("launch_application", detail="경로 정규화"):
+            launcher = get_launcher()
+            app_config = launcher._session.config.get("application", {})
+            target_path, resolved_connect_path, _ = resolve_launch_paths(
+                raw_args,
+                app_config.get("executable_path"),
+                app_config.get("connect_path"),
+            )
 
         logger.info(
             "[Tool] launch_application 호출: target=%s, connect_path=%s, aliases=%s",
@@ -82,19 +85,21 @@ async def launch_application(
                 resolved_connect_path,
             )
 
-        launcher.launch(
-            path=target_path,
-            wait_for_ready=wait_for_window,
-            connect_path=resolved_connect_path,
-            title=window_title,
-            title_re=window_title_re,
-        )
+        with log_timing("launch_application", detail=f"launcher.launch wait={wait_for_window}"):
+            launcher.launch(
+                path=target_path,
+                wait_for_ready=wait_for_window,
+                connect_path=resolved_connect_path,
+                title=window_title,
+                title_re=window_title_re,
+            )
 
         # 윈도우 포커스 확보 시도 (비전 액션 사용)
         from actions.app_ui_action import get_app_ui_action
 
         action = get_app_ui_action()
-        action.ensure_focus()
+        with log_timing("launch_application", detail="ensure_focus"):
+            action.ensure_focus()
 
         process_info = launcher.get_process_info()
 

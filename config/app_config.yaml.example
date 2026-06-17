@@ -37,6 +37,8 @@ timeouts:
   ui_delay: 0.1
   # 포커스 설정 후 대기 시간 (초)
   after_focus_delay: 0.1
+  # 창 활성화 후 UIA 트리 갱신 대기 (초, 로그인 모달 등)
+  uia_refresh_delay: 0.15
 
 retry:
   # 기본 재시도 횟수
@@ -63,19 +65,16 @@ server:
 mcp:
   # FastMCP 서버 HTTP endpoint
   base_url: "http://localhost:8000/mcp"
-  # 추가 MCP 서버 (Chrome DevTools 등)
+  # 추가 MCP 서버 (Browser MCP 등)
   extra_servers:
-    - id: chrome-devtools
+    - id: browsermcp
       transport: stdio
       command: cmd
       args:
         - /c
         - npx
         - -y
-        - chrome-devtools-mcp@latest
-        - --slim
-        - --autoConnect
-        - --no-usage-statistics
+        - "@browsermcp/mcp@latest"
       enabled: false
 
 automation:

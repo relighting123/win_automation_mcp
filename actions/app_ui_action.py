@@ -22,6 +22,7 @@ from core.app_launcher import get_launcher
 logger = logging.getLogger(__name__)
 
 _CLICK_ATTR_DEFAULT_POLL_INTERVAL = 0.2
+_OUTLINE_SCOPES = frozenset({"search", "target", "all", "traverse"})
 
 _DPI_AWARENESS_SET = False
 
@@ -92,6 +93,7 @@ class AppUIActionResult:
     shortcut: Optional[str] = None
     button: Optional[str] = None
     matched_text: Optional[str] = None
+    search_trace: Optional[list[str]] = None
 
     @property
     def is_success(self) -> bool:
@@ -116,6 +118,8 @@ class AppUIActionResult:
             payload["offset_x"] = self.offset_x
         if self.offset_y is not None:
             payload["offset_y"] = self.offset_y
+        if self.search_trace:
+            payload["search_trace"] = list(self.search_trace)
         return payload
 
 
@@ -726,6 +730,18 @@ class AppUIAction:
             scope or "-",
         )
 
+    def _append_search_trace(
+        self,
+        trace: Optional[list[str]],
+        message: str,
+        *,
+        log: bool = True,
+    ) -> None:
+        if trace is not None:
+            trace.append(message)
+        if log:
+            logger.info("[traverse] %s", message)
+
     def _safe_draw_outline(
         self,
         node: Any,
@@ -743,6 +759,67 @@ class AppUIAction:
             )
         except Exception as e:
             logger.warning("outline 실패 (%s): %s", label or "highlight", e)
+
+    def _safe_draw_window_outline(
+        self,
+        node: Any,
+        *,
+        colour: str,
+        label: str = "",
+    ) -> None:
+        """UIA draw_outline 우선, 실패 시 HWND 화면 사각형으로 폴백합니다."""
+        if node is None:
+            return
+        if hasattr(node, "draw_outline"):
+            try:
+                node.draw_outline(colour=colour)
+                logger.info(
+                    "[outline] %s colour=%s node=%s",
+                    label or "window",
+                    colour,
+                    self._format_search_window_log(node),
+                )
+                return
+            except Exception as e:
+                logger.debug("draw_outline 실패, screen rect 폴백 (%s): %s", label, e)
+
+        try:
+            import win32gui
+
+            hwnd = self._get_wrapper_handle(node)
+            if not hwnd:
+                return
+            left, top, right, bottom = win32gui.GetWindowRect(int(hwnd))
+            self._safe_draw_screen_rect_outline(
+                left=left,
+                top=top,
+                right=right,
+                bottom=bottom,
+                colour=colour,
+                label=label or "window_rect",
+            )
+        except Exception as e:
+            logger.warning("window outline 실패 (%s): %s", label or "window", e)
+
+    def _draw_window_outline_batch(
+        self,
+        windows: Sequence[Any],
+        *,
+        colour: str,
+        label_prefix: str,
+        pause: float = 0.0,
+    ) -> None:
+        """탐색 후보 창들에 일괄 outline을 표시합니다."""
+        for index, window in enumerate(windows):
+            if window is None:
+                continue
+            self._safe_draw_window_outline(
+                window,
+                colour=colour,
+                label=f"{label_prefix}[{index}]",
+            )
+        if pause > 0:
+            time.sleep(pause)
 
     def _colour_to_win32_rgb(self, colour: str) -> int:
         colours = {
@@ -878,6 +955,201 @@ class AppUIAction:
             if pid:
                 pids.add(int(pid))
         return pids
+
+    def _enum_process_top_level_hwnds(self, pids: Optional[set[int]] = None) -> list[int]:
+        """연결된 프로세스의 top-level HWND 목록을 반환합니다 (Z-order 순)."""
+        target_pids = pids or self._get_connected_process_ids()
+        if not target_pids:
+            return []
+
+        hwnds: list[int] = []
+        try:
+            import win32gui
+
+            def _callback(hwnd: int, _: Any) -> bool:
+                if not win32gui.IsWindow(hwnd):
+                    return True
+                if win32gui.GetParent(hwnd):
+                    return True
+                pid = self._pid_from_hwnd(hwnd)
+                if pid and pid in target_pids:
+                    hwnds.append(int(hwnd))
+                return True
+
+            win32gui.EnumWindows(_callback, None)
+        except Exception as e:
+            logger.debug("[click_app_by_attr] EnumWindows 실패: %s", e)
+        return hwnds
+
+    def _wrapper_from_hwnd(self, hwnd: int) -> Optional[Any]:
+        try:
+            from pywinauto.controls.hwndwrapper import HwndWrapper
+
+            wrapper = HwndWrapper(int(hwnd))
+            if self._safe_call(lambda: wrapper.exists(), False):
+                return wrapper
+        except Exception as e:
+            logger.debug("[click_app_by_attr] HWND wrapper 생성 실패(hwnd=%s): %s", hwnd, e)
+        return None
+
+    def _score_window_for_attr_search(
+        self,
+        wrapper: Any,
+        *,
+        child_window_title: str = "",
+        child_window_auto_id: str = "",
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+    ) -> int:
+        """로그인/모달 창 우선 활성화를 위한 점수 (높을수록 우선)."""
+        score = 0
+        if self._safe_call(lambda: wrapper.is_visible(), False):
+            score += 10
+        if self._safe_call(lambda: wrapper.is_enabled(), True):
+            score += 2
+
+        titles = self._get_node_title_candidates(wrapper)
+        joined = " ".join(titles).lower()
+        for keyword in ("로그인", "login", "sign in", "signin", "인증", "password", "비밀번호"):
+            if keyword in joined:
+                score += 40
+
+        if child_window_title or child_window_auto_id:
+            if self._matches_child_window_spec(
+                wrapper,
+                child_title=child_window_title,
+                child_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                score += 100
+
+        try:
+            descendant_count = len(self._safe_call(wrapper.descendants, []) or [])
+            if descendant_count > 0:
+                score += min(30, descendant_count)
+        except Exception:
+            pass
+
+        handle = self._get_wrapper_handle(wrapper) or 0
+        score += min(20, handle % 1000 // 50)
+        return score
+
+    def _activate_process_windows_for_attr_search(
+        self,
+        *,
+        child_window_title: Optional[str] = None,
+        child_window_auto_id: Optional[str] = None,
+        child_window_match_mode: str = "contains",
+        case_sensitive: bool = False,
+        allow_invisible_children: bool = False,
+    ) -> AppUIActionResult:
+        """
+        연결 프로세스의 모든 top-level 창(로그인 모달 포함)을 순회하며 foreground로 올립니다.
+
+        사용자가 로그인 창을 수동 클릭해야만 click_app_by_attr 이 동작하던 경우,
+        포커스 전 UIA descendants 가 비어 있는 창을 자동 활성화합니다.
+        """
+        pids = self._get_connected_process_ids()
+        if not pids:
+            return AppUIActionResult(result="error", message="연결된 프로세스 없음")
+
+        child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
+        wrappers: list[Any] = []
+        seen: set[int] = set()
+
+        for hwnd in self._enum_process_top_level_hwnds(pids):
+            wrapper = self._wrapper_from_hwnd(hwnd)
+            if wrapper is None:
+                continue
+            if not self._verify_process_path(wrapper):
+                continue
+            is_visible = self._safe_call(lambda: wrapper.is_visible(), False)
+            if not is_visible and not allow_invisible_children:
+                continue
+            handle = self._get_wrapper_handle(wrapper) or hwnd
+            if handle in seen:
+                continue
+            seen.add(handle)
+            wrappers.append(wrapper)
+
+        for w in self._iter_process_top_windows():
+            handle = self._get_wrapper_handle(w)
+            if handle and handle not in seen:
+                seen.add(handle)
+                wrappers.append(w)
+
+        if not wrappers:
+            return AppUIActionResult(result="error", message="활성화할 프로세스 창 없음")
+
+        wrappers.sort(
+            key=lambda w: self._score_window_for_attr_search(
+                w,
+                child_window_title=child_title,
+                child_window_auto_id=child_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            ),
+            reverse=True,
+        )
+
+        after_focus_delay = float(
+            self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2)
+        )
+        uia_refresh_delay = float(
+            self._session.config.get("timeouts", {}).get("uia_refresh_delay", 0.15)
+        )
+
+        activated_labels: list[str] = []
+        best_wrapper: Optional[Any] = None
+        best_descendants = -1
+
+        for wrapper in wrappers:
+            label = self._format_window_label(wrapper)
+            if not self._activate_window_wrapper(wrapper, label="process_scan"):
+                continue
+            activated_labels.append(label)
+            time.sleep(uia_refresh_delay)
+            descendant_count = len(self._safe_call(wrapper.descendants, []) or [])
+            if descendant_count > best_descendants:
+                best_descendants = descendant_count
+                best_wrapper = wrapper
+            if descendant_count > 0 and (
+                not child_title
+                or self._matches_child_window_spec(
+                    wrapper,
+                    child_title=child_title,
+                    child_auto_id=child_auto_id,
+                    child_window_match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                )
+            ):
+                self._session.cached_window = wrapper
+                return AppUIActionResult(
+                    result="success",
+                    message=(
+                        f"로그인/모달 창 활성화: {label} (descendants={descendant_count})"
+                    ),
+                )
+
+        if best_wrapper is not None:
+            self._activate_window_wrapper(best_wrapper, label="best_descendants")
+            time.sleep(after_focus_delay)
+            self._session.cached_window = best_wrapper
+            return AppUIActionResult(
+                result="success",
+                message=(
+                    "프로세스 창 활성화(최다 descendants): "
+                    f"{self._format_window_label(best_wrapper)} "
+                    f"(tried={len(activated_labels)}, descendants={best_descendants})"
+                ),
+            )
+
+        return AppUIActionResult(
+            result="success",
+            message=f"프로세스 창 활성화 시도: {activated_labels[:5]}",
+        )
 
     def _pid_from_hwnd(self, hwnd: int) -> Optional[int]:
         try:
@@ -1102,6 +1374,19 @@ class AppUIAction:
 
             if invalidate_cache:
                 self._session.cached_window = None
+
+            scan_result = self._activate_process_windows_for_attr_search(
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+                allow_invisible_children=allow_invisible_children,
+            )
+            if not scan_result.is_success:
+                logger.warning(
+                    "[click_app_by_attr] 프로세스 창 스캔 활성화 실패: %s",
+                    scan_result.message,
+                )
 
             child_title = (child_window_title or "").strip()
             child_auto_id = (child_window_auto_id or "").strip()
@@ -1408,12 +1693,25 @@ class AppUIAction:
             return []
 
         windows: list[Any] = []
+        seen: set[int] = set()
         for w in self._session.app.windows():
             wrapper = self._safe_call(lambda: w.wrapper_object(), None) or w
             if not self._verify_process_path(wrapper):
                 continue
             if not self._safe_call(lambda: wrapper.exists(), False):
                 continue
+            handle = self._get_wrapper_handle(wrapper)
+            if handle:
+                seen.add(handle)
+            windows.append(wrapper)
+
+        for hwnd in self._enum_process_top_level_hwnds():
+            if hwnd in seen:
+                continue
+            wrapper = self._wrapper_from_hwnd(hwnd)
+            if wrapper is None or not self._verify_process_path(wrapper):
+                continue
+            seen.add(hwnd)
             windows.append(wrapper)
         return windows
 
@@ -1515,6 +1813,18 @@ class AppUIAction:
                 "[click_app_by_attr] search_root 아래 descendants가 0개입니다: %s",
                 self._format_window_label(root),
             )
+            if self._activate_window_wrapper(root, label="empty_descendants_retry"):
+                uia_refresh_delay = float(
+                    self._session.config.get("timeouts", {}).get("uia_refresh_delay", 0.15)
+                )
+                time.sleep(uia_refresh_delay)
+                descendants = self._safe_call(root.descendants, []) or []
+                nodes = [root]
+                nodes.extend(descendants)
+                logger.info(
+                    "[click_app_by_attr] 포커스 후 descendants 재조회: %d개",
+                    len(descendants),
+                )
 
         for node in nodes:
             node_auto_id = str(self._safe_call(lambda: node.element_info.automation_id, "") or "")
@@ -2761,8 +3071,10 @@ class AppUIAction:
         draw_outline: bool = False,
         outline_colour: str = "red",
         search_outline_colour: str = "green",
+        top_outline_colour: str = "blue",
         outline_scope: str = "all",
         allow_invisible_children: bool = False,
+        log_search_trace: Optional[bool] = None,
     ) -> AppUIActionResult:
         """
         속성 기반으로 특정 요소를 찾아 클릭합니다.
@@ -2783,6 +3095,11 @@ class AppUIAction:
           - search: 순회 중인 search_root(창)만
           - target: 찾은 요소만
           - all: search_root + target (기본)
+          - traverse: 모든 top window + 각 search_root + target (탐색 디버깅용)
+        top_outline_colour: traverse 모드에서 top-level 창 테두리 색 (기본 blue)
+        log_search_trace:
+          - True: CLI용 탐색 로그(search_trace) 수집
+          - None(기본): outline_scope=traverse 일 때만 수집
         """
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
@@ -2816,14 +3133,18 @@ class AppUIAction:
             )
 
         outline_scope = (outline_scope or "all").strip().lower()
-        if outline_scope not in {"search", "target", "all"}:
+        if outline_scope not in _OUTLINE_SCOPES:
             return AppUIActionResult(
                 result="error",
-                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all)",
+                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all|traverse)",
             )
-        outline_search = draw_outline and outline_scope in {"search", "all"}
-        outline_target = draw_outline and outline_scope in {"target", "all"}
+        outline_search = draw_outline and outline_scope in {"search", "all", "traverse"}
+        outline_traverse_tops = draw_outline and outline_scope == "traverse"
+        outline_target = draw_outline and outline_scope in {"target", "all", "traverse"}
         outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
+        if log_search_trace is None:
+            log_search_trace = outline_scope == "traverse"
+        search_trace: Optional[list[str]] = [] if log_search_trace else None
 
         logger.info(
             "[click_app_by_attr] 시작: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s, timeout=%s, poll_interval=%s",
@@ -2863,6 +3184,10 @@ class AppUIAction:
             while True:
                 attempt += 1
                 if attempt > 1:
+                    self._append_search_trace(
+                        search_trace,
+                        f"폴링 재시도 {attempt}회차 (elapsed={time.monotonic() - start:.1f}s)",
+                    )
                     logger.info(
                         "[click_app_by_attr] 폴링 재시도 %d회차 (elapsed=%.1fs, timeout=%s)",
                         attempt,
@@ -2899,16 +3224,33 @@ class AppUIAction:
 
                 top_labels = [self._format_window_label(w) for w in top_windows]
                 scanned_top_labels = top_labels
+                self._append_search_trace(
+                    search_trace,
+                    f"top window {len(top_labels)}개: {', '.join(top_labels) or '(없음)'}",
+                )
                 logger.info(
                     "[click_app_by_attr] 순회 top window 목록 (%d개): %s",
                     len(top_labels),
                     top_labels,
                 )
 
-                for top_window in top_windows:
+                if outline_traverse_tops and top_windows:
+                    self._draw_window_outline_batch(
+                        top_windows,
+                        colour=top_outline_colour,
+                        label_prefix="top",
+                        pause=outline_pause,
+                    )
+
+                for top_index, top_window in enumerate(top_windows, start=1):
+                    top_label = self._format_window_label(top_window)
+                    self._append_search_trace(
+                        search_trace,
+                        f"top[{top_index}/{len(top_windows)}] {top_label}",
+                    )
                     logger.info(
                         "[click_app_by_attr] top window 순회 시작: %s",
-                        self._format_window_label(top_window),
+                        top_label,
                     )
                     search_roots = self._iter_attr_search_roots(
                         window_target=window_target,
@@ -2919,8 +3261,12 @@ class AppUIAction:
                         top_window_override=top_window,
                         allow_invisible_children=allow_invisible_children,
                     )
-                    for search_root, search_root_info in search_roots:
+                    for root_index, (search_root, search_root_info) in enumerate(search_roots, start=1):
                         if search_root is None:
+                            self._append_search_trace(
+                                search_trace,
+                                f"top[{top_index}] search_root[{root_index}] 없음 — {search_root_info}",
+                            )
                             logger.info(
                                 "[click_app_by_attr] search_root 없음: top=%s, info=%s",
                                 self._format_window_label(top_window),
@@ -2928,6 +3274,11 @@ class AppUIAction:
                             )
                             continue
 
+                        identity = self._format_search_window_log(search_root)
+                        self._append_search_trace(
+                            search_trace,
+                            f"top[{top_index}] search_root[{root_index}] {search_root_info} — {identity}",
+                        )
                         self._log_search_window(
                             tool="click_app_by_attr",
                             wrapper=search_root,
@@ -2939,7 +3290,7 @@ class AppUIAction:
                         )
 
                         if outline_search:
-                            self._safe_draw_outline(
+                            self._safe_draw_window_outline(
                                 search_root,
                                 colour=search_outline_colour,
                                 label=f"search_root={search_root_info}",
@@ -2959,6 +3310,11 @@ class AppUIAction:
                         if target is not None:
                             matched_search_root = search_root
                             matched_search_root_info = search_root_info
+                            self._append_search_trace(
+                                search_trace,
+                                f"매칭 발견: title={self._safe_call(target.window_text, '') or '-'}, "
+                                f"search_root={search_root_info}",
+                            )
                             break
                     if target is not None:
                         break
@@ -3000,6 +3356,7 @@ class AppUIAction:
                         f"child_window_auto_id={child_window_auto_id}, top_windows={scanned_top_labels}, "
                         f"search_root={search_root_info}"
                     ),
+                    search_trace=search_trace,
                 )
             
             search_root = matched_search_root
@@ -3044,6 +3401,7 @@ class AppUIAction:
                     f"matched_auto_id={matched_auto_id}, matched_control_type={matched_type}, "
                     f"search_root={search_root_info}, method={click_method}"
                 ),
+                search_trace=search_trace,
             )
         except Exception as e:
             logger.error("[click_app_by_attr] 예외: %s", e)

@@ -308,8 +308,10 @@ def click_app_by_attr(
     draw_outline: bool = False,
     outline_colour: str = "red",
     search_outline_colour: str = "green",
+    top_outline_colour: str = "blue",
     outline_scope: str = "all",
     allow_invisible_children: bool = False,
+    log_search_trace: Optional[bool] = None,
 ) -> str:
     """
     pywinauto(UIA) 속성 기반으로 요소를 직접 찾아 클릭합니다.
@@ -333,9 +335,11 @@ def click_app_by_attr(
       - contains: child_window_title 포함 일치
     draw_outline을 True로 설정하면 탐색/클릭 대상을 강조 표시합니다.
     outline_scope:
-      - search: 순회 중인 search_root(창)만
+      - search: search_root(창)만
       - target: 찾은 요소만
       - all: search_root + target (기본)
+      - traverse: 모든 top window + search_root + target (탐색 디버깅)
+    top_outline_colour: traverse 모드에서 top-level 창 테두리 색 (기본 blue)
     search_outline_colour: search_root 테두리 색 (기본 green)
     outline_colour: target 요소 테두리 색 (기본 red)
     timeout:
@@ -347,6 +351,9 @@ def click_app_by_attr(
       - 양수: 지정한 간격(초)으로 재시도
     allow_invisible_children:
       - True: 보이지 않는 child window(로그인 모달 등)도 탐색·HWND 활성화 후보에 포함
+    log_search_trace:
+      - True: 탐색 중 본 창/요소를 search_trace로 반환 (CLI 표시용)
+      - None(기본): outline_scope=traverse 일 때만 수집
     """
     logger.info(
         "[Tool] click_app_by_attr 호출: auto_id=%s, title=%s, child_window_title=%s, child_window_auto_id=%s, window_target=%s, timeout=%s, poll_interval=%s",
@@ -380,8 +387,10 @@ def click_app_by_attr(
         draw_outline=draw_outline,
         outline_colour=outline_colour,
         search_outline_colour=search_outline_colour,
+        top_outline_colour=top_outline_colour,
         outline_scope=outline_scope,
         allow_invisible_children=allow_invisible_children,
+        log_search_trace=log_search_trace,
     )
     payload = result.to_dict()
     logger.info(

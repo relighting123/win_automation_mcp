@@ -2,7 +2,7 @@
 여러 MCP 서버를 통합하는 허브 클라이언트.
 
 - automation MCP: HTTP(streamable-http)
-- chrome-devtools MCP: stdio(npx) 또는 HTTP(mcp-proxy)
+- Browser MCP: stdio(npx) — Chrome 확장 + Connect 필요
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from core.mcp_server_config import MCPServerConfig, load_extra_mcp_servers, load_mcp_servers
+from core.timing_log import log_timing
 
 logger = logging.getLogger(__name__)
 
@@ -176,36 +177,38 @@ class HttpMCPBackend:
         if self._tools_cache is not None and not refresh:
             return self._tools_cache
 
-        client = await self._get_client()
-        try:
-            result = await self._post_jsonrpc(client, method="tools/list")
-        except Exception:
-            self._session_id = None
-            result = await self._post_jsonrpc(client, method="tools/list")
+        with log_timing(f"mcp.{self.config.id}", detail="tools/list"):
+            client = await self._get_client()
+            try:
+                result = await self._post_jsonrpc(client, method="tools/list")
+            except Exception:
+                self._session_id = None
+                result = await self._post_jsonrpc(client, method="tools/list")
 
         tools = result.get("tools", [])
         self._tools_cache = tools if isinstance(tools, list) else []
         return self._tools_cache
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        client = await self._get_client()
-        try:
-            return await self._post_jsonrpc(
-                client,
-                method="tools/call",
-                params={"name": tool_name, "arguments": arguments},
-            )
-        except Exception:
-            self._session_id = None
-            return await self._post_jsonrpc(
-                client,
-                method="tools/call",
-                params={"name": tool_name, "arguments": arguments},
-            )
+        with log_timing(f"mcp.{self.config.id}", detail=f"tools/call {tool_name}"):
+            client = await self._get_client()
+            try:
+                return await self._post_jsonrpc(
+                    client,
+                    method="tools/call",
+                    params={"name": tool_name, "arguments": arguments},
+                )
+            except Exception:
+                self._session_id = None
+                return await self._post_jsonrpc(
+                    client,
+                    method="tools/call",
+                    params={"name": tool_name, "arguments": arguments},
+                )
 
 
 class StdioMCPBackend:
-    """stdio MCP 백엔드 (chrome-devtools-mcp 등)."""
+    """stdio MCP 백엔드 (browsermcp 등)."""
 
     def __init__(self, config: MCPServerConfig):
         self.config = config
@@ -219,25 +222,26 @@ class StdioMCPBackend:
             if self._session is not None:
                 return
 
-            try:
-                from mcp import ClientSession
-                from mcp.client.stdio import StdioServerParameters, stdio_client
-            except ImportError as exc:
-                raise RuntimeError(
-                    f"[{self.config.id}] mcp 패키지가 필요합니다: pip install mcp"
-                ) from exc
+            with log_timing(f"mcp.{self.config.id}", detail="stdio 시작(npx)"):
+                try:
+                    from mcp import ClientSession
+                    from mcp.client.stdio import StdioServerParameters, stdio_client
+                except ImportError as exc:
+                    raise RuntimeError(
+                        f"[{self.config.id}] mcp 패키지가 필요합니다: pip install mcp"
+                    ) from exc
 
-            if not self.config.command:
-                raise RuntimeError(f"[{self.config.id}] stdio transport에는 command가 필요합니다.")
+                if not self.config.command:
+                    raise RuntimeError(f"[{self.config.id}] stdio transport에는 command가 필요합니다.")
 
-            server_params = StdioServerParameters(
-                command=self.config.command,
-                args=list(self.config.args),
-                env=self.config.env or None,
-            )
-            read, write = await self._stack.enter_async_context(stdio_client(server_params))
-            self._session = await self._stack.enter_async_context(ClientSession(read, write))
-            await self._session.initialize()
+                server_params = StdioServerParameters(
+                    command=self.config.command,
+                    args=list(self.config.args),
+                    env=self.config.env or None,
+                )
+                read, write = await self._stack.enter_async_context(stdio_client(server_params))
+                self._session = await self._stack.enter_async_context(ClientSession(read, write))
+                await self._session.initialize()
             logger.info("[%s] stdio MCP 세션 시작", self.config.id)
 
     async def aclose(self) -> None:
@@ -257,7 +261,8 @@ class StdioMCPBackend:
             return self._tools_cache
 
         await self.ensure_started()
-        result = await self._session.list_tools()
+        with log_timing(f"mcp.{self.config.id}", detail="tools/list"):
+            result = await self._session.list_tools()
         tools: List[Dict[str, Any]] = []
         for tool in result.tools:
             if hasattr(tool, "model_dump"):
@@ -269,11 +274,12 @@ class StdioMCPBackend:
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         await self.ensure_started()
-        result = await self._session.call_tool(
-            tool_name,
-            arguments,
-            read_timeout_seconds=None,
-        )
+        with log_timing(f"mcp.{self.config.id}", detail=f"tools/call {tool_name}"):
+            result = await self._session.call_tool(
+                tool_name,
+                arguments,
+                read_timeout_seconds=None,
+            )
         if hasattr(result, "model_dump"):
             return result.model_dump()
         return dict(result)
@@ -343,36 +349,37 @@ class MultiMCPClient:
         routes: Dict[str, List[_ToolRoute]] = {}
         merged_tools: List[Dict[str, Any]] = []
 
-        for server in self.servers:
-            backend = self._backends[server.id]
-            try:
-                tools = await backend.list_tools(refresh=refresh)
-            except Exception as exc:
-                logger.warning("[%s] tools/list 실패: %s", server.id, exc)
-                continue
-
-            for tool in tools:
-                raw_name = str(tool.get("name") or "").strip()
-                if not raw_name:
+        with log_timing("mcp.hub", detail="tools/list 전체"):
+            for server in self.servers:
+                backend = self._backends[server.id]
+                try:
+                    tools = await backend.list_tools(refresh=refresh)
+                except Exception as exc:
+                    logger.warning("[%s] tools/list 실패: %s", server.id, exc)
                     continue
-                exposed_name = _openai_tool_name(
-                    server.id,
-                    raw_name,
-                    use_prefix=server.tool_prefix,
-                )
-                route = _ToolRoute(
-                    server_id=server.id,
-                    tool_name=raw_name,
-                    exposed_name=exposed_name,
-                )
-                routes.setdefault(exposed_name, []).append(route)
-                merged_tools.append(
-                    {
-                        **tool,
-                        "name": exposed_name,
-                        "description": f"[{server.id}] {tool.get('description', '')}".strip(),
-                    }
-                )
+
+                for tool in tools:
+                    raw_name = str(tool.get("name") or "").strip()
+                    if not raw_name:
+                        continue
+                    exposed_name = _openai_tool_name(
+                        server.id,
+                        raw_name,
+                        use_prefix=server.tool_prefix,
+                    )
+                    route = _ToolRoute(
+                        server_id=server.id,
+                        tool_name=raw_name,
+                        exposed_name=exposed_name,
+                    )
+                    routes.setdefault(exposed_name, []).append(route)
+                    merged_tools.append(
+                        {
+                            **tool,
+                            "name": exposed_name,
+                            "description": f"[{server.id}] {tool.get('description', '')}".strip(),
+                        }
+                    )
 
         self._routes = routes
         self._tools_cache = merged_tools
@@ -414,7 +421,8 @@ class MultiMCPClient:
 
         backend = self._backends[route.server_id]
         try:
-            return await backend.call_tool(route.tool_name, arguments)
+            with log_timing("mcp.hub", detail=f"call {tool_name}"):
+                return await backend.call_tool(route.tool_name, arguments)
         except Exception as exc:
             logger.exception(
                 "[%s] call_tool 실패: %s",
