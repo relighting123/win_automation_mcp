@@ -349,6 +349,27 @@ def _tool_ok(result: dict) -> bool:
     return True
 
 
+def _extract_tool_payload(result: dict) -> dict[str, Any]:
+    for item in result.get("content", []):
+        if isinstance(item, dict) and item.get("type") == "text":
+            try:
+                parsed = json.loads(str(item.get("text", "")))
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+    return {}
+
+
+def _print_search_trace(console: Console, payload: dict[str, Any]) -> None:
+    trace = payload.get("search_trace")
+    if not isinstance(trace, list) or not trace:
+        return
+    console.print(f"  [muted]탐색 로그[/muted]  [border]{'─' * 44}[/border]")
+    for line in trace:
+        console.print(f"  [muted]›[/muted] [secondary]{line}[/secondary]")
+
+
 # ── Main CLI class ─────────────────────────────────────────────────────────────
 
 class ChatRTDCLI:
@@ -488,6 +509,11 @@ class ChatRTDCLI:
         step_count += 1
         name_col = f"[tool]◆[/tool]  [secondary]{tool_name}[/secondary]"
         c.print(f"  {name_col:<52}{status}")
+
+        payload = _extract_tool_payload(result)
+        if payload:
+            _print_search_trace(c, payload)
+
         return execution_shown, step_count, result
 
     def _print_skill_result(self, skill_id: str, result: dict) -> None:

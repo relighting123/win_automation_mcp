@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from io import StringIO
 from typing import Any, Dict, Optional
 
@@ -27,18 +28,19 @@ def _read_clipboard_text() -> str:
     except Exception as exc:  # pragma: no cover - 환경 의존
         logger.debug("pyperclip 클립보드 읽기 실패: %s", exc)
 
-    try:
-        import tkinter as tk
-
-        root = tk.Tk()
-        root.withdraw()
+    if sys.platform == "win32":
         try:
-            text = root.clipboard_get()
-            return text if isinstance(text, str) else str(text)
-        finally:
-            root.destroy()
-    except Exception as exc:  # pragma: no cover - 환경 의존
-        logger.debug("tkinter 클립보드 읽기 실패: %s", exc)
+            import win32clipboard
+
+            win32clipboard.OpenClipboard()
+            try:
+                if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
+                    data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+                    return str(data) if data is not None else ""
+            finally:
+                win32clipboard.CloseClipboard()
+        except Exception as exc:  # pragma: no cover - 환경 의존
+            logger.debug("win32clipboard 클립보드 읽기 실패: %s", exc)
 
     return ""
 
