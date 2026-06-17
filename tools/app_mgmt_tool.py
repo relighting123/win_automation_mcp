@@ -29,6 +29,7 @@ async def launch_application(
     window_title: Optional[str] = None,
     window_title_re: Optional[str] = None,
     wait_for_window: bool = True,
+    reopen_data_file: bool = False,
 ) -> dict:
     """
     대상 Windows 애플리케이션 또는 데이터 파일을 실행합니다.
@@ -46,6 +47,7 @@ async def launch_application(
         window_title: (데이터 파일 실행 시) 연결할 윈도우 제목
         window_title_re: (데이터 파일 실행 시) 연결할 윈도우 제목 정규식
         wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
+        reopen_data_file: 이미 연결된 상태에서도 동일 .rul 파일을 다시 열지 (기본: False)
     """
     raw_args = {
         "executable_path": executable_path,
@@ -88,20 +90,27 @@ async def launch_application(
             connect_path=resolved_connect_path,
             title=window_title,
             title_re=window_title_re,
+            reopen_data_file=reopen_data_file,
         )
 
-        # 윈도우 포커스 확보 시도 (비전 액션 사용)
-        from actions.app_ui_action import get_app_ui_action
+        # 윈도우 포커스 확보 시도 (동일 .rul 재오픈을 건너뛴 경우는 이미 포커스 복원됨)
+        if not launcher.session._skipped_data_file_reopen:
+            from actions.app_ui_action import get_app_ui_action
 
-        action = get_app_ui_action()
-        action.ensure_focus()
+            action = get_app_ui_action()
+            action.ensure_focus()
 
         process_info = launcher.get_process_info()
 
+        message = "애플리케이션이 실행되었습니다"
+        if launcher.session.is_connected and launcher.session._skipped_data_file_reopen:
+            message = "이미 연결된 애플리케이션에 포커스를 복원했습니다"
+
         result = {
             "success": True,
-            "message": "애플리케이션이 실행되었습니다",
+            "message": message,
             "process_info": process_info,
+            "skipped_data_file_reopen": launcher.session._skipped_data_file_reopen,
         }
         return json.dumps(result, ensure_ascii=False)
 

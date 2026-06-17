@@ -5,7 +5,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.launch_paths import pick_launch_target, resolve_launch_paths
+from core.launch_paths import normalize_launch_path, pick_launch_target, resolve_launch_paths
 
 
 class LaunchPathsTest(unittest.TestCase):
@@ -40,6 +40,11 @@ class LaunchPathsTest(unittest.TestCase):
         )
         self.assertEqual(target, r"C:\Apps\Tool.exe")
         self.assertIsNone(connect)
+
+    def test_normalize_launch_path_ignores_case(self) -> None:
+        left = normalize_launch_path(r"D:\Rules\assign.rul")
+        right = normalize_launch_path(r"d:\rules\assign.rul")
+        self.assertEqual(left, right)
 
 
 if __name__ == "__main__":

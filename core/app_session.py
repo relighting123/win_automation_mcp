@@ -74,6 +74,8 @@ class AppSession:
         self._config: Dict[str, Any] = {}
         self._locators: Dict[str, Any] = {}
         self._cached_window: Optional[Any] = None
+        self._last_opened_data_file: Optional[str] = None
+        self._skipped_data_file_reopen: bool = False
         
         # 설정 로드
         if config_path:
@@ -408,7 +410,7 @@ class AppSession:
             is_executable = self._is_executable_path(exe_path)
 
             # pywinauto Application.start()가 모르는 인자 제거
-            _TOOL_ONLY_KEYS = {"connect_path", "title", "title_re"}
+            _TOOL_ONLY_KEYS = {"connect_path", "title", "title_re", "reopen_data_file"}
             start_kwargs = {k: v for k, v in kwargs.items() if k not in _TOOL_ONLY_KEYS}
             connect_exe_path = self._resolve_connect_executable_path(kwargs.get("connect_path"))
 
@@ -432,6 +434,7 @@ class AppSession:
                     connect_exe_path,
                 )
                 os.startfile(exe_path)
+                self._last_opened_data_file = self._normalize_data_file_path(exe_path)
 
                 wait_until(
                     condition=lambda: self._try_connect(
@@ -469,6 +472,8 @@ class AppSession:
         if self._app is not None:
             self._app = None
         self._cached_window = None
+        self._last_opened_data_file = None
+        self._skipped_data_file_reopen = False
         self._state = SessionState.DISCONNECTED
         logger.info("애플리케이션 연결 해제")
     
@@ -548,7 +553,12 @@ class AppSession:
                 return str(candidate).strip()
         return None
 
-    def open_associated_file(self, path: str, **kwargs) -> "AppSession":
+    def _normalize_data_file_path(self, path: Optional[str]) -> str:
+        from core.launch_paths import normalize_launch_path
+
+        return normalize_launch_path(path)
+
+    def open_associated_file(self, path: str, *, force: bool = False, **kwargs) -> "AppSession":
         """연결을 유지한 채 데이터 파일(.rul 등)만 다시 엽니다."""
         from errors.automation_error import ConnectionError
         import os
@@ -557,8 +567,26 @@ class AppSession:
         if not path:
             raise ConnectionError(message="열 데이터 파일 경로가 비어 있습니다")
 
+        normalized = self._normalize_data_file_path(path)
+        if (
+            not force
+            and self.is_connected
+            and normalized
+            and self._last_opened_data_file == normalized
+        ):
+            logger.info(
+                "[launch] 이미 연결됨 및 동일 데이터 파일 사용 중 - 포커스만 복원: %s",
+                path,
+            )
+            self._skipped_data_file_reopen = True
+            if self.is_connected:
+                self._bring_to_front()
+            return self
+
         logger.info("[launch] 연결 유지 상태에서 데이터 파일 열기: %s", path)
         os.startfile(path)
+        self._last_opened_data_file = normalized
+        self._skipped_data_file_reopen = False
         delay = float(self._config.get("timeouts", {}).get("after_focus_delay", 0.2))
         time.sleep(delay)
         if self.is_connected:

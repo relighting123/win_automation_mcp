@@ -83,10 +83,20 @@ class AppLauncher:
             exe_path,
         )
 
+        self._session._skipped_data_file_reopen = False
+
         if self._session.is_connected:
+            reopen_data_file = bool(kwargs.pop("reopen_data_file", False))
             if exe_path and not self._session._is_executable_path(exe_path):
-                logger.info("[launch] 이미 연결됨 - 데이터 파일만 다시 열기: %s", exe_path)
-                return self._session.open_associated_file(exe_path, **kwargs)
+                if reopen_data_file:
+                    logger.info("[launch] 이미 연결됨 - 데이터 파일 다시 열기: %s", exe_path)
+                else:
+                    logger.info("[launch] 이미 연결됨 - 데이터 파일 처리: %s", exe_path)
+                return self._session.open_associated_file(
+                    exe_path,
+                    force=reopen_data_file,
+                    **kwargs,
+                )
             logger.info("이미 연결된 세션이 있습니다")
             return self._session
         

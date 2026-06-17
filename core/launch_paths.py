@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 LAUNCH_TARGET_KEYS = (
@@ -15,6 +16,18 @@ LAUNCH_TARGET_KEYS = (
 
 def is_executable_file(path: str) -> bool:
     return path.lower().endswith((".exe", ".bat", ".cmd", ".msi"))
+
+
+def normalize_launch_path(path: Optional[str]) -> str:
+    """실행/데이터 파일 경로를 비교용으로 정규화합니다."""
+    if not path:
+        return ""
+    raw = str(path).strip()
+    try:
+        resolved = str(Path(raw).resolve())
+    except (OSError, ValueError):
+        resolved = raw
+    return resolved.lower().replace("/", "\\")
 
 
 def pick_launch_target(args: Dict[str, Any]) -> Optional[str]:
