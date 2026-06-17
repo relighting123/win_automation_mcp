@@ -73,8 +73,8 @@ class _MockFind(_MockNode):
 
 
 class _MockMainWithFind(_MockNode):
-    def __init__(self):
-        super().__init__(title="", control_type="Window", control_id=1, automation_id="MainWnd")
+    def __init__(self, *, title="", automation_id="MainWnd", control_id=1):
+        super().__init__(title=title, control_type="Window", control_id=control_id, automation_id=automation_id)
         self.find = _MockFind()
 
     def children(self):
@@ -84,6 +84,19 @@ class _MockMainWithFind(_MockNode):
         return [
             _MockNode(title="Next", control_type="Button", control_id=3001, automation_id="btnNext"),
             self.find,
+        ]
+
+
+class _MockMainWithoutClose(_MockNode):
+    def __init__(self, *, title="Other", automation_id="OtherWnd"):
+        super().__init__(title=title, control_type="Window", control_id=10, automation_id=automation_id)
+
+    def children(self):
+        return []
+
+    def descendants(self):
+        return [
+            _MockNode(title="Next", control_type="Button", control_id=3010, automation_id="btnNext"),
         ]
 
 
@@ -211,6 +224,31 @@ class ClickAppByAttrOutlineTest(unittest.TestCase):
         self.assertIsNone(getattr(self.top, "_last_outline_colour", None))
         close_node = self.top.find._cached_descendants[1]
         self.assertEqual(getattr(close_node, "_last_outline_colour", None), "red")
+
+    def test_outline_scope_top_highlights_top_window_only(self) -> None:
+        result = self._run_click(outline_scope="top", top_outline_colour="blue")
+        self.assertEqual(result.result, "success")
+        self.assertEqual(getattr(self.top, "_last_outline_colour", None), "blue")
+        close_node = self.top.find._cached_descendants[1]
+        self.assertIsNone(getattr(close_node, "_last_outline_colour", None))
+
+    def test_outline_scope_top_highlights_each_top_window_during_traversal(self) -> None:
+        other_top = _MockMainWithoutClose(title="OtherApp")
+        with patch.object(self.action, "_activate_attr_search_context", return_value=MagicMock(result="success", is_success=True)):
+            with patch.object(self.action, "_iter_process_top_windows", return_value=[other_top, self.top]):
+                result = self.action.click_element_by_attr(
+                    auto_id="Close",
+                    window_target="top",
+                    draw_outline=True,
+                    outline_scope="top",
+                    top_outline_colour="blue",
+                    timeout=0.1,
+                )
+        self.assertEqual(result.result, "success")
+        self.assertEqual(getattr(other_top, "_last_outline_colour", None), "blue")
+        self.assertEqual(getattr(self.top, "_last_outline_colour", None), "blue")
+        close_node = self.top.find._cached_descendants[1]
+        self.assertIsNone(getattr(close_node, "_last_outline_colour", None))
 
 
 class ClickAppByAttrPollingTest(unittest.TestCase):

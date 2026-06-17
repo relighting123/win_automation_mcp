@@ -2761,6 +2761,7 @@ class AppUIAction:
         draw_outline: bool = False,
         outline_colour: str = "red",
         search_outline_colour: str = "green",
+        top_outline_colour: str = "blue",
         outline_scope: str = "all",
         allow_invisible_children: bool = False,
     ) -> AppUIActionResult:
@@ -2780,9 +2781,13 @@ class AppUIAction:
           - True: 보이지 않는 child window도 탐색·활성화 후보에 포함
 
         draw_outline=True 시 outline_scope에 따라 테두리 표시:
-          - search: 순회 중인 search_root(창)만
+          - top: 순회 중인 top window(프로세스 최상위 창)만
+          - search: top window + 순회 중인 search_root(창)
           - target: 찾은 요소만
-          - all: search_root + target (기본)
+          - all: top window + search_root + target (기본)
+        top_outline_colour: top window 테두리 색 (기본 blue)
+        search_outline_colour: search_root 테두리 색 (기본 green)
+        outline_colour: target 요소 테두리 색 (기본 red)
         """
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
@@ -2816,11 +2821,12 @@ class AppUIAction:
             )
 
         outline_scope = (outline_scope or "all").strip().lower()
-        if outline_scope not in {"search", "target", "all"}:
+        if outline_scope not in {"search", "target", "top", "all"}:
             return AppUIActionResult(
                 result="error",
-                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all)",
+                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|top|all)",
             )
+        outline_top = draw_outline and outline_scope in {"top", "search", "all"}
         outline_search = draw_outline and outline_scope in {"search", "all"}
         outline_target = draw_outline and outline_scope in {"target", "all"}
         outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
@@ -2906,10 +2912,18 @@ class AppUIAction:
                 )
 
                 for top_window in top_windows:
+                    top_label = self._format_window_label(top_window)
                     logger.info(
                         "[click_app_by_attr] top window 순회 시작: %s",
-                        self._format_window_label(top_window),
+                        top_label,
                     )
+                    if outline_top:
+                        self._safe_draw_outline(
+                            top_window,
+                            colour=top_outline_colour,
+                            label=f"top_window={top_label}",
+                        )
+                        time.sleep(outline_pause)
                     search_roots = self._iter_attr_search_roots(
                         window_target=window_target,
                         child_window_title=child_window_title,
