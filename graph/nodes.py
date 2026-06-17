@@ -16,7 +16,7 @@ from graph.prompts import (
     MODE_INSTRUCTIONS,
     ALLOWED_PATHS
 )
-from core.launch_paths import resolve_launch_paths
+from core.launch_paths import canonicalize_launch_arg_keys, resolve_launch_paths
 from skills.sequence_skill import SequenceSkill
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -312,7 +312,7 @@ class GraphNodes:
         arg_meta_map: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
         """스킬 메타데이터 기준으로 fixed/ai 인자를 정규화합니다."""
-        normalized = dict(step_args)
+        normalized = canonicalize_launch_arg_keys(dict(step_args))
         for arg_name, arg_meta in arg_meta_map.items():
             if arg_meta.get("mode") == "fixed":
                 normalized[arg_name] = arg_meta.get("value")
@@ -320,7 +320,9 @@ class GraphNodes:
 
             if arg_meta.get("mode") == "ai":
                 current_val = normalized.get(arg_name)
-                if current_val is None:
+                if current_val is None or (
+                    isinstance(current_val, str) and not current_val.strip()
+                ):
                     normalized[arg_name] = arg_meta.get("value")
 
                 if self._is_path_arg_name(arg_name) and ALLOWED_PATHS:
@@ -332,7 +334,7 @@ class GraphNodes:
                             arg_meta.get("value"),
                         )
                         normalized[arg_name] = arg_meta.get("value")
-        return normalized
+        return canonicalize_launch_arg_keys(normalized)
 
     def _normalize_launch_tool_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """launch_application 호출 인자의 경로 별칭을 canonical key로 통합합니다."""
@@ -366,6 +368,12 @@ class GraphNodes:
             args = self._apply_step_arg_constraints(args, step.get("args", {}))
             if tool_name == "launch_application":
                 args = self._normalize_launch_tool_args(args)
+                if not (args.get("file_path") or "").strip():
+                    logger.warning(
+                        "[launch_application] file_path가 비어 있습니다. skill YAML의 file_path(fixed) 또는 "
+                        "connect_path만 사용됩니다. args=%s",
+                        args,
+                    )
             final_calls.append(ToolCall(tool=tool_name, args=args))
 
         if llm_calls is not None and len(llm_calls) > len(final_calls):

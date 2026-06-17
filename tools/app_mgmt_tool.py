@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from core.app_launcher import get_launcher
 from core.app_session import AppSession
-from core.launch_paths import LAUNCH_TARGET_KEYS, resolve_launch_paths
+from core.launch_paths import LAUNCH_TARGET_KEYS, canonicalize_launch_arg_keys, resolve_launch_paths
 from errors.automation_error import ConnectionError
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ async def launch_application(
         wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
         reopen_data_file: 이미 연결된 상태에서도 동일 .rul 파일을 다시 열지 (기본: False)
     """
-    raw_args = {
+    raw_args = canonicalize_launch_arg_keys({
         "argument_path": argument_path,
         "exec_path": exec_path,
         "file_path": file_path,
@@ -56,7 +56,7 @@ async def launch_application(
         "window_title": window_title,
         "window_title_re": window_title_re,
         "wait_for_window": wait_for_window,
-    }
+    })
 
     try:
         launcher = get_launcher()

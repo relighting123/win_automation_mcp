@@ -5,7 +5,12 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.launch_paths import normalize_launch_path, pick_launch_target, resolve_launch_paths
+from core.launch_paths import (
+    canonicalize_launch_arg_keys,
+    normalize_launch_path,
+    pick_launch_target,
+    resolve_launch_paths,
+)
 
 
 class LaunchPathsTest(unittest.TestCase):
@@ -41,12 +46,20 @@ class LaunchPathsTest(unittest.TestCase):
         self.assertEqual(connect, r"C:\Apps\Tool.exe")
 
     def test_resolve_launch_paths_strips_legacy_executable_path_key(self) -> None:
-        _, _, normalized = resolve_launch_paths(
+        target, _, normalized = resolve_launch_paths(
             {"executable_path": r"D:\Rules\legacy.rul"},
             config_connect_path=r"C:\Apps\Tool.exe",
         )
+        self.assertEqual(target, r"D:\Rules\legacy.rul")
+        self.assertEqual(normalized.get("file_path"), r"D:\Rules\legacy.rul")
         self.assertNotIn("executable_path", normalized)
-        self.assertEqual(normalized.get("file_path"), "")
+
+    def test_canonicalize_launch_arg_keys_maps_executable_path_to_file_path(self) -> None:
+        normalized = canonicalize_launch_arg_keys(
+            {"executable_path": r"D:\Rules\legacy.rul", "connect_path": r"C:\Apps\Tool.exe"}
+        )
+        self.assertEqual(normalized["file_path"], r"D:\Rules\legacy.rul")
+        self.assertNotIn("executable_path", normalized)
 
     def test_normalize_launch_path_ignores_case(self) -> None:
         left = normalize_launch_path(r"D:\Rules\assign.rul")

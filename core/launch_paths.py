@@ -10,7 +10,17 @@ LAUNCH_TARGET_KEYS = (
     "argument_path",
     "exec_path",
     "path",
+    "executable_path",  # legacy skill YAML / LLM 호환
 )
+
+
+def canonicalize_launch_arg_keys(args: Dict[str, Any]) -> Dict[str, Any]:
+    """launch_application 인자 키를 정규화합니다 (executable_path → file_path)."""
+    normalized = dict(args)
+    legacy_path = normalized.pop("executable_path", None)
+    if legacy_path not in (None, "") and not normalized.get("file_path"):
+        normalized["file_path"] = legacy_path
+    return normalized
 
 
 def is_executable_file(path: str) -> bool:
@@ -49,8 +59,7 @@ def resolve_launch_paths(
     - connect_path가 없으면 config.connect_path 사용
     - file_path가 없으면 빈 문자열 (실행 시 connect_path exe로 fallback)
     """
-    normalized = dict(args)
-    normalized.pop("executable_path", None)
+    normalized = canonicalize_launch_arg_keys(args)
     launch_target = pick_launch_target(normalized)
     connect_path = normalized.get("connect_path") or config_connect_path
 
@@ -61,5 +70,7 @@ def resolve_launch_paths(
     for key in LAUNCH_TARGET_KEYS:
         if key != "file_path":
             normalized.pop(key, None)
+
+    normalized.pop("executable_path", None)
 
     return launch_target or "", connect_path, normalized

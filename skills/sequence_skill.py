@@ -5,7 +5,7 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from core.app_session import AppSession
-from core.launch_paths import pick_launch_target, resolve_launch_paths
+from core.launch_paths import canonicalize_launch_arg_keys, pick_launch_target, resolve_launch_paths
 from skills.base_skill import BaseSkill
 from tools.tool_registry import get_skill_tool_registry
 from core.mcp_client import get_shared_extra_mcp_hub
@@ -68,13 +68,15 @@ class SequenceSkill(BaseSkill):
                 return {}
             if not isinstance(raw_args, dict):
                 raise ValueError(f"step.args는 dict 또는 null 이어야 합니다: {step}")
-            return raw_args
+            return canonicalize_launch_arg_keys(raw_args)
 
-        return {
-            k: v
-            for k, v in step.items()
-            if k not in {"tool", "type", "action"}
-        }
+        return canonicalize_launch_arg_keys(
+            {
+                k: v
+                for k, v in step.items()
+                if k not in {"tool", "type", "action"}
+            }
+        )
 
     def _render_template(self, value: Any, runtime_kwargs: Dict[str, Any]) -> Any:
         """step args 내부 문자열 템플릿을 런타임 인자 기준으로 치환"""
