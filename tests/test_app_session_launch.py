@@ -73,15 +73,55 @@ class AppSessionLaunchTest(unittest.TestCase):
     def test_open_associated_file_skips_reopen_for_same_data_file(self) -> None:
         self.session._state = SessionState.CONNECTED
         self.session._app = MagicMock()
+        self.session._app.windows.return_value = [MagicMock()]
         self.session._last_opened_data_file = self.session._normalize_data_file_path(
             r"D:\Rules\report.rul"
         )
         with patch("os.startfile", create=True) as mock_startfile:
             with patch.object(self.session, "_bring_to_front") as mock_focus:
-                self.session.open_associated_file(r"D:\Rules\report.rul")
+                with patch.object(self.session, "has_usable_window", return_value=True):
+                    self.session.open_associated_file(r"D:\Rules\report.rul")
         mock_startfile.assert_not_called()
         mock_focus.assert_called_once()
         self.assertTrue(self.session._skipped_data_file_reopen)
+
+    def test_open_associated_file_reopens_when_session_is_stale(self) -> None:
+        self.session._state = SessionState.CONNECTED
+        self.session._app = MagicMock()
+        self.session._app.windows.side_effect = RuntimeError("stale")
+        self.session._last_opened_data_file = self.session._normalize_data_file_path(
+            r"D:\Rules\report.rul"
+        )
+        with patch("os.startfile", create=True) as mock_startfile:
+            with patch.object(self.session, "_bring_to_front"):
+                self.session.open_associated_file(r"D:\Rules\report.rul")
+        self.assertEqual(self.session.state, SessionState.DISCONNECTED)
+        mock_startfile.assert_called_once_with(r"D:\Rules\report.rul")
+        self.assertFalse(self.session._skipped_data_file_reopen)
+
+    def test_open_associated_file_reopens_when_no_usable_window(self) -> None:
+        self.session._state = SessionState.CONNECTED
+        self.session._app = MagicMock()
+        self.session._app.windows.return_value = [MagicMock()]
+        self.session._last_opened_data_file = self.session._normalize_data_file_path(
+            r"D:\Rules\report.rul"
+        )
+        with patch("os.startfile", create=True) as mock_startfile:
+            with patch.object(self.session, "_bring_to_front"):
+                with patch.object(self.session, "is_session_alive", return_value=True):
+                    with patch.object(self.session, "has_usable_window", return_value=False):
+                        self.session.open_associated_file(r"D:\Rules\report.rul")
+        mock_startfile.assert_called_once_with(r"D:\Rules\report.rul")
+        self.assertFalse(self.session._skipped_data_file_reopen)
+
+    def test_refresh_stale_connection_disconnects_dead_session(self) -> None:
+        self.session._state = SessionState.CONNECTED
+        self.session._app = MagicMock()
+        self.session._app.windows.side_effect = RuntimeError("stale")
+        self.session._last_opened_data_file = "cached"
+        self.assertTrue(self.session.refresh_stale_connection())
+        self.assertEqual(self.session.state, SessionState.DISCONNECTED)
+        self.assertIsNone(self.session._last_opened_data_file)
 
     def test_open_associated_file_force_reopens_same_data_file(self) -> None:
         self.session._state = SessionState.CONNECTED

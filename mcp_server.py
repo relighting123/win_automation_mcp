@@ -170,6 +170,8 @@ class ServerState:
         # AppSession 초기화 (설정 로드)
         from core.app_session import AppSession
         session = AppSession.get_instance()
+        if session.refresh_stale_connection():
+            logger.info("이전 MCP 실행의 stale 세션을 정리했습니다.")
         
         # 도구 등록
         register_all_tools()
