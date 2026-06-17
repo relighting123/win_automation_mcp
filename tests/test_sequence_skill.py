@@ -74,5 +74,36 @@ class SequenceSkillArgsTest(unittest.TestCase):
         self.assertEqual(parsed["args"]["connect_path"], r"C:\Apps\Tool.exe")
 
 
+    def test_parse_step_maps_executable_path_alias_for_launch(self) -> None:
+        skill = self._make_skill(
+            [
+                {
+                    "tool": "launch_application",
+                    "args": {
+                        "executable_path": { "mode": "fixed", "value": r"D:\Rules\assign.rul" },
+                    },
+                }
+            ]
+        )
+        with patch.object(
+            AppSession,
+            "get_instance",
+            return_value=type(
+                "Session",
+                (),
+                {
+                    "config": {
+                        "application": {
+                            "connect_path": r"C:\Apps\Tool.exe",
+                        }
+                    }
+                },
+            )(),
+        ):
+            parsed = skill._parse_step(skill.steps[0], {})
+        self.assertEqual(parsed["args"]["file_path"], r"D:\Rules\assign.rul")
+        self.assertEqual(parsed["args"]["connect_path"], r"C:\Apps\Tool.exe")
+
+
 if __name__ == "__main__":
     unittest.main()

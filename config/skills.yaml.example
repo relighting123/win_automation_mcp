@@ -148,7 +148,8 @@ skills:
       - tool: launch_application
         args:
           # file_path / path 모두 지원
-          file_path: { mode: "ai", value: "C:\\Path\\To\\Your\\default.rul" }
+          # .rul 경로는 fixed 권장 (semi/auto에서 LLM이 빈 값을 넣어도 YAML 값 유지)
+          file_path: { mode: "fixed", value: "C:\\Path\\To\\Your\\default.rul" }
       - tool: wait
         args:
           seconds: 2.0
