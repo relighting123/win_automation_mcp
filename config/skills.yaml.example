@@ -147,7 +147,7 @@ skills:
     tools:
       - tool: launch_application
         args:
-          # executable_path / file_path / path 모두 지원
+          # file_path / path 모두 지원
           file_path: { mode: "ai", value: "C:\\Path\\To\\Your\\default.rul" }
       - tool: wait
         args:

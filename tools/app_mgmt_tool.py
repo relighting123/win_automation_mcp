@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 async def launch_application(
-    executable_path: Optional[str] = None,
     argument_path: Optional[str] = None,
     exec_path: Optional[str] = None,
     file_path: Optional[str] = None,
@@ -29,26 +28,26 @@ async def launch_application(
     window_title: Optional[str] = None,
     window_title_re: Optional[str] = None,
     wait_for_window: bool = True,
+    reopen_data_file: bool = False,
 ) -> dict:
     """
     대상 Windows 애플리케이션 또는 데이터 파일을 실행합니다.
 
     지정된 경로의 애플리케이션(.exe)을 실행하거나, 데이터 파일(.rul, .txt 등)을 관련 프로그램으로 엽니다.
-    실행 대상 경로가 없을 때만 app_config의 executable_path를 사용합니다.
+    file_path가 없으면 config의 connect_path exe를 실행합니다.
 
     Args:
-        executable_path: 실행할 파일 경로 (.exe 또는 연동된 데이터 파일)
-        argument_path: executable_path 별칭 (스킬 YAML / graph 호환)
-        exec_path: executable_path 별칭
-        file_path: executable_path 별칭 (.rul 등 데이터 파일)
-        path: executable_path 별칭
-        connect_path: (데이터 파일 실행 시) 연결할 실제 실행 파일 경로
+        file_path: 열 데이터 파일 경로 (.rul 등) 또는 실행 파일
+        argument_path: file_path 별칭 (스킬 YAML / graph 호환)
+        exec_path: file_path 별칭
+        path: file_path 별칭
+        connect_path: pywinauto가 붙을 exe 경로 (데이터 파일 실행 시 필수)
         window_title: (데이터 파일 실행 시) 연결할 윈도우 제목
         window_title_re: (데이터 파일 실행 시) 연결할 윈도우 제목 정규식
         wait_for_window: 윈도우가 나타날 때까지 대기 여부 (기본: True)
+        reopen_data_file: 이미 연결된 상태에서도 동일 .rul 파일을 다시 열지 (기본: False)
     """
     raw_args = {
-        "executable_path": executable_path,
         "argument_path": argument_path,
         "exec_path": exec_path,
         "file_path": file_path,
@@ -64,7 +63,6 @@ async def launch_application(
         app_config = launcher._session.config.get("application", {})
         target_path, resolved_connect_path, _ = resolve_launch_paths(
             raw_args,
-            app_config.get("executable_path"),
             app_config.get("connect_path"),
         )
 
@@ -88,20 +86,27 @@ async def launch_application(
             connect_path=resolved_connect_path,
             title=window_title,
             title_re=window_title_re,
+            reopen_data_file=reopen_data_file,
         )
 
-        # 윈도우 포커스 확보 시도 (비전 액션 사용)
-        from actions.app_ui_action import get_app_ui_action
+        # 윈도우 포커스 확보 시도 (동일 .rul 재오픈을 건너뛴 경우는 이미 포커스 복원됨)
+        if not launcher.session._skipped_data_file_reopen:
+            from actions.app_ui_action import get_app_ui_action
 
-        action = get_app_ui_action()
-        action.ensure_focus()
+            action = get_app_ui_action()
+            action.ensure_focus()
 
         process_info = launcher.get_process_info()
 
+        message = "애플리케이션이 실행되었습니다"
+        if launcher.session.is_connected and launcher.session._skipped_data_file_reopen:
+            message = "이미 연결된 애플리케이션에 포커스를 복원했습니다"
+
         result = {
             "success": True,
-            "message": "애플리케이션이 실행되었습니다",
+            "message": message,
             "process_info": process_info,
+            "skipped_data_file_reopen": launcher.session._skipped_data_file_reopen,
         }
         return json.dumps(result, ensure_ascii=False)
 
@@ -132,7 +137,7 @@ async def connect_to_application(
     process_id: Optional[int] = None,
     window_title: Optional[str] = None,
     window_title_re: Optional[str] = None,
-    executable_path: Optional[str] = None,
+    connect_path: Optional[str] = None,
 ) -> dict:
     """
     이미 실행 중인 애플리케이션에 연결합니다.
@@ -141,21 +146,16 @@ async def connect_to_application(
     새로 실행하지 않고 기존 인스턴스에 연결할 때 사용합니다.
     """
     logger.info(
-        "[Tool] connect_to_application 호출: pid=%s, title=%s, title_re=%s, path=%s",
+        "[Tool] connect_to_application 호출: pid=%s, title=%s, title_re=%s, connect_path=%s",
         process_id,
         window_title,
         window_title_re,
-        executable_path,
+        connect_path,
     )
 
     try:
         launcher = get_launcher()
-        app_config = launcher._session.config.get("application", {})
-        config_path = (
-            executable_path
-            or launcher._session._resolve_connect_executable_path()
-            or app_config.get("executable_path")
-        )
+        config_path = connect_path or launcher._session._resolve_connect_executable_path()
 
         launcher.connect_to_running(
             process_id=process_id,

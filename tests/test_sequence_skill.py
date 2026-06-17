@@ -63,7 +63,6 @@ class SequenceSkillArgsTest(unittest.TestCase):
                 {
                     "config": {
                         "application": {
-                            "executable_path": r"C:\Apps\Tool.exe",
                             "connect_path": r"C:\Apps\Tool.exe",
                         }
                     }
@@ -71,7 +70,7 @@ class SequenceSkillArgsTest(unittest.TestCase):
             )(),
         ):
             parsed = skill._parse_step(skill.steps[0], {})
-        self.assertEqual(parsed["args"]["executable_path"], r"D:\Rules\assign.rul")
+        self.assertEqual(parsed["args"]["file_path"], r"D:\Rules\assign.rul")
         self.assertEqual(parsed["args"]["connect_path"], r"C:\Apps\Tool.exe")
 
 

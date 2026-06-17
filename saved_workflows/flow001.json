@@ -2,7 +2,6 @@
     {
         "tool": "launch_application",
         "args": {
-            "executable_path": null,
             "wait_for_window": true
         }
     },

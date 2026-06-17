@@ -70,7 +70,7 @@ copy config\skills.yaml.example config\skills.yaml
 
 ```yaml
 application:
-  executable_path: "C:\\Program Files\\YourApp\\app.exe"
+  connect_path: "C:\\Program Files\\YourApp\\app.exe"
   process_name: "app.exe"
   backend: "uia"
   startup_timeout: 30
@@ -127,7 +127,7 @@ MCP 서버가 자동으로 백그라운드에서 시작됩니다.
 
 ```yaml
 application:
-  executable_path: "C:\\Program Files\\YourApp\\app.exe"  # 실행 파일 경로
+  connect_path: "C:\\Program Files\\YourApp\\app.exe"  # pywinauto 연결 exe 경로
   process_name: "app.exe"                                  # 프로세스 이름
   backend: "uia"                                           # pywinauto 백엔드
   startup_timeout: 30                                      # 시작 대기 시간(초)
@@ -248,7 +248,7 @@ chatRTD --api-key sk-xxx           # 이 세션만 API 키 변경
 ⠸  Thinking...
 
 ── Tool Call ──────────────────────────────────────
-  ◆  launch_application  {"executable_path": "notepad.exe"}
+  ◆  launch_application  {"file_path": "D:\\Rules\\assign.rul"}
      → {"status": "ok", "message": "실행 완료"}
   ◆  type_app_text  {"text": "2026-06-10"}
      → {"status": "ok"}

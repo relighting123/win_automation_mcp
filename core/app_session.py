@@ -74,6 +74,8 @@ class AppSession:
         self._config: Dict[str, Any] = {}
         self._locators: Dict[str, Any] = {}
         self._cached_window: Optional[Any] = None
+        self._last_opened_data_file: Optional[str] = None
+        self._skipped_data_file_reopen: bool = False
         
         # 설정 로드
         if config_path:
@@ -315,7 +317,7 @@ class AppSession:
 
         failure_details = {
             "process": process,
-            "path": path or kwargs.get("connect_path") or self._config.get("application", {}).get("executable_path"),
+            "path": path or kwargs.get("connect_path") or self._config.get("application", {}).get("connect_path"),
             "title": title,
         }
         
@@ -391,29 +393,29 @@ class AppSession:
         
         self._state = SessionState.CONNECTING
         
-        # 실행 경로 결정
-        exe_path = path or self._config.get("application", {}).get("executable_path")
-        if not exe_path:
+        # 실행 경로 결정 (file_path 또는 connect_path exe)
+        launch_path = path or self._resolve_connect_executable_path(kwargs.get("connect_path"))
+        if not launch_path:
             raise ConnectionError(
-                message="실행 파일 경로를 지정해주세요"
+                message="실행 경로를 지정해주세요. config connect_path 또는 file_path를 설정하세요."
             )
         
         startup_timeout = self._config.get("application", {}).get("startup_timeout", 30)
         
-        logger.info(f"애플리케이션 시작 시도: {exe_path}")
+        logger.info(f"애플리케이션 시작 시도: {launch_path}")
         
         try:
             self._app = Application(backend=self._backend)
             
-            is_executable = self._is_executable_path(exe_path)
+            is_executable = self._is_executable_path(launch_path)
 
             # pywinauto Application.start()가 모르는 인자 제거
-            _TOOL_ONLY_KEYS = {"connect_path", "title", "title_re"}
+            _TOOL_ONLY_KEYS = {"connect_path", "title", "title_re", "reopen_data_file"}
             start_kwargs = {k: v for k, v in kwargs.items() if k not in _TOOL_ONLY_KEYS}
             connect_exe_path = self._resolve_connect_executable_path(kwargs.get("connect_path"))
 
             if is_executable:
-                self._app.start(exe_path, **start_kwargs)
+                self._app.start(launch_path, **start_kwargs)
             else:
                 import os
 
@@ -423,15 +425,16 @@ class AppSession:
                             "데이터 파일(.rul 등) 실행을 위해 connect_path가 필요합니다. "
                             "launch_application(connect_path=...) 또는 config application.connect_path에 exe 경로를 설정하세요."
                         ),
-                        details={"data_file": exe_path},
+                        details={"data_file": launch_path},
                     )
 
                 logger.info(
                     "[launch] 데이터 파일 실행: file=%s, connect_exe=%s",
-                    exe_path,
+                    launch_path,
                     connect_exe_path,
                 )
-                os.startfile(exe_path)
+                os.startfile(launch_path)
+                self._last_opened_data_file = self._normalize_data_file_path(launch_path)
 
                 wait_until(
                     condition=lambda: self._try_connect(
@@ -440,14 +443,14 @@ class AppSession:
                         **{k: v for k, v in kwargs.items() if k not in {"connect_path", "title"}},
                     ),
                     timeout=startup_timeout,
-                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({exe_path})",
+                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({launch_path})",
                 )
 
             # 메인 윈도우 대기
             wait_until(
                 condition=lambda: len(self._app.windows()) > 0,
                 timeout=startup_timeout,
-                timeout_message=f"애플리케이션 윈도우 생성 대기 ({exe_path})"
+                timeout_message=f"애플리케이션 윈도우 생성 대기 ({launch_path})"
             )
             
             self._state = SessionState.CONNECTED
@@ -461,7 +464,7 @@ class AppSession:
             raise ConnectionError(
                 message="애플리케이션 실행 실패",
                 cause=e,
-                details={"path": exe_path}
+                details={"path": launch_path}
             )
     
     def disconnect(self) -> None:
@@ -469,6 +472,8 @@ class AppSession:
         if self._app is not None:
             self._app = None
         self._cached_window = None
+        self._last_opened_data_file = None
+        self._skipped_data_file_reopen = False
         self._state = SessionState.DISCONNECTED
         logger.info("애플리케이션 연결 해제")
     
@@ -534,21 +539,25 @@ class AppSession:
 
     def _resolve_connect_executable_path(self, connect_path: Optional[str] = None) -> Optional[str]:
         """
-        .rul 등 데이터 파일 실행 후 pywinauto가 붙을 exe 경로를 결정합니다.
-        우선순위: 인자 connect_path > config.connect_path > config.executable_path(실행파일일 때)
+        pywinauto가 붙을 exe 경로를 결정합니다.
+        우선순위: 인자 connect_path > config.connect_path
         """
         app_config = self._config.get("application", {})
         candidates = [
             connect_path,
             app_config.get("connect_path"),
-            app_config.get("executable_path") if self._is_executable_path(app_config.get("executable_path")) else None,
         ]
         for candidate in candidates:
             if candidate and str(candidate).strip():
                 return str(candidate).strip()
         return None
 
-    def open_associated_file(self, path: str, **kwargs) -> "AppSession":
+    def _normalize_data_file_path(self, path: Optional[str]) -> str:
+        from core.launch_paths import normalize_launch_path
+
+        return normalize_launch_path(path)
+
+    def open_associated_file(self, path: str, *, force: bool = False, **kwargs) -> "AppSession":
         """연결을 유지한 채 데이터 파일(.rul 등)만 다시 엽니다."""
         from errors.automation_error import ConnectionError
         import os
@@ -557,8 +566,26 @@ class AppSession:
         if not path:
             raise ConnectionError(message="열 데이터 파일 경로가 비어 있습니다")
 
+        normalized = self._normalize_data_file_path(path)
+        if (
+            not force
+            and self.is_connected
+            and normalized
+            and self._last_opened_data_file == normalized
+        ):
+            logger.info(
+                "[launch] 이미 연결됨 및 동일 데이터 파일 사용 중 - 포커스만 복원: %s",
+                path,
+            )
+            self._skipped_data_file_reopen = True
+            if self.is_connected:
+                self._bring_to_front()
+            return self
+
         logger.info("[launch] 연결 유지 상태에서 데이터 파일 열기: %s", path)
         os.startfile(path)
+        self._last_opened_data_file = normalized
+        self._skipped_data_file_reopen = False
         delay = float(self._config.get("timeouts", {}).get("after_focus_delay", 0.2))
         time.sleep(delay)
         if self.is_connected:

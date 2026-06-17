@@ -8,11 +8,10 @@
 #   git 에 커밋되지 않습니다.
 
 application:
-  # 타겟 애플리케이션 경로 (exe 직접 실행 또는 기본 데이터 파일)
-  executable_path: "C:\\Program Files\\YourApp\\app.exe"
-  # .rul 등 데이터 파일 실행 시 pywinauto가 붙을 exe 경로
-  # executable_path가 .rul 같은 데이터 파일이면 connect_path에 exe를 반드시 지정하세요.
-  # connect_path: "C:\\Program Files\\YourApp\\app.exe"
+  # pywinauto가 붙을 타겟 애플리케이션 exe 경로
+  connect_path: "C:\\Program Files\\YourApp\\app.exe"
+  # file_path 미지정 시 launch_application은 connect_path exe를 실행합니다.
+  # .rul 등 데이터 파일은 스킬 launch_application args.file_path로 지정하세요.
   # 애플리케이션 이름 (프로세스 실행 중인지 등을 판단하는 용도)
   process_name: "app.exe"
   # 윈도우 제목 정규식 (연결 시 사용)

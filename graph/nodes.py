@@ -338,13 +338,11 @@ class GraphNodes:
         """launch_application 호출 인자의 경로 별칭을 canonical key로 통합합니다."""
         try:
             app_config = AppSession.get_instance().config.get("application", {})
-            config_exe = app_config.get("executable_path")
             config_connect = app_config.get("connect_path")
         except Exception:
-            config_exe = None
             config_connect = None
 
-        _, _, normalized = resolve_launch_paths(args, config_exe, config_connect)
+        _, _, normalized = resolve_launch_paths(args, config_connect)
         return normalized
 
     def _build_calls_from_steps(

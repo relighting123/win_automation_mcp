@@ -72,41 +72,50 @@ class AppLauncher:
         Returns:
             연결된 AppSession
         """
-        exe_path = path or self._session.config.get(
-            "application", {}
-        ).get("executable_path")
-        
+        config_connect = self._session._resolve_connect_executable_path(kwargs.get("connect_path"))
+        launch_path = path or config_connect
+
         logger.info(
-            "[launch] path 결정: argument_path=%s, config_path=%s, 최종=%s",
+            "[launch] path 결정: file_path=%s, connect_path=%s, 최종=%s",
             path,
-            self._session.config.get("application", {}).get("executable_path"),
-            exe_path,
+            config_connect,
+            launch_path,
         )
 
+        self._session._skipped_data_file_reopen = False
+
         if self._session.is_connected:
-            if exe_path and not self._session._is_executable_path(exe_path):
-                logger.info("[launch] 이미 연결됨 - 데이터 파일만 다시 열기: %s", exe_path)
-                return self._session.open_associated_file(exe_path, **kwargs)
+            reopen_data_file = bool(kwargs.pop("reopen_data_file", False))
+            if launch_path and not self._session._is_executable_path(launch_path):
+                if reopen_data_file:
+                    logger.info("[launch] 이미 연결됨 - 데이터 파일 다시 열기: %s", launch_path)
+                else:
+                    logger.info("[launch] 이미 연결됨 - 데이터 파일 처리: %s", launch_path)
+                return self._session.open_associated_file(
+                    launch_path,
+                    force=reopen_data_file,
+                    **kwargs,
+                )
             logger.info("이미 연결된 세션이 있습니다")
             return self._session
         
-        if not exe_path:
+        if not launch_path:
             raise ConnectionError(
-                message="실행 파일 경로가 지정되지 않았습니다"
+                message="실행 경로가 지정되지 않았습니다. connect_path 또는 file_path를 설정하세요."
             )
         
         # 경로 존재 확인
-        if not Path(exe_path).exists():
-            logger.warning(f"실행 파일을 찾을 수 없습니다: {exe_path}")
+        if not Path(launch_path).exists():
+            logger.warning(f"실행 파일을 찾을 수 없습니다: {launch_path}")
             # 원격 환경에서는 경로가 다를 수 있으므로 경고만 출력
         
-        logger.info(f"애플리케이션 실행: {exe_path}")
+        logger.info(f"애플리케이션 실행: {launch_path}")
         
         # 명령행 인자 처리
         if args:
             kwargs["cmd_line"] = " ".join(args)
         
-        return self._session.start(path=exe_path, **kwargs)
+        return self._session.start(path=launch_path, **kwargs)
     
     def connect_to_running(
         self,

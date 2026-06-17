@@ -602,7 +602,7 @@ def main() -> int:
     config_path = project_root / "config" / "app_config.yaml"
     if not config_path.exists():
         print("ERROR: config/app_config.yaml 이 없습니다.")
-        print("       config/app_config.yaml.example 을 복사해 executable_path 등을 설정하세요.")
+        print("       config/app_config.yaml.example 을 복사해 connect_path 등을 설정하세요.")
         return 1
 
     try:
