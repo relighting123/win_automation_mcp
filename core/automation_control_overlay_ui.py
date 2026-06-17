@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _OVERLAY_WIDTH = 420
 _OVERLAY_HEIGHT = 56
+_QUEUE_POLL_MS = 50
 
 
 class AutomationControlOverlay:
@@ -25,39 +27,65 @@ class AutomationControlOverlay:
         self._root: tk.Tk | None = None
         self._status_var: tk.StringVar | None = None
         self._pause_btn: ttk.Button | None = None
+        self._commands: queue.Queue[str] = queue.Queue()
+        self._closing = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._closing = False
         self._thread = threading.Thread(target=self._run_ui, name="automation-overlay", daemon=True)
         self._thread.start()
         self._ready.wait(timeout=3.0)
 
     def stop(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        self._commands.put("stop")
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        self._root = None
+        self._thread = None
+
+    def schedule_update(self) -> None:
+        if self._closing or self._root is None:
+            return
+        try:
+            self._commands.put_nowait("update")
+        except queue.Full:
+            pass
+
+    def _process_commands(self) -> None:
         root = self._root
         if root is None:
             return
 
-        def _close() -> None:
+        should_stop = False
+        try:
+            while True:
+                command = self._commands.get_nowait()
+                if command == "stop":
+                    should_stop = True
+                    break
+                if command == "update":
+                    self._refresh_labels()
+        except queue.Empty:
+            pass
+
+        if should_stop:
+            try:
+                root.quit()
+            except tk.TclError:
+                pass
             try:
                 root.destroy()
             except tk.TclError:
                 pass
-
-        try:
-            root.after(0, _close)
-        except tk.TclError:
-            pass
-        if self._thread:
-            self._thread.join(timeout=2.0)
-        self._root = None
-
-    def schedule_update(self) -> None:
-        root = self._root
-        if root is None:
             return
+
         try:
-            root.after(0, self._refresh_labels)
+            root.after(_QUEUE_POLL_MS, self._process_commands)
         except tk.TclError:
             pass
 
@@ -111,10 +139,13 @@ class AutomationControlOverlay:
 
             self._refresh_labels()
             self._ready.set()
+            self._process_commands()
             root.mainloop()
         except Exception as exc:
             logger.warning("자동화 오버레이 UI 실행 실패: %s", exc)
             self._ready.set()
+        finally:
+            self._root = None
 
     def _on_toggle_pause(self) -> None:
         self._control.toggle_pause()
