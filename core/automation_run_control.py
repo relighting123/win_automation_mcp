@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 _active_control: Optional["AutomationRunControl"] = None
 _active_lock = threading.RLock()
+_shutting_down_overlay: Any = None
 
 
 def overlay_supported() -> bool:
@@ -47,9 +48,11 @@ class AutomationRunControl:
             self._overlay = None
 
     def stop_overlay(self) -> None:
+        global _shutting_down_overlay
         if self._overlay is not None:
             try:
                 self._overlay.stop()
+                _shutting_down_overlay = self._overlay
             except Exception as exc:
                 logger.debug("오버레이 종료 중 오류: %s", exc)
             self._overlay = None
@@ -149,6 +152,37 @@ class AutomationRunControl:
     def _sync_overlay(self) -> None:
         if self._overlay is not None:
             self._overlay.schedule_update()
+
+
+def pump_overlay() -> None:
+    """메인 스레드에서 자동화 오버레이 이벤트를 처리합니다."""
+    global _shutting_down_overlay
+    control = _active_control
+    if control is not None and control._overlay is not None:
+        control._overlay.pump()
+    pending = _shutting_down_overlay
+    if pending is not None:
+        pending.pump()
+        if pending.is_shutdown:
+            _shutting_down_overlay = None
+
+
+def drain_overlay_shutdown(*, timeout: float = 5.0, interval: float = 0.02) -> None:
+    """자동화 종료 후 메인 스레드에서 오버레이 정리를 마무리합니다."""
+    import time
+
+    global _shutting_down_overlay
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pump_overlay()
+        pending = _shutting_down_overlay
+        if pending is None:
+            return
+        if pending.is_shutdown:
+            _shutting_down_overlay = None
+            return
+        time.sleep(interval)
+    logger.warning("오버레이 종료 대기 시간 초과")
 
 
 def begin_run_control(mode: str) -> Optional[AutomationRunControl]:

@@ -16,107 +16,72 @@ logger = logging.getLogger(__name__)
 
 _OVERLAY_WIDTH = 420
 _OVERLAY_HEIGHT = 56
-_QUEUE_POLL_MS = 50
 
 
 class AutomationControlOverlay:
+    """
+    Tk 오버레이.
+
+    Windows tkinter는 생성·갱신 스레드에서 mainloop/update가 돌아야 합니다.
+    별도 daemon 스레드 + after 폴링 대신, 메인 스레드 pump()로 이벤트를 처리합니다.
+    """
+
     def __init__(self, control: "AutomationRunControl") -> None:
         self._control = control
-        self._thread: threading.Thread | None = None
-        self._ready = threading.Event()
         self._root: tk.Tk | None = None
         self._status_var: tk.StringVar | None = None
         self._pause_btn: ttk.Button | None = None
         self._commands: queue.Queue[str] = queue.Queue()
         self._closing = False
-        self._poll_after_id: str | None = None
         self._shutdown_done = threading.Event()
+        self._ui_thread = threading.main_thread()
+
+    @property
+    def is_shutdown(self) -> bool:
+        return self._shutdown_done.is_set()
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
+        """첫 pump() 호출 시 UI가 생성됩니다."""
         self._closing = False
         self._shutdown_done.clear()
-        self._thread = threading.Thread(target=self._run_ui, name="automation-overlay", daemon=True)
-        self._thread.start()
-        self._ready.wait(timeout=3.0)
 
     def stop(self) -> None:
-        if self._closing:
-            self._shutdown_done.wait(timeout=5.0)
+        if self._closing and self._shutdown_done.is_set():
             return
         self._closing = True
         try:
             self._commands.put_nowait("stop")
         except queue.Full:
             self._commands.put("stop")
-        if self._thread and self._thread.is_alive():
-            self._shutdown_done.wait(timeout=5.0)
-            self._thread.join(timeout=1.0)
-        else:
-            self._shutdown_done.set()
-        self._thread = None
+        if threading.current_thread() is self._ui_thread:
+            self.pump()
+
+    def wait_shutdown(self, timeout: float = 5.0) -> None:
+        self._shutdown_done.wait(timeout=timeout)
 
     def schedule_update(self) -> None:
-        if self._closing or self._root is None:
+        if self._closing or self._shutdown_done.is_set():
             return
         try:
             self._commands.put_nowait("update")
         except queue.Full:
             pass
+        if threading.current_thread() is self._ui_thread and self._root is not None:
+            self.pump()
 
-    def _cancel_poll(self, root: tk.Tk) -> None:
-        if self._poll_after_id is None:
+    def pump(self) -> None:
+        """메인 스레드에서 주기적으로 호출해 큐 처리 및 Tk update를 수행합니다."""
+        if threading.current_thread() is not self._ui_thread:
             return
-        try:
-            root.after_cancel(self._poll_after_id)
-        except tk.TclError:
-            pass
-        self._poll_after_id = None
-
-    def _schedule_poll(self, root: tk.Tk) -> None:
-        if self._closing:
+        if self._shutdown_done.is_set():
             return
-        try:
-            self._poll_after_id = root.after(_QUEUE_POLL_MS, self._process_commands)
-        except tk.TclError:
-            self._poll_after_id = None
-
-    def _shutdown_ui(self, root: tk.Tk) -> None:
-        self._cancel_poll(root)
-        try:
-            root.quit()
-        except tk.TclError:
-            pass
-        try:
-            root.destroy()
-        except tk.TclError:
-            pass
-
-    def _process_commands(self) -> None:
-        root = self._root
-        if root is None:
+        if self._root is None and not self._closing:
+            self._create_ui()
+        if self._root is None:
             return
+        self._process_commands()
 
-        should_stop = False
-        try:
-            while True:
-                command = self._commands.get_nowait()
-                if command == "stop":
-                    should_stop = True
-                    break
-                if command == "update" and not self._closing:
-                    self._refresh_labels()
-        except queue.Empty:
-            pass
-
-        if should_stop or self._closing:
-            self._shutdown_ui(root)
-            return
-
-        self._schedule_poll(root)
-
-    def _run_ui(self) -> None:
+    def _create_ui(self) -> None:
         try:
             root = tk.Tk()
             self._root = root
@@ -165,15 +130,63 @@ class AutomationControlOverlay:
             ).pack(side="left", padx=2)
 
             self._refresh_labels()
-            self._ready.set()
-            self._process_commands()
-            root.mainloop()
+            root.update_idletasks()
         except Exception as exc:
-            logger.warning("자동화 오버레이 UI 실행 실패: %s", exc)
-            self._ready.set()
-        finally:
-            self._poll_after_id = None
+            logger.warning("자동화 오버레이 UI 생성 실패: %s", exc)
             self._root = None
+            self._shutdown_done.set()
+
+    def _shutdown_ui(self, root: tk.Tk) -> None:
+        try:
+            for after_id in root.tk.call("after", "info"):
+                try:
+                    root.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+        except tk.TclError:
+            pass
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+        self._root = None
+        self._status_var = None
+        self._pause_btn = None
+
+    def _process_commands(self) -> None:
+        root = self._root
+        if root is None:
+            return
+
+        should_stop = False
+        try:
+            while True:
+                command = self._commands.get_nowait()
+                if command == "stop":
+                    should_stop = True
+                    break
+                if command == "update" and not self._closing:
+                    self._refresh_labels()
+        except queue.Empty:
+            pass
+
+        try:
+            if should_stop or self._closing:
+                self._shutdown_ui(root)
+                self._shutdown_done.set()
+                return
+
+            root.update()
+        except RuntimeError as exc:
+            if "main loop" in str(exc).lower():
+                logger.debug("오버레이 update 중 mainloop 종료 감지: %s", exc)
+                self._shutdown_ui(root)
+                self._shutdown_done.set()
+            else:
+                raise
+        except tk.TclError as exc:
+            logger.debug("오버레이 update 중 Tcl 오류 (무시): %s", exc)
+            self._shutdown_ui(root)
             self._shutdown_done.set()
 
     def _on_toggle_pause(self) -> None:
@@ -181,7 +194,7 @@ class AutomationControlOverlay:
         self._refresh_labels()
 
     def _refresh_labels(self) -> None:
-        if self._status_var is None:
+        if self._status_var is None or self._root is None:
             return
         snap = self._control.snapshot()
         skill = snap.get("skill_id") or "-"

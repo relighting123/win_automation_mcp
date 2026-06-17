@@ -24,58 +24,60 @@ from core.automation_control_overlay_ui import AutomationControlOverlay
 
 
 class AutomationControlOverlayTest(unittest.TestCase):
-    def test_schedule_update_enqueues_command_without_calling_after(self) -> None:
+    def test_schedule_update_enqueues_command_without_touching_tk(self) -> None:
         control = MagicMock()
         overlay = AutomationControlOverlay(control)
-        overlay._root = MagicMock()
-        overlay._closing = False
 
-        with patch.object(overlay._root, "after") as after_mock:
+        with patch("threading.current_thread", return_value=MagicMock()):
             overlay.schedule_update()
 
-        after_mock.assert_not_called()
         self.assertEqual(overlay._commands.get_nowait(), "update")
 
-    def test_stop_enqueues_stop_command_without_calling_after(self) -> None:
+    def test_stop_enqueues_stop_command(self) -> None:
         control = MagicMock()
         overlay = AutomationControlOverlay(control)
-        overlay._root = MagicMock()
-        overlay._thread = MagicMock()
-        overlay._thread.is_alive.return_value = False
 
-        with patch.object(overlay._root, "after") as after_mock:
+        with patch("threading.current_thread", return_value=MagicMock()):
             overlay.stop()
 
-        after_mock.assert_not_called()
+        self.assertTrue(overlay._closing)
         self.assertEqual(overlay._commands.get_nowait(), "stop")
 
-    def test_process_commands_destroy_runs_on_ui_side(self) -> None:
+    def test_process_commands_destroy_on_stop(self) -> None:
         control = MagicMock()
         overlay = AutomationControlOverlay(control)
         root = MagicMock()
+        root.tk.call.return_value = []
         overlay._root = root
-        overlay._poll_after_id = "poll-1"
         overlay._commands.put("stop")
 
         overlay._process_commands()
 
-        root.after_cancel.assert_called_once_with("poll-1")
-        root.quit.assert_called_once()
         root.destroy.assert_called_once()
-        root.after.assert_not_called()
+        self.assertTrue(overlay.is_shutdown)
 
-    def test_process_commands_skips_poll_when_closing(self) -> None:
+    def test_process_commands_skips_destroy_when_closing_flag_set(self) -> None:
         control = MagicMock()
         overlay = AutomationControlOverlay(control)
         root = MagicMock()
+        root.tk.call.return_value = []
         overlay._root = root
         overlay._closing = True
 
         overlay._process_commands()
 
-        root.quit.assert_called_once()
         root.destroy.assert_called_once()
-        root.after.assert_not_called()
+        self.assertTrue(overlay.is_shutdown)
+
+    def test_pump_ignores_non_main_thread(self) -> None:
+        control = MagicMock()
+        overlay = AutomationControlOverlay(control)
+
+        with patch.object(overlay, "_create_ui") as create_ui:
+            with patch("threading.current_thread", return_value=MagicMock()):
+                overlay.pump()
+
+        create_ui.assert_not_called()
 
 
 if __name__ == "__main__":
