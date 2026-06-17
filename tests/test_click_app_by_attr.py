@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from actions.app_ui_action import AppUIAction
+from actions.app_ui_action import AppUIAction, AppUIActionResult
 
 
 _handle_counter = 0
@@ -315,14 +315,19 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
             mock_launcher.ensure_running.return_value = None
             with patch.object(
                 self.action,
-                "_resolve_attr_search_root",
-                return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
+                "_activate_process_windows_for_attr_search",
+                return_value=AppUIActionResult(result="success", message="scan"),
             ):
-                with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
-                    result = self.action._activate_attr_search_context(
-                        child_window_title="ezDFS2 Login",
-                        window_target="child",
-                    )
+                with patch.object(
+                    self.action,
+                    "_resolve_attr_search_root",
+                    return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
+                ):
+                    with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
+                        result = self.action._activate_attr_search_context(
+                            child_window_title="ezDFS2 Login",
+                            window_target="child",
+                        )
         self.assertTrue(result.is_success)
         activate.assert_called_once()
 
@@ -331,19 +336,38 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
             mock_launcher.ensure_running.return_value = None
             with patch.object(
                 self.action,
-                "_resolve_attr_search_root",
-                return_value=(None, "child_not_found"),
+                "_activate_process_windows_for_attr_search",
+                return_value=AppUIActionResult(result="success", message="scan"),
             ):
                 with patch.object(
                     self.action,
-                    "_bring_connected_app_to_front",
-                    return_value=MagicMock(result="success", is_success=True),
-                ) as bring_front:
-                    result = self.action._activate_attr_search_context(
-                        child_window_title="ezDFS2 Login",
-                    )
+                    "_resolve_attr_search_root",
+                    return_value=(None, "child_not_found"),
+                ):
+                    with patch.object(
+                        self.action,
+                        "_bring_connected_app_to_front",
+                        return_value=MagicMock(result="success", is_success=True),
+                    ) as bring_front:
+                        result = self.action._activate_attr_search_context(
+                            child_window_title="ezDFS2 Login",
+                        )
         self.assertTrue(result.is_success)
         bring_front.assert_called_once()
+
+
+class LoginWindowScoreTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.action = AppUIAction(session=MagicMock())
+
+    def test_login_title_scores_higher_than_blank(self) -> None:
+        login = _MockNode(title="ezDFS2 Login", control_type="Window", automation_id="LoginDlg")
+        blank = _MockNode(title="", control_type="Window", automation_id="MainWnd")
+        login_score = self.action._score_window_for_attr_search(
+            login, child_window_title="Login", child_window_match_mode="contains"
+        )
+        blank_score = self.action._score_window_for_attr_search(blank)
+        self.assertGreater(login_score, blank_score)
 
 
 if __name__ == "__main__":
