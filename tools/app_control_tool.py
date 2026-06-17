@@ -308,6 +308,7 @@ def click_app_by_attr(
     draw_outline: bool = False,
     outline_colour: str = "red",
     search_outline_colour: str = "green",
+    top_outline_colour: str = "blue",
     outline_scope: str = "all",
     allow_invisible_children: bool = False,
 ) -> str:
@@ -333,9 +334,11 @@ def click_app_by_attr(
       - contains: child_window_title 포함 일치
     draw_outline을 True로 설정하면 탐색/클릭 대상을 강조 표시합니다.
     outline_scope:
-      - search: 순회 중인 search_root(창)만
+      - search: search_root(창)만
       - target: 찾은 요소만
       - all: search_root + target (기본)
+      - traverse: 모든 top window + search_root + target (탐색 디버깅)
+    top_outline_colour: traverse 모드에서 top-level 창 테두리 색 (기본 blue)
     search_outline_colour: search_root 테두리 색 (기본 green)
     outline_colour: target 요소 테두리 색 (기본 red)
     timeout:
@@ -380,6 +383,7 @@ def click_app_by_attr(
         draw_outline=draw_outline,
         outline_colour=outline_colour,
         search_outline_colour=search_outline_colour,
+        top_outline_colour=top_outline_colour,
         outline_scope=outline_scope,
         allow_invisible_children=allow_invisible_children,
     )

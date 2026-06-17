@@ -22,6 +22,7 @@ from core.app_launcher import get_launcher
 logger = logging.getLogger(__name__)
 
 _CLICK_ATTR_DEFAULT_POLL_INTERVAL = 0.2
+_OUTLINE_SCOPES = frozenset({"search", "target", "all", "traverse"})
 
 _DPI_AWARENESS_SET = False
 
@@ -743,6 +744,67 @@ class AppUIAction:
             )
         except Exception as e:
             logger.warning("outline 실패 (%s): %s", label or "highlight", e)
+
+    def _safe_draw_window_outline(
+        self,
+        node: Any,
+        *,
+        colour: str,
+        label: str = "",
+    ) -> None:
+        """UIA draw_outline 우선, 실패 시 HWND 화면 사각형으로 폴백합니다."""
+        if node is None:
+            return
+        if hasattr(node, "draw_outline"):
+            try:
+                node.draw_outline(colour=colour)
+                logger.info(
+                    "[outline] %s colour=%s node=%s",
+                    label or "window",
+                    colour,
+                    self._format_search_window_log(node),
+                )
+                return
+            except Exception as e:
+                logger.debug("draw_outline 실패, screen rect 폴백 (%s): %s", label, e)
+
+        try:
+            import win32gui
+
+            hwnd = self._get_wrapper_handle(node)
+            if not hwnd:
+                return
+            left, top, right, bottom = win32gui.GetWindowRect(int(hwnd))
+            self._safe_draw_screen_rect_outline(
+                left=left,
+                top=top,
+                right=right,
+                bottom=bottom,
+                colour=colour,
+                label=label or "window_rect",
+            )
+        except Exception as e:
+            logger.warning("window outline 실패 (%s): %s", label or "window", e)
+
+    def _draw_window_outline_batch(
+        self,
+        windows: Sequence[Any],
+        *,
+        colour: str,
+        label_prefix: str,
+        pause: float = 0.0,
+    ) -> None:
+        """탐색 후보 창들에 일괄 outline을 표시합니다."""
+        for index, window in enumerate(windows):
+            if window is None:
+                continue
+            self._safe_draw_window_outline(
+                window,
+                colour=colour,
+                label=f"{label_prefix}[{index}]",
+            )
+        if pause > 0:
+            time.sleep(pause)
 
     def _colour_to_win32_rgb(self, colour: str) -> int:
         colours = {
@@ -2994,6 +3056,7 @@ class AppUIAction:
         draw_outline: bool = False,
         outline_colour: str = "red",
         search_outline_colour: str = "green",
+        top_outline_colour: str = "blue",
         outline_scope: str = "all",
         allow_invisible_children: bool = False,
     ) -> AppUIActionResult:
@@ -3016,6 +3079,8 @@ class AppUIAction:
           - search: 순회 중인 search_root(창)만
           - target: 찾은 요소만
           - all: search_root + target (기본)
+          - traverse: 모든 top window + 각 search_root + target (탐색 디버깅용)
+        top_outline_colour: traverse 모드에서 top-level 창 테두리 색 (기본 blue)
         """
         title_match_mode = (title_match_mode or "exact").strip().lower()
         if title_match_mode not in {"exact", "contains"}:
@@ -3049,13 +3114,14 @@ class AppUIAction:
             )
 
         outline_scope = (outline_scope or "all").strip().lower()
-        if outline_scope not in {"search", "target", "all"}:
+        if outline_scope not in _OUTLINE_SCOPES:
             return AppUIActionResult(
                 result="error",
-                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all)",
+                message=f"지원하지 않는 outline_scope: {outline_scope} (search|target|all|traverse)",
             )
-        outline_search = draw_outline and outline_scope in {"search", "all"}
-        outline_target = draw_outline and outline_scope in {"target", "all"}
+        outline_search = draw_outline and outline_scope in {"search", "all", "traverse"}
+        outline_traverse_tops = draw_outline and outline_scope == "traverse"
+        outline_target = draw_outline and outline_scope in {"target", "all", "traverse"}
         outline_pause = float(self._session.config.get("timeouts", {}).get("ui_delay", 0.3))
 
         logger.info(
@@ -3138,6 +3204,14 @@ class AppUIAction:
                     top_labels,
                 )
 
+                if outline_traverse_tops and top_windows:
+                    self._draw_window_outline_batch(
+                        top_windows,
+                        colour=top_outline_colour,
+                        label_prefix="top",
+                        pause=outline_pause,
+                    )
+
                 for top_window in top_windows:
                     logger.info(
                         "[click_app_by_attr] top window 순회 시작: %s",
@@ -3172,7 +3246,7 @@ class AppUIAction:
                         )
 
                         if outline_search:
-                            self._safe_draw_outline(
+                            self._safe_draw_window_outline(
                                 search_root,
                                 colour=search_outline_colour,
                                 label=f"search_root={search_root_info}",
