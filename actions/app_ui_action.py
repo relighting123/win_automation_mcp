@@ -539,7 +539,7 @@ class AppUIAction:
 
     def _verify_process_path(self, wrapper: Any) -> bool:
         """윈도우의 프로세스 경로가 설정된 실행 경로와 일치하는지 확인합니다."""
-        target_path = self._session.config.get("application", {}).get("executable_path")
+        target_path = self._session._resolve_connect_executable_path()
         if not target_path:
             return True  # 경로가 설정되어 있지 않으면 검사 생략 (Loose matching)
 
@@ -2115,7 +2115,7 @@ class AppUIAction:
         app_info = {
             "connected": bool(self._session.is_connected),
             "session_state": self._session.state.value,
-            "configured_executable_path": self._session.config.get("application", {}).get("executable_path"),
+            "configured_connect_path": self._session.config.get("application", {}).get("connect_path"),
             "configured_process_name": self._session.config.get("application", {}).get("process_name"),
         }
 

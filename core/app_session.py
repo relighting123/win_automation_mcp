@@ -317,7 +317,7 @@ class AppSession:
 
         failure_details = {
             "process": process,
-            "path": path or kwargs.get("connect_path") or self._config.get("application", {}).get("executable_path"),
+            "path": path or kwargs.get("connect_path") or self._config.get("application", {}).get("connect_path"),
             "title": title,
         }
         
@@ -393,21 +393,21 @@ class AppSession:
         
         self._state = SessionState.CONNECTING
         
-        # 실행 경로 결정
-        exe_path = path or self._config.get("application", {}).get("executable_path")
-        if not exe_path:
+        # 실행 경로 결정 (file_path 또는 connect_path exe)
+        launch_path = path or self._resolve_connect_executable_path(kwargs.get("connect_path"))
+        if not launch_path:
             raise ConnectionError(
-                message="실행 파일 경로를 지정해주세요"
+                message="실행 경로를 지정해주세요. config connect_path 또는 file_path를 설정하세요."
             )
         
         startup_timeout = self._config.get("application", {}).get("startup_timeout", 30)
         
-        logger.info(f"애플리케이션 시작 시도: {exe_path}")
+        logger.info(f"애플리케이션 시작 시도: {launch_path}")
         
         try:
             self._app = Application(backend=self._backend)
             
-            is_executable = self._is_executable_path(exe_path)
+            is_executable = self._is_executable_path(launch_path)
 
             # pywinauto Application.start()가 모르는 인자 제거
             _TOOL_ONLY_KEYS = {"connect_path", "title", "title_re", "reopen_data_file"}
@@ -415,7 +415,7 @@ class AppSession:
             connect_exe_path = self._resolve_connect_executable_path(kwargs.get("connect_path"))
 
             if is_executable:
-                self._app.start(exe_path, **start_kwargs)
+                self._app.start(launch_path, **start_kwargs)
             else:
                 import os
 
@@ -425,16 +425,16 @@ class AppSession:
                             "데이터 파일(.rul 등) 실행을 위해 connect_path가 필요합니다. "
                             "launch_application(connect_path=...) 또는 config application.connect_path에 exe 경로를 설정하세요."
                         ),
-                        details={"data_file": exe_path},
+                        details={"data_file": launch_path},
                     )
 
                 logger.info(
                     "[launch] 데이터 파일 실행: file=%s, connect_exe=%s",
-                    exe_path,
+                    launch_path,
                     connect_exe_path,
                 )
-                os.startfile(exe_path)
-                self._last_opened_data_file = self._normalize_data_file_path(exe_path)
+                os.startfile(launch_path)
+                self._last_opened_data_file = self._normalize_data_file_path(launch_path)
 
                 wait_until(
                     condition=lambda: self._try_connect(
@@ -443,14 +443,14 @@ class AppSession:
                         **{k: v for k, v in kwargs.items() if k not in {"connect_path", "title"}},
                     ),
                     timeout=startup_timeout,
-                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({exe_path})",
+                    timeout_message=f"애플리케이션 파일 연동 시작 대기 ({launch_path})",
                 )
 
             # 메인 윈도우 대기
             wait_until(
                 condition=lambda: len(self._app.windows()) > 0,
                 timeout=startup_timeout,
-                timeout_message=f"애플리케이션 윈도우 생성 대기 ({exe_path})"
+                timeout_message=f"애플리케이션 윈도우 생성 대기 ({launch_path})"
             )
             
             self._state = SessionState.CONNECTED
@@ -464,7 +464,7 @@ class AppSession:
             raise ConnectionError(
                 message="애플리케이션 실행 실패",
                 cause=e,
-                details={"path": exe_path}
+                details={"path": launch_path}
             )
     
     def disconnect(self) -> None:
@@ -539,14 +539,13 @@ class AppSession:
 
     def _resolve_connect_executable_path(self, connect_path: Optional[str] = None) -> Optional[str]:
         """
-        .rul 등 데이터 파일 실행 후 pywinauto가 붙을 exe 경로를 결정합니다.
-        우선순위: 인자 connect_path > config.connect_path > config.executable_path(실행파일일 때)
+        pywinauto가 붙을 exe 경로를 결정합니다.
+        우선순위: 인자 connect_path > config.connect_path
         """
         app_config = self._config.get("application", {})
         candidates = [
             connect_path,
             app_config.get("connect_path"),
-            app_config.get("executable_path") if self._is_executable_path(app_config.get("executable_path")) else None,
         ]
         for candidate in candidates:
             if candidate and str(candidate).strip():

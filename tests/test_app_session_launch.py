@@ -16,7 +16,6 @@ class AppSessionLaunchTest(unittest.TestCase):
         self.session = AppSession()
         self.session._config = {
             "application": {
-                "executable_path": r"C:\Apps\Tool.exe",
                 "connect_path": r"C:\Apps\Tool.exe",
                 "startup_timeout": 5,
             },
@@ -31,7 +30,6 @@ class AppSessionLaunchTest(unittest.TestCase):
         self.assertEqual(resolved, r"D:\Other\Tool.exe")
 
     def test_resolve_connect_executable_path_uses_config_connect_path(self) -> None:
-        self.session._config["application"]["executable_path"] = r"D:\Rules\assign.rul"
         resolved = self.session._resolve_connect_executable_path()
         self.assertEqual(resolved, r"C:\Apps\Tool.exe")
 
@@ -54,7 +52,6 @@ class AppSessionLaunchTest(unittest.TestCase):
 
     def test_start_data_file_requires_connect_path(self) -> None:
         self.session._config["application"].pop("connect_path", None)
-        self.session._config["application"]["executable_path"] = r"D:\Rules\assign.rul"
 
         from errors.automation_error import ConnectionError
 

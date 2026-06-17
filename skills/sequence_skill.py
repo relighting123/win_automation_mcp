@@ -165,7 +165,6 @@ class SequenceSkill(BaseSkill):
                 app_config = AppSession.get_instance().config.get("application", {})
                 _, _, final_args = resolve_launch_paths(
                     final_args,
-                    app_config.get("executable_path"),
                     app_config.get("connect_path"),
                 )
             except Exception as e:
