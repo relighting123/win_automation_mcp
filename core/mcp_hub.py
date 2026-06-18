@@ -2,7 +2,7 @@
 여러 MCP 서버를 통합하는 허브 클라이언트.
 
 - automation MCP: HTTP(streamable-http)
-- OpenChrome: stdio(npx) — CDP로 실제 Chrome 제어 (확장 Connect 불필요)
+- 추가 MCP: stdio 등 (app_config.yaml extra_servers)
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,6 +22,19 @@ from core.mcp_server_config import MCPServerConfig, load_extra_mcp_servers, load
 logger = logging.getLogger(__name__)
 
 _SHARED_EXTRA_HUB: Optional["MultiMCPClient"] = None
+
+
+def _build_stdio_subprocess_env(config: MCPServerConfig) -> Dict[str, str]:
+    """stdio MCP 자식 프로세스 환경 (기본 상속 + 서버 설정)."""
+    try:
+        from mcp.client.stdio import get_default_environment
+    except ImportError:
+        get_default_environment = lambda: {}  # type: ignore[misc, assignment]
+
+    env = dict(get_default_environment())
+    if config.env:
+        env.update(config.env)
+    return env
 
 
 def _openai_tool_name(server_id: str, tool_name: str, *, use_prefix: bool) -> str:
@@ -205,7 +219,7 @@ class HttpMCPBackend:
 
 
 class StdioMCPBackend:
-    """stdio MCP 백엔드 (openchrome 등)."""
+    """stdio MCP 백엔드."""
 
     def __init__(self, config: MCPServerConfig):
         self.config = config
@@ -233,7 +247,7 @@ class StdioMCPBackend:
             server_params = StdioServerParameters(
                 command=self.config.command,
                 args=list(self.config.args),
-                env=self.config.env or None,
+                env=_build_stdio_subprocess_env(self.config),
             )
             read, write = await self._stack.enter_async_context(stdio_client(server_params))
             self._session = await self._stack.enter_async_context(ClientSession(read, write))
@@ -268,15 +282,31 @@ class StdioMCPBackend:
         return tools
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        await self.ensure_started()
-        result = await self._session.call_tool(
-            tool_name,
-            arguments,
-            read_timeout_seconds=None,
-        )
-        if hasattr(result, "model_dump"):
-            return result.model_dump()
-        return dict(result)
+        last_error: Optional[BaseException] = None
+        for attempt in range(2):
+            try:
+                await self.ensure_started()
+                result = await self._session.call_tool(
+                    tool_name,
+                    arguments,
+                    read_timeout_seconds=None,
+                )
+                if hasattr(result, "model_dump"):
+                    return result.model_dump()
+                return dict(result)
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "[%s] stdio call_tool 실패(시도 %d/2): %s",
+                    self.config.id,
+                    attempt + 1,
+                    exc,
+                )
+                await self.aclose()
+                if attempt == 0:
+                    continue
+                raise last_error from exc
+        raise RuntimeError(f"[{self.config.id}] stdio call_tool 실패")
 
 
 class MultiMCPClient:
@@ -438,6 +468,17 @@ def create_extra_mcp_client(config_path: Optional[str] = None) -> Optional[Multi
     if not servers:
         return None
     return MultiMCPClient(servers)
+
+
+async def reset_shared_extra_mcp_hub() -> None:
+    """공유 추가 MCP 허브를 초기화합니다."""
+    global _SHARED_EXTRA_HUB
+    if _SHARED_EXTRA_HUB is not None:
+        try:
+            await _SHARED_EXTRA_HUB.aclose()
+        except Exception as exc:
+            logger.debug("shared extra MCP hub 종료 중 오류: %s", exc)
+    _SHARED_EXTRA_HUB = None
 
 
 async def get_shared_extra_mcp_hub(config_path: Optional[str] = None) -> Optional[MultiMCPClient]:

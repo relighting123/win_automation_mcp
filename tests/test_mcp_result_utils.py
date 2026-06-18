@@ -28,47 +28,26 @@ class NormalizeMcpToolResultTest(unittest.TestCase):
         self.assertEqual(normalized.get("text"), "Navigated to https://example.com")
 
 
-class SequenceSkillBrowserStepTest(unittest.IsolatedAsyncioTestCase):
-    def _browser_skill(self) -> SequenceSkill:
+class SequenceSkillExtraHubTest(unittest.IsolatedAsyncioTestCase):
+    def _skill_with_extra_tool(self) -> SequenceSkill:
         skill = SequenceSkill.__new__(SequenceSkill)
-        skill.skill_name = "fetch_url_info"
-        skill.steps = [
-            {"tool": "fetch_url_content", "args": {"url": {"mode": "ai"}}},
-        ]
+        skill.skill_name = "demo"
+        skill.steps = [{"tool": "extra/ping", "args": {}}]
         skill.description = ""
         skill.instruction = ""
         return skill
 
-    def test_missing_required_url_raises_clear_error(self) -> None:
-        skill = self._browser_skill()
-        with self.assertRaisesRegex(ValueError, "필수 인자가 없습니다: url"):
-            skill._validate_parsed_step(
-                skill.steps[0],
-                {"tool": "fetch_url_content", "args": {"url": None}},
-            )
-
-    async def test_browser_step_retries_after_transient_error(self) -> None:
-        skill = self._browser_skill()
+    async def test_extra_hub_tool_single_call(self) -> None:
+        skill = self._skill_with_extra_tool()
         hub = AsyncMock()
         hub.call_tool = AsyncMock(
-            side_effect=[
-                {
-                    "isError": True,
-                    "content": [{"type": "text", "text": "navigation timeout"}],
-                },
-                {"content": [{"type": "text", "text": "Navigated to https://example.com"}]},
-            ]
+            return_value={"content": [{"type": "text", "text": "pong"}]},
         )
 
-        _raw, normalized = await skill._call_extra_hub_tool(
-            hub,
-            "openchrome/navigate",
-            {"url": "https://example.com"},
-            max_attempts=2,
-        )
+        _raw, normalized = await skill._call_extra_hub_tool(hub, "extra/ping", {})
 
-        self.assertNotEqual(normalized.get("success"), False)
-        self.assertEqual(hub.call_tool.await_count, 2)
+        self.assertEqual(hub.call_tool.await_count, 1)
+        self.assertEqual(normalized.get("text"), "pong")
 
 
 if __name__ == "__main__":

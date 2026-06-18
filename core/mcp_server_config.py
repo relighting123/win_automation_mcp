@@ -1,15 +1,13 @@
 """
 MCP 서버 설정 로더.
 
-chatRTD는 기본 automation MCP(HTTP) 외에 OpenChrome 등 추가 MCP 서버를
-병렬로 연결할 수 있습니다.
+chatRTD는 기본 automation MCP(HTTP) 외에 추가 MCP 서버를 병렬로 연결할 수 있습니다.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -69,40 +67,6 @@ class MCPServerConfig:
         )
 
 
-def _openchrome_enabled_from_env() -> bool:
-    return _is_truthy(os.getenv("MCP_OPENCHROME_ENABLED"))
-
-
-def _legacy_browser_mcp_enabled_from_env() -> bool:
-    return _is_truthy(os.getenv("MCP_BROWSER_MCP_ENABLED")) or _is_truthy(
-        os.getenv("MCP_CHROME_DEVTOOLS_ENABLED")
-    )
-
-
-def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
-    if not _openchrome_enabled_from_env():
-        return None
-
-    args = ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
-
-    if sys.platform == "win32":
-        return MCPServerConfig(
-            id="openchrome",
-            transport="stdio",
-            command="cmd",
-            args=["/c", "npx", *args],
-            tool_prefix=True,
-        )
-
-    return MCPServerConfig(
-        id="openchrome",
-        transport="stdio",
-        command="npx",
-        args=args,
-        tool_prefix=True,
-    )
-
-
 def load_mcp_servers(
     config_path: Optional[str] = None,
     *,
@@ -138,13 +102,13 @@ def load_mcp_servers(
             except ValueError as exc:
                 raise ValueError(f"MCP extra_servers 설정 오류: {exc}") from exc
 
-    openchrome_server = _openchrome_server_from_env()
-    if openchrome_server and not any(server.id == openchrome_server.id for server in servers):
-        servers.append(openchrome_server)
-    elif _legacy_browser_mcp_enabled_from_env() and not openchrome_server:
+    legacy_browser = _is_truthy(os.getenv("MCP_OPENCHROME_ENABLED")) or _is_truthy(
+        os.getenv("MCP_BROWSER_MCP_ENABLED")
+    ) or _is_truthy(os.getenv("MCP_CHROME_DEVTOOLS_ENABLED"))
+    if legacy_browser:
         logger.warning(
-            "MCP_BROWSER_MCP_ENABLED / MCP_CHROME_DEVTOOLS_ENABLED 는 제거되었습니다. "
-            ".env 에 MCP_OPENCHROME_ENABLED=true 를 설정하세요."
+            "MCP_OPENCHROME_ENABLED / MCP_BROWSER_MCP_ENABLED 는 제거되었습니다. "
+            "URL 수집은 Playwright(fetch_url_content)를 사용하세요."
         )
 
     return [server for server in servers if server.enabled]

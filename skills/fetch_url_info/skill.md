@@ -1,32 +1,34 @@
 # Fetch URL Info
 
-OpenChrome(`openchrome-mcp`)로 URL을 열고 본문 텍스트를 가져옵니다.  
-사내 SSO·쿠키 인증이 필요한 페이지에 사용합니다.
+Playwright `launch_persistent_context`로 URL을 열고 본문 텍스트를 가져옵니다.  
+`user_data_dir`에 쿠키·SSO 세션이 유지됩니다.
 
 ## 사전 준비
 
-1. Node.js LTS + Chrome stable 설치
-2. chatRTD 멀티 MCP 활성화
+1. Playwright 설치
 
-### `.env`
-
-```dotenv
-MCP_OPENCHROME_ENABLED=true
+```bash
+pip install playwright
+playwright install chromium
 ```
 
-첫 도구 호출 시 OpenChrome이 **실제 Chrome을 자동 실행**합니다.  
-Browser MCP처럼 Chrome 확장 + Connect 버튼은 **필요 없습니다**.
+설치된 Chrome을 쓰려면 (권장, Windows):
 
-### `config/app_config.yaml`
+```dotenv
+PLAYWRIGHT_CHANNEL=chrome
+```
 
-```yaml
-mcp:
-  extra_servers:
-    - id: openchrome
-      transport: stdio
-      command: cmd
-      args: [/c, npx, -y, "openchrome-mcp@latest", serve, --auto-launch]
-      enabled: true
+2. (선택) 브라우저 프로필 경로 — SSO 로그인 유지
+
+```dotenv
+CHATRTD_BROWSER_PROFILE_DIR=C:\Users\you\.chatrtd\browser-profile
+```
+
+첫 실행 시 `headless=False`(기본)로 브라우저가 뜨면 **한 번 로그인**해 두면 이후 같은 프로필로 세션이 유지됩니다.
+
+```dotenv
+# 로그인 후 백그라운드만 쓸 때
+PLAYWRIGHT_HEADLESS=true
 ```
 
 ## 사용 예
@@ -37,4 +39,4 @@ mcp:
 
 ## 동작
 
-1. `fetch_url_content` — OpenChrome으로 navigate → 대기 → read_page(markdown) 를 한 번에 수행
+1. `fetch_url_content` — Playwright로 `page.goto` → `body` 텍스트 반환

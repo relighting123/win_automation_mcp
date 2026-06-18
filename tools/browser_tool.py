@@ -1,12 +1,12 @@
 """
-OpenChrome URL 본문 수집 MCP 도구.
+Playwright URL 본문 수집 MCP 도구.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from core.browser_fetch import fetch_url_via_browser
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 async def fetch_url_content(url: str) -> str:
     """
-    OpenChrome으로 URL을 열고 본문 텍스트를 반환합니다.
+    Playwright로 URL을 열고 본문 텍스트를 반환합니다.
 
     Args:
         url: 수집할 페이지 URL
@@ -42,7 +42,7 @@ async def fetch_url_content(url: str) -> str:
 
     if text.startswith("[") and any(
         marker in text
-        for marker in ("오류", "미활성화", "미연결", "도구 없음", "Error:")
+        for marker in ("오류", "미설치", "Error:")
     ):
         return json.dumps({"success": False, "message": text}, ensure_ascii=False)
 

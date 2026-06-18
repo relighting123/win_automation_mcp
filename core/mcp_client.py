@@ -12,6 +12,7 @@ from core.mcp_hub import (
     create_extra_mcp_client,
     create_mcp_client,
     get_shared_extra_mcp_hub,
+    reset_shared_extra_mcp_hub,
 )
 from core.mcp_server_config import load_mcp_servers
 
@@ -37,5 +38,6 @@ __all__ = [
     "create_extra_mcp_client",
     "create_mcp_client",
     "get_shared_extra_mcp_hub",
+    "reset_shared_extra_mcp_hub",
     "example_usage",
 ]
