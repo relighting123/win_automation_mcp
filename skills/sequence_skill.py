@@ -1,12 +1,13 @@
 import inspect
-import json
 import logging
+import asyncio
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from core.app_session import AppSession
-from core.browser_mcp_connect import ensure_browser_mcp_connected
+from core.browser_mcp_connect import ensure_browser_mcp_connected, is_browser_mcp_connection_error
 from core.launch_paths import canonicalize_launch_arg_keys, pick_launch_target, resolve_launch_paths
+from core.mcp_result_utils import normalize_mcp_tool_result
 from skills.base_skill import BaseSkill
 from tools.tool_registry import get_skill_tool_registry
 from core.mcp_client import get_shared_extra_mcp_hub
@@ -150,11 +151,11 @@ class SequenceSkill(BaseSkill):
                 if mode == "fixed":
                     final_args[k] = self._render_template(v.get("value"), runtime_kwargs)
                 elif mode == "ai":
-                    # AI 모드인 경우 runtime_kwargs에서 값을 우선적으로 찾음
-                    # (그래프 실행 시 LLM이 추출한 값이 runtime_kwargs에 포함됨)
                     val = runtime_kwargs.get(k)
                     if val is None:
                         val = self._render_template(v.get("value"), runtime_kwargs)
+                    if isinstance(val, str):
+                        val = val.strip()
                     final_args[k] = val
                 else:
                     final_args[k] = self._render_template(v.get("value"), runtime_kwargs)
@@ -178,53 +179,104 @@ class SequenceSkill(BaseSkill):
             "args": final_args,
         }
 
+    def _missing_required_args(self, raw_step: Dict[str, Any], parsed_args: Dict[str, Any]) -> List[str]:
+        missing: List[str] = []
+        for key, spec in self._normalize_step_args(raw_step).items():
+            if not isinstance(spec, dict) or spec.get("mode") != "ai":
+                continue
+            if "value" in spec and spec.get("value") not in (None, ""):
+                continue
+            actual = parsed_args.get(key)
+            if actual is None or (isinstance(actual, str) and not actual.strip()):
+                missing.append(key)
+        return missing
+
+    def _validate_parsed_step(self, raw_step: Dict[str, Any], step: Dict[str, Any]) -> None:
+        missing = self._missing_required_args(raw_step, step["args"])
+        if not missing:
+            return
+        joined = ", ".join(missing)
+        example = f"/skill {self.skill_name} {joined}=..."
+        raise ValueError(
+            f"필수 인자가 없습니다: {joined}. 예: {example}"
+        )
+
     def _normalize_result(self, raw_result: Any) -> Dict[str, Any]:
         """tool 반환값(JSON 문자열/딕셔너리/MCP content)을 공통 딕셔너리 형태로 통일"""
-        if isinstance(raw_result, dict):
-            if "error" in raw_result and "content" not in raw_result:
-                return {"success": False, "message": str(raw_result.get("error"))}
+        return normalize_mcp_tool_result(raw_result)
 
-            content_blocks = raw_result.get("content")
-            if isinstance(content_blocks, list):
-                text_blocks = [
-                    block.get("text")
-                    for block in content_blocks
-                    if isinstance(block, dict)
-                    and block.get("type") == "text"
-                    and isinstance(block.get("text"), str)
-                ]
-                if text_blocks:
-                    combined = "\n".join(text_blocks).strip()
-                    try:
-                        parsed = json.loads(combined)
-                        return parsed if isinstance(parsed, dict) else {"success": True, "result": parsed}
-                    except json.JSONDecodeError:
-                        return {"success": True, "text": combined}
+    @staticmethod
+    def _is_browser_mcp_tool(tool_name: str) -> bool:
+        return (
+            tool_name.startswith("browsermcp/")
+            or tool_name.startswith("browsermcp:")
+            or tool_name.startswith("chrome-devtools/")
+            or tool_name.startswith("chrome-devtools:")
+        )
 
-            if raw_result.get("isError") is True:
-                return {"success": False, "message": str(raw_result)}
-            return raw_result
-        if isinstance(raw_result, str):
-            try:
-                parsed = json.loads(raw_result)
-                return parsed if isinstance(parsed, dict) else {"success": True, "result": parsed}
-            except json.JSONDecodeError:
-                return {"success": True, "result": raw_result}
-        if hasattr(raw_result, "to_dict") and callable(raw_result.to_dict):
-            return raw_result.to_dict()
-        return {"success": True, "result": raw_result}
+    @staticmethod
+    def _is_retryable_browser_error(message: str) -> bool:
+        lowered = (message or "").lower()
+        if is_browser_mcp_connection_error(message):
+            return True
+        return any(
+            marker in lowered
+            for marker in (
+                "timeout",
+                "timed out",
+                "not ready",
+                "no tab is connected",
+                "target closed",
+                "navigation",
+            )
+        )
+
+    def _format_step_failure(self, tool_name: str, normalized: Dict[str, Any]) -> str:
+        message = normalized.get("message") or normalized.get("text") or str(normalized)
+        return f"step 실패: tool={tool_name}, message={message}"
+
+    async def _call_extra_hub_tool(
+        self,
+        extra_hub: Any,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        *,
+        max_attempts: int = 3,
+    ) -> tuple[Any, Dict[str, Any]]:
+        last_raw: Any = None
+        last_normalized: Dict[str, Any] = {"success": False, "message": "unknown"}
+
+        for attempt in range(1, max_attempts + 1):
+            if self._is_browser_mcp_tool(tool_name) and attempt > 1:
+                await ensure_browser_mcp_connected(
+                    extra_hub,
+                    wait_seconds=5,
+                    open_popup=(attempt == 2),
+                )
+                await asyncio.sleep(0.5 * attempt)
+
+            last_raw = await extra_hub.call_tool(tool_name, tool_args)
+            last_normalized = self._normalize_result(last_raw)
+            if last_normalized.get("success") is not False:
+                return last_raw, last_normalized
+
+            message = str(last_normalized.get("message", ""))
+            if attempt >= max_attempts or not self._is_retryable_browser_error(message):
+                break
+            logger.warning(
+                "[skill] browser step 재시도 %d/%d: %s (%s)",
+                attempt,
+                max_attempts,
+                tool_name,
+                message,
+            )
+
+        return last_raw, last_normalized
 
     def _uses_browser_mcp(self) -> bool:
         for raw_step in self.steps:
             tool_name = raw_step.get("tool") or raw_step.get("type") or raw_step.get("action")
-            if not tool_name:
-                continue
-            if (
-                str(tool_name).startswith("browsermcp/")
-                or str(tool_name).startswith("browsermcp:")
-                or str(tool_name).startswith("chrome-devtools/")
-                or str(tool_name).startswith("chrome-devtools:")
-            ):
+            if tool_name and self._is_browser_mcp_tool(str(tool_name)):
                 return True
         return False
 
@@ -243,26 +295,25 @@ class SequenceSkill(BaseSkill):
 
             for index, raw_step in enumerate(self.steps):
                 step = self._parse_step(raw_step, kwargs)
+                self._validate_parsed_step(raw_step, step)
                 tool_name = step["tool"]
                 tool_args = step["args"]
 
                 tool_func = tool_registry.get(tool_name)
                 if tool_func is None:
                     extra_hub = await get_shared_extra_mcp_hub()
-                    if extra_hub is None and (
-                        tool_name.startswith("browsermcp/")
-                        or tool_name.startswith("browsermcp:")
-                        or tool_name.startswith("chrome-devtools/")
-                        or tool_name.startswith("chrome-devtools:")
-                    ):
+                    if extra_hub is None and self._is_browser_mcp_tool(tool_name):
                         raise ValueError(
                             "Browser MCP가 활성화되지 않았습니다. "
                             ".env에 MCP_BROWSER_MCP_ENABLED=true 를 설정하고 "
                             "Chrome 확장에서 Connect를 누른 뒤 chatRTD를 재시작하세요."
                         )
                     if extra_hub is not None and extra_hub.has_tool(tool_name):
-                        raw_result = await extra_hub.call_tool(tool_name, tool_args)
-                        normalized = self._normalize_result(raw_result)
+                        raw_result, normalized = await self._call_extra_hub_tool(
+                            extra_hub,
+                            tool_name,
+                            tool_args,
+                        )
                         step_results.append(
                             {
                                 "index": index,
@@ -272,7 +323,7 @@ class SequenceSkill(BaseSkill):
                             }
                         )
                         if isinstance(normalized, dict) and normalized.get("success") is False:
-                            raise RuntimeError(f"step 실패: tool={tool_name}, detail={normalized}")
+                            raise RuntimeError(self._format_step_failure(tool_name, normalized))
                         continue
                     raise ValueError(f"알 수 없는 tool 이름입니다: {tool_name}")
 
@@ -292,7 +343,7 @@ class SequenceSkill(BaseSkill):
                 )
 
                 if isinstance(normalized, dict) and normalized.get("success") is False:
-                    raise RuntimeError(f"step 실패: tool={tool_name}, detail={normalized}")
+                    raise RuntimeError(self._format_step_failure(tool_name, normalized))
 
             return {
                 "success": True,

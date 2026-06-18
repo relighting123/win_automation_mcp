@@ -3,5 +3,8 @@ tools:
   - tool: browsermcp/browser_navigate
     args:
       url: { mode: "ai" }
+  - tool: browsermcp/browser_wait
+    args:
+      time: { mode: "fixed", value: 2 }
   - tool: browsermcp/browser_snapshot
     args: {}
