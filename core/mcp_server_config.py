@@ -13,6 +13,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from core.chrome_paths import find_chrome_binary
 from core.llm_config import DEFAULT_MCP_BASE_URL, load_app_config
 
 logger = logging.getLogger(__name__)
@@ -79,11 +80,27 @@ def _legacy_browser_mcp_enabled_from_env() -> bool:
     )
 
 
+def _openchrome_env_from_env() -> Dict[str, str]:
+    """openchrome-mcp stdio 프로세스에 전달할 환경 변수."""
+    env: Dict[str, str] = {}
+    chrome_path = find_chrome_binary()
+    if chrome_path:
+        env["CHROME_PATH"] = chrome_path
+        logger.info("OpenChrome CHROME_PATH=%s", chrome_path)
+    else:
+        logger.warning(
+            "Chrome/Chromium 실행 파일을 찾지 못했습니다. "
+            "Chrome 또는 Edge를 설치하거나 .env에 CHROME_PATH를 설정하세요."
+        )
+    return env
+
+
 def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
     if not _openchrome_enabled_from_env():
         return None
 
     args = ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
+    env = _openchrome_env_from_env()
 
     if sys.platform == "win32":
         return MCPServerConfig(
@@ -91,6 +108,7 @@ def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
             transport="stdio",
             command="cmd",
             args=["/c", "npx", *args],
+            env=env,
             tool_prefix=True,
         )
 
@@ -99,6 +117,7 @@ def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
         transport="stdio",
         command="npx",
         args=args,
+        env=env,
         tool_prefix=True,
     )
 

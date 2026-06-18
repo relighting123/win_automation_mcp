@@ -13,6 +13,7 @@ import logging
 import re
 from typing import Any, Optional
 
+from core.chrome_paths import chrome_missing_help_message, is_chrome_missing_error
 from core.mcp_result_utils import extract_mcp_text_content, normalize_mcp_tool_result
 
 logger = logging.getLogger(__name__)
@@ -109,18 +110,24 @@ def snapshot_to_text(snapshot: str) -> str:
     return "\n".join(lines) if lines else snapshot.strip()
 
 
+def _enrich_chrome_missing_message(message: str) -> str:
+    if is_chrome_missing_error(message):
+        return f"{message}\n\n{chrome_missing_help_message()}"
+    return message
+
+
 def _tool_failure_message(result: dict[str, Any], *, step: str) -> Optional[str]:
     if result.get("error"):
-        return f"[{step} 오류] {result['error']}"
+        return _enrich_chrome_missing_message(f"[{step} 오류] {result['error']}")
 
     normalized = normalize_mcp_tool_result(result)
     if normalized.get("success") is False:
         message = normalized.get("message") or extract_browser_tool_text(result)
-        return f"[{step} 오류] {message}"
+        return _enrich_chrome_missing_message(f"[{step} 오류] {message}")
 
     text = extract_browser_tool_text(result)
     if text.startswith("Error:") or text.startswith("[오류]"):
-        return f"[{step} 오류] {text}"
+        return _enrich_chrome_missing_message(f"[{step} 오류] {text}")
     return None
 
 
@@ -131,13 +138,15 @@ async def fetch_url_via_browser(url: str) -> str:
     if hub is None:
         return (
             "[OpenChrome 미활성화] .env에 MCP_OPENCHROME_ENABLED=true 설정 후 "
-            "chatRTD를 재시작하세요. (Node.js + Chrome 필요)"
+            "chatRTD를 재시작하세요. (Node.js + Chrome 또는 Edge 필요)\n\n"
+            f"{chrome_missing_help_message()}"
         )
 
     if not hub.has_tool("openchrome/navigate"):
         return (
             "[OpenChrome 도구 없음] openchrome MCP 서버가 연결되지 않았습니다. "
-            "MCP_OPENCHROME_ENABLED=true 후 chatRTD를 재시작하세요."
+            "Node.js 설치 후 MCP_OPENCHROME_ENABLED=true 로 chatRTD를 재시작하세요.\n\n"
+            f"{chrome_missing_help_message()}"
         )
 
     navigate = await hub.call_tool("openchrome/navigate", {"url": url})
