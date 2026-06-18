@@ -352,17 +352,22 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
         top = _MockNode(title="Main", control_type="Window", automation_id="MainWnd")
         with patch.object(self.action, "_launcher") as mock_launcher:
             mock_launcher.ensure_running.return_value = None
-            with patch.object(self.action, "_iter_click_attr_top_windows", return_value=[top]):
-                with patch.object(
-                    self.action,
-                    "_resolve_attr_search_root",
-                    return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
-                ):
-                    with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
-                        result = self.action._activate_attr_search_context(
-                            child_window_title="ezDFS2 Login",
-                            window_target="child",
-                        )
+            with patch.object(
+                self.action,
+                "_find_child_window_across_process",
+                return_value=(None, "child_not_found"),
+            ):
+                with patch.object(self.action, "_iter_click_attr_top_windows", return_value=[top]):
+                    with patch.object(
+                        self.action,
+                        "_resolve_attr_search_root",
+                        return_value=(self.mock_child, "child(title=ezDFS2 Login)"),
+                    ):
+                        with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
+                            result = self.action._activate_attr_search_context(
+                                child_window_title="ezDFS2 Login",
+                                window_target="child",
+                            )
         self.assertTrue(result.is_success)
         self.assertGreaterEqual(activate.call_count, 2)
 
@@ -371,19 +376,56 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
             mock_launcher.ensure_running.return_value = None
             with patch.object(
                 self.action,
-                "_resolve_attr_search_root",
+                "_find_child_window_across_process",
                 return_value=(None, "child_not_found"),
             ):
-                with patch.object(
-                    self.action,
-                    "_bring_connected_app_to_front",
-                    return_value=MagicMock(result="success", is_success=True),
-                ) as bring_front:
-                    result = self.action._activate_attr_search_context(
-                        child_window_title="ezDFS2 Login",
-                    )
+                with patch.object(self.action, "_iter_click_attr_top_windows", return_value=[]):
+                    with patch.object(
+                        self.action,
+                        "_bring_connected_app_to_front",
+                        return_value=MagicMock(result="success", is_success=True),
+                    ) as bring_front:
+                        result = self.action._activate_attr_search_context(
+                            child_window_title="ezDFS2 Login",
+                        )
         self.assertTrue(result.is_success)
         bring_front.assert_called_once()
+
+    def test_find_child_window_across_process_uses_win32_top(self) -> None:
+        login = _MockNode(title="ezDFS2 Login", control_type="Window", automation_id="LoginDlg")
+        with patch.object(
+            self.action,
+            "_enum_connected_top_level_hwnds",
+            return_value=[(200, "ezDFS2 Login", "LoginClass")],
+        ):
+            with patch.object(self.action, "_wrapper_from_hwnd", return_value=login):
+                matched, info = self.action._find_child_window_across_process(
+                    child_window_title="ezDFS2 Login",
+                    child_window_auto_id=None,
+                    child_window_match_mode="contains",
+                    case_sensitive=False,
+                )
+        self.assertIs(matched, login)
+        self.assertIn("win32_top", info)
+
+    def test_activate_attr_search_context_prefers_cross_process_login(self) -> None:
+        with patch.object(self.action, "_launcher") as mock_launcher:
+            mock_launcher.ensure_running.return_value = None
+            with patch.object(
+                self.action,
+                "_find_child_window_across_process",
+                return_value=(self.mock_child, "win32_top(title='ezDFS2 Login')"),
+            ):
+                with patch.object(self.action, "_get_wrapper_handle", return_value=200):
+                    with patch.object(self.action, "_bring_hwnd_to_foreground", return_value=True):
+                        with patch.object(self.action, "_activate_window_wrapper", return_value=True) as activate:
+                            result = self.action._activate_attr_search_context(
+                                child_window_title="ezDFS2 Login",
+                                window_target="child",
+                            )
+        self.assertTrue(result.is_success)
+        self.assertIn("cross-process", result.message or "")
+        activate.assert_called_once()
 
 
 if __name__ == "__main__":

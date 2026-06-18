@@ -879,6 +879,108 @@ class AppUIAction:
                 pids.add(int(pid))
         return pids
 
+    def _enum_connected_top_level_hwnds(self) -> list[tuple[int, str, str]]:
+        """연결 프로세스의 top-level HWND와 Win32 제목/클래스를 반환합니다."""
+        pids = self._get_connected_process_ids()
+        if not pids:
+            return []
+
+        try:
+            import win32gui
+        except ImportError:
+            return []
+
+        results: list[tuple[int, str, str]] = []
+
+        def callback(hwnd, _):
+            try:
+                if win32gui.GetParent(hwnd):
+                    return True
+                pid = self._pid_from_hwnd(hwnd)
+                if pid not in pids:
+                    return True
+                title = win32gui.GetWindowText(hwnd) or ""
+                cls = win32gui.GetClassName(hwnd) or ""
+                results.append((int(hwnd), title, cls))
+            except Exception:
+                pass
+            return True
+
+        win32gui.EnumWindows(callback, None)
+        return results
+
+    def _wrapper_from_hwnd(self, hwnd: int) -> Optional[Any]:
+        try:
+            from pywinauto.controls.hwndwrapper import HwndWrapper
+
+            return HwndWrapper(int(hwnd))
+        except Exception:
+            return None
+
+    def _find_child_window_across_process(
+        self,
+        *,
+        child_window_title: Optional[str],
+        child_window_auto_id: Optional[str],
+        child_window_match_mode: str,
+        case_sensitive: bool,
+    ) -> tuple[Optional[Any], str]:
+        """
+        child_window_title/auto_id로 연결 프로세스 전체에서 탐색 루트를 찾습니다.
+
+        로그인 다이얼로그처럼 메인과 별도 top-level HWND인 경우, UIA 가시성과 무관하게
+        Win32 제목으로 먼저 찾고 UIA 트리를 보조합니다.
+        """
+        child_title = (child_window_title or "").strip()
+        child_auto_id = (child_window_auto_id or "").strip()
+        if not child_title and not child_auto_id:
+            return None, "no_child_spec"
+
+        for hwnd, wtitle, wclass in self._enum_connected_top_level_hwnds():
+            if child_title and self._is_attr_match(
+                actual=wtitle,
+                expected=child_title,
+                match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                wrapper = self._wrapper_from_hwnd(hwnd)
+                if wrapper is not None:
+                    logger.info(
+                        "[click_app_by_attr] Win32 top-level child 매칭: hwnd=%s, title=%r, class=%s",
+                        hwnd,
+                        wtitle,
+                        wclass,
+                    )
+                    return wrapper, f"win32_top(hwnd={hwnd}, title={wtitle!r})"
+
+        for top_window in self._iter_process_top_windows():
+            top_label = self._format_window_label(top_window)
+            if self._matches_child_window_spec(
+                top_window,
+                child_title=child_title,
+                child_auto_id=child_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            ):
+                return top_window, f"uia_top_as_child({top_label})"
+
+            for child in self._list_candidate_child_windows(
+                top_window,
+                include_descendants=True,
+                require_visible=False,
+            ):
+                if self._matches_child_window_spec(
+                    child,
+                    child_title=child_title,
+                    child_auto_id=child_auto_id,
+                    child_window_match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                ):
+                    return child, f"uia_child_under({top_label})"
+
+        win32_titles = [title for _, title, _ in self._enum_connected_top_level_hwnds() if title]
+        return None, f"child_not_found_across_process(title={child_title}, win32_titles={win32_titles[:8]})"
+
     def _pid_from_hwnd(self, hwnd: int) -> Optional[int]:
         try:
             import win32process
@@ -1117,6 +1219,33 @@ class AppUIAction:
             resolve_mode = target_mode if target_mode in {"child", "auto"} else "auto"
 
             if child_title or child_auto_id:
+                matched, info = self._find_child_window_across_process(
+                    child_window_title=child_window_title,
+                    child_window_auto_id=child_window_auto_id,
+                    child_window_match_mode=child_window_match_mode,
+                    case_sensitive=case_sensitive,
+                )
+                if matched is not None:
+                    hwnd = self._get_wrapper_handle(matched)
+                    if hwnd:
+                        self._bring_hwnd_to_foreground(hwnd)
+                        after_focus_delay = float(
+                            self._session.config.get("timeouts", {}).get("after_focus_delay", 0.2)
+                        )
+                        time.sleep(after_focus_delay)
+                    if self._activate_window_wrapper(matched, label=info):
+                        return AppUIActionResult(
+                            result="success",
+                            message=(
+                                "cross-process child foreground 활성화: "
+                                f"{self._format_window_label(matched)} ({info})"
+                            ),
+                        )
+                    logger.warning(
+                        "[click_app_by_attr] cross-process child HWND 활성화 실패: %s",
+                        info,
+                    )
+
                 top_windows = self._iter_click_attr_top_windows()
                 logger.info(
                     "[click_app_by_attr] child 활성화 top window 후보 (%d개)",
@@ -1873,6 +2002,15 @@ class AppUIAction:
         )
 
         if child_scoped:
+            cross_root, cross_info = self._find_child_window_across_process(
+                child_window_title=child_window_title,
+                child_window_auto_id=child_window_auto_id,
+                child_window_match_mode=child_window_match_mode,
+                case_sensitive=case_sensitive,
+            )
+            if cross_root is not None:
+                return [(cross_root, cross_info)]
+
             root, info = self._resolve_attr_search_root(
                 window_target=window_target,
                 child_window_title=child_window_title,
