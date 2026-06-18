@@ -6,6 +6,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from scripts.generate_locators import (
+    _build_click_app_by_attr_args,
     build_locator_tree,
     collect_all_descendant_records,
     count_tree_elements,
@@ -150,6 +151,40 @@ class GenerateLocatorsTest(unittest.TestCase):
         self.assertEqual(find_tree["elements"]["close"]["window_target"], "child")
         self.assertEqual(find_tree["elements"]["close"]["child_window_title"], "Find")
         self.assertEqual(find_tree["elements"]["close"]["path"], "top/child_windows/find")
+        close_click = find_tree["elements"]["close"]["click_app_by_attr"]
+        self.assertEqual(close_click["window_target"], "child")
+        self.assertEqual(close_click["auto_id"], "Close")
+        self.assertEqual(close_click["child_window_title"], "Find")
+        self.assertTrue(close_click["allow_invisible_children"])
+        self.assertEqual(
+            find_tree["elements"]["close"]["click_skill_step"],
+            {"tool": "click_app_by_attr", "args": close_click},
+        )
+
+    def test_build_click_app_by_attr_args_top_scope(self) -> None:
+        args = _build_click_app_by_attr_args(
+            scope="top",
+            auto_id="btnnext",
+            title="Next",
+            uia_type="Button",
+        )
+        self.assertEqual(args["window_target"], "top")
+        self.assertEqual(args["auto_id"], "btnnext")
+        self.assertNotIn("allow_invisible_children", args)
+
+    def test_build_click_app_by_attr_args_child_scope(self) -> None:
+        args = _build_click_app_by_attr_args(
+            scope="child",
+            auto_id="buttonlogin",
+            title="Login",
+            uia_type="Button",
+            child_window_title="ezDFS2 Login",
+            child_window_auto_id="LoginDlg",
+        )
+        self.assertEqual(args["window_target"], "child")
+        self.assertEqual(args["child_window_title"], "ezDFS2 Login")
+        self.assertEqual(args["child_window_auto_id"], "LoginDlg")
+        self.assertTrue(args["allow_invisible_children"])
 
     def test_extract_elements_flatten_includes_child_controls(self):
         top = _MockMainWithFind()
