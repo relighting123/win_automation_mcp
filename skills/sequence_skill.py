@@ -225,11 +225,16 @@ class SequenceSkill(BaseSkill):
                 "cdp",
                 "connection",
                 "target closed",
+                "broken pipe",
+                "stream closed",
+                "session is closed",
             )
         )
 
     def _format_step_failure(self, tool_name: str, normalized: Dict[str, Any]) -> str:
         message = normalized.get("message") or normalized.get("text") or str(normalized)
+        if message in ("", "{}", "{'success': False}"):
+            message = "OpenChrome 도구 호출 실패 (상세 메시지 없음). chatRTD를 재시작하세요."
         return f"step 실패: tool={tool_name}, message={message}"
 
     async def _call_extra_hub_tool(

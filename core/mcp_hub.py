@@ -297,15 +297,31 @@ class StdioMCPBackend:
         return tools
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        await self.ensure_started()
-        result = await self._session.call_tool(
-            tool_name,
-            arguments,
-            read_timeout_seconds=None,
-        )
-        if hasattr(result, "model_dump"):
-            return result.model_dump()
-        return dict(result)
+        last_error: Optional[BaseException] = None
+        for attempt in range(2):
+            try:
+                await self.ensure_started()
+                result = await self._session.call_tool(
+                    tool_name,
+                    arguments,
+                    read_timeout_seconds=None,
+                )
+                if hasattr(result, "model_dump"):
+                    return result.model_dump()
+                return dict(result)
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "[%s] stdio call_tool 실패(시도 %d/2): %s",
+                    self.config.id,
+                    attempt + 1,
+                    exc,
+                )
+                await self.aclose()
+                if attempt == 0:
+                    continue
+                raise last_error from exc
+        raise RuntimeError(f"[{self.config.id}] stdio call_tool 실패")
 
 
 class MultiMCPClient:
@@ -467,6 +483,17 @@ def create_extra_mcp_client(config_path: Optional[str] = None) -> Optional[Multi
     if not servers:
         return None
     return MultiMCPClient(servers)
+
+
+async def reset_shared_extra_mcp_hub() -> None:
+    """죽은 OpenChrome stdio 세션 등 공유 추가 MCP 허브를 초기화합니다."""
+    global _SHARED_EXTRA_HUB
+    if _SHARED_EXTRA_HUB is not None:
+        try:
+            await _SHARED_EXTRA_HUB.aclose()
+        except Exception as exc:
+            logger.debug("shared extra MCP hub 종료 중 오류: %s", exc)
+    _SHARED_EXTRA_HUB = None
 
 
 async def get_shared_extra_mcp_hub(config_path: Optional[str] = None) -> Optional[MultiMCPClient]:
