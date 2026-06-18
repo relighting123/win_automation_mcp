@@ -40,4 +40,5 @@ mcp:
 ## 동작
 
 1. `browsermcp/browser_navigate` — URL 이동
-2. `browsermcp/browser_snapshot` — 접근성 스냅샷에서 본문 텍스트 추출
+2. `browsermcp/browser_wait` — 페이지 로딩 대기 (2초)
+3. `browsermcp/browser_snapshot` — 접근성 스냅샷에서 본문 텍스트 추출
