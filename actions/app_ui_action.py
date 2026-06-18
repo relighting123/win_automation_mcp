@@ -1123,6 +1123,12 @@ class AppUIAction:
                     len(top_windows),
                 )
                 for top_window in top_windows:
+                    top_label = self._format_window_label(top_window)
+                    if not self._activate_window_wrapper(top_window, label=f"activate_context_top={top_label}"):
+                        logger.warning(
+                            "[click_app_by_attr] top window foreground 활성화 실패(컨텍스트): %s",
+                            top_label,
+                        )
                     matched_child, info = self._resolve_attr_search_root(
                         window_target=resolve_mode,
                         child_window_title=child_window_title,
@@ -2937,6 +2943,11 @@ class AppUIAction:
                         top_label,
                     )
                     self._activate_window_wrapper(top_window, label=f"poll_top={top_label}")
+                    if not self._is_wrapper_foreground(top_window):
+                        logger.warning(
+                            "[click_app_by_attr] top window foreground 미확인, child 탐색 계속: %s",
+                            top_label,
+                        )
                     if outline_top:
                         self._safe_draw_outline(
                             top_window,

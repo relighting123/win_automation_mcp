@@ -364,7 +364,7 @@ class ClickAppByAttrActivationTest(unittest.TestCase):
                             window_target="child",
                         )
         self.assertTrue(result.is_success)
-        activate.assert_called_once()
+        self.assertGreaterEqual(activate.call_count, 2)
 
     def test_activate_attr_search_context_falls_back_to_app_top(self) -> None:
         with patch.object(self.action, "_launcher") as mock_launcher:
