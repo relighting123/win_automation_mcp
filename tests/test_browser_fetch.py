@@ -7,7 +7,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.browser_fetch import extract_browser_tool_text, snapshot_to_text
-from core.mcp_server_config import load_mcp_servers
+from core.mcp_server_config import load_mcp_servers, resolve_chrome_path
 
 
 class BrowserFetchTextTest(unittest.TestCase):
@@ -53,6 +53,28 @@ class OpenChromeServerConfigTest(unittest.TestCase):
             servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
         ids = [server.id for server in servers]
         self.assertIn("openchrome", ids)
+
+    def test_openchrome_env_includes_chrome_path_when_detected(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MCP_OPENCHROME_ENABLED": "true", "CHROME_PATH": ""},
+            clear=False,
+        ), patch(
+            "core.mcp_server_config.resolve_chrome_path",
+            return_value="/usr/bin/google-chrome-stable",
+        ):
+            servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
+        openchrome = next(server for server in servers if server.id == "openchrome")
+        self.assertEqual(openchrome.env.get("CHROME_PATH"), "/usr/bin/google-chrome-stable")
+
+    def test_resolve_chrome_path_prefers_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"CHROME_PATH": "/custom/chrome"},
+            clear=False,
+        ), patch("core.mcp_server_config.Path") as path_cls:
+            path_cls.return_value.is_file.return_value = True
+            self.assertEqual(resolve_chrome_path(), "/custom/chrome")
 
     def test_legacy_browser_env_does_not_register_browsermcp(self) -> None:
         with patch.dict(

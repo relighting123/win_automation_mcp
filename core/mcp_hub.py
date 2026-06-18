@@ -10,17 +10,46 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from core.mcp_server_config import MCPServerConfig, load_extra_mcp_servers, load_mcp_servers
+from core.mcp_server_config import (
+    MCPServerConfig,
+    STDIO_CHROME_ENV_KEYS,
+    build_openchrome_stdio_env,
+    load_extra_mcp_servers,
+    load_mcp_servers,
+)
 
 logger = logging.getLogger(__name__)
 
 _SHARED_EXTRA_HUB: Optional["MultiMCPClient"] = None
+
+
+def _build_stdio_subprocess_env(config: MCPServerConfig) -> Dict[str, str]:
+    """stdio MCP 자식 프로세스 환경 (기본 상속 + Chrome/OpenChrome + 서버 설정)."""
+    try:
+        from mcp.client.stdio import get_default_environment
+    except ImportError:
+        get_default_environment = lambda: {}  # type: ignore[misc, assignment]
+
+    env = dict(get_default_environment())
+
+    for key in STDIO_CHROME_ENV_KEYS:
+        value = (os.getenv(key) or "").strip()
+        if value:
+            env[key] = value
+
+    if config.id == "openchrome":
+        env.update(build_openchrome_stdio_env(config.env))
+    elif config.env:
+        env.update(config.env)
+
+    return env
 
 
 def _openai_tool_name(server_id: str, tool_name: str, *, use_prefix: bool) -> str:
@@ -233,7 +262,7 @@ class StdioMCPBackend:
             server_params = StdioServerParameters(
                 command=self.config.command,
                 args=list(self.config.args),
-                env=self.config.env or None,
+                env=_build_stdio_subprocess_env(self.config),
             )
             read, write = await self._stack.enter_async_context(stdio_client(server_params))
             self._session = await self._stack.enter_async_context(ClientSession(read, write))

@@ -9,13 +9,30 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.llm_config import DEFAULT_MCP_BASE_URL, load_app_config
 
 logger = logging.getLogger(__name__)
+
+# stdio MCP 자식 프로세스에 부모 환경에서 전달할 OpenChrome/Chrome 관련 변수
+STDIO_CHROME_ENV_KEYS = (
+    "CHROME_PATH",
+    "CHROME_HEADLESS_SHELL",
+    "OPENCHROME_HOME",
+    "OPENCHROME_API_KEYS_PATH",
+    "OPENCHROME_MCP_CONFIG_PATHS",
+    "OPENCHROME_CONTROLLER_LOCK_DIR",
+    "OPENCHROME_VAULT_DIR",
+    "OPENCHROME_HANDOFF_KEY_FILE",
+    "OPENCHROME_FILE_UPLOAD_TEMP_DIR",
+    "OPENCHROME_FILE_UPLOAD_ROOTS",
+    "OPENCHROME_AUTO_ELECT",
+)
 
 
 def _is_truthy(value: Optional[str]) -> bool:
@@ -73,6 +90,63 @@ def _openchrome_enabled_from_env() -> bool:
     return _is_truthy(os.getenv("MCP_OPENCHROME_ENABLED"))
 
 
+def resolve_chrome_path() -> Optional[str]:
+    """OpenChrome MCP가 사용할 Chrome 실행 파일 경로를 반환합니다."""
+    env_path = (os.getenv("CHROME_PATH") or "").strip()
+    if env_path and Path(env_path).is_file():
+        return env_path
+
+    candidates: List[str] = []
+    if sys.platform == "win32":
+        for env_key in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
+            base = (os.getenv(env_key) or "").strip()
+            if not base:
+                continue
+            candidates.append(str(Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"))
+    elif sys.platform == "darwin":
+        candidates.extend(
+            [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/google-chrome",
+                "/snap/bin/chromium",
+                "/snap/bin/google-chrome",
+            ]
+        )
+        for command in ("google-chrome-stable", "google-chrome", "chromium-browser", "chromium"):
+            resolved = shutil.which(command)
+            if resolved:
+                candidates.append(resolved)
+
+    for candidate in candidates:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def build_openchrome_stdio_env(extra_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """OpenChrome stdio MCP에 전달할 환경 변수를 구성합니다."""
+    env: Dict[str, str] = {}
+    for key in STDIO_CHROME_ENV_KEYS:
+        value = (os.getenv(key) or "").strip()
+        if value:
+            env[key] = value
+
+    chrome_path = resolve_chrome_path()
+    if chrome_path:
+        env.setdefault("CHROME_PATH", chrome_path)
+
+    if extra_env:
+        env.update({str(k): str(v) for k, v in extra_env.items() if str(v).strip()})
+    return env
+
+
 def _legacy_browser_mcp_enabled_from_env() -> bool:
     return _is_truthy(os.getenv("MCP_BROWSER_MCP_ENABLED")) or _is_truthy(
         os.getenv("MCP_CHROME_DEVTOOLS_ENABLED")
@@ -85,12 +159,15 @@ def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
 
     args = ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
 
+    openchrome_env = build_openchrome_stdio_env()
+
     if sys.platform == "win32":
         return MCPServerConfig(
             id="openchrome",
             transport="stdio",
             command="cmd",
             args=["/c", "npx", *args],
+            env=openchrome_env,
             tool_prefix=True,
         )
 
@@ -99,6 +176,7 @@ def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
         transport="stdio",
         command="npx",
         args=args,
+        env=openchrome_env,
         tool_prefix=True,
     )
 
@@ -147,7 +225,22 @@ def load_mcp_servers(
             ".env 에 MCP_OPENCHROME_ENABLED=true 를 설정하세요."
         )
 
-    return [server for server in servers if server.enabled]
+    return [_enrich_openchrome_server(server) for server in servers if server.enabled]
+
+
+def _enrich_openchrome_server(server: MCPServerConfig) -> MCPServerConfig:
+    if server.id != "openchrome":
+        return server
+    return MCPServerConfig(
+        id=server.id,
+        transport=server.transport,
+        url=server.url,
+        command=server.command,
+        args=list(server.args),
+        env=build_openchrome_stdio_env(server.env),
+        enabled=server.enabled,
+        tool_prefix=server.tool_prefix,
+    )
 
 
 def load_extra_mcp_servers(

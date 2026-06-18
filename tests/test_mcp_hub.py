@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.browser_fetch import snapshot_to_text
-from core.mcp_hub import MultiMCPClient, _openai_tool_name, _split_tool_name
+from core.mcp_hub import MultiMCPClient, _build_stdio_subprocess_env, _openai_tool_name, _split_tool_name
 from core.mcp_server_config import MCPServerConfig, load_mcp_servers
 
 
@@ -21,6 +21,22 @@ class MCPServerConfigTest(unittest.TestCase):
             servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
         ids = [server.id for server in servers]
         self.assertIn("openchrome", ids)
+
+    def test_build_stdio_subprocess_env_passes_chrome_path(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"CHROME_PATH": "/opt/chrome/chrome"},
+            clear=False,
+        ):
+            env = _build_stdio_subprocess_env(
+                MCPServerConfig(
+                    id="openchrome",
+                    transport="stdio",
+                    command="npx",
+                    args=["-y", "openchrome-mcp@latest", "serve", "--auto-launch"],
+                )
+            )
+        self.assertEqual(env["CHROME_PATH"], "/opt/chrome/chrome")
 
 
 class SnapshotTextTest(unittest.TestCase):
