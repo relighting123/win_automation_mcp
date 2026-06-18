@@ -6,6 +6,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from scripts.generate_locators import (
+    _build_click_app_by_attr_args,
     build_locator_tree,
     collect_all_descendant_records,
     count_tree_elements,
@@ -128,18 +129,62 @@ class GenerateLocatorsTest(unittest.TestCase):
         top = _MockTop(title="Login", control_type="Window", control_id=1, automation_id="LoginWnd")
         tree = build_locator_tree(top)
         self.assertEqual(tree["window"]["auto_id"], "LoginWnd")
+        self.assertEqual(tree["scope"], "top")
+        self.assertEqual(tree["window_target"], "top")
         self.assertIn("close", tree["elements"])
+        self.assertEqual(tree["elements"]["close"]["scope"], "top")
+        self.assertEqual(tree["elements"]["close"]["window_target"], "top")
         self.assertNotIn("child_windows", tree)
 
     def test_build_locator_tree_includes_child_windows(self):
         top = _MockMainWithFind()
         tree = build_locator_tree(top)
         self.assertIn("btnnext", tree["elements"])
+        self.assertEqual(tree["elements"]["btnnext"]["scope"], "top")
         self.assertIn("find", tree["child_windows"])
         find_tree = tree["child_windows"]["find"]
+        self.assertEqual(find_tree["scope"], "child")
+        self.assertEqual(find_tree["window_target"], "child")
         self.assertEqual(find_tree["window"]["title"], "Find")
         self.assertIn("close", find_tree["elements"])
+        self.assertEqual(find_tree["elements"]["close"]["scope"], "child")
+        self.assertEqual(find_tree["elements"]["close"]["window_target"], "child")
+        self.assertEqual(find_tree["elements"]["close"]["child_window_title"], "Find")
         self.assertEqual(find_tree["elements"]["close"]["path"], "top/child_windows/find")
+        close_click = find_tree["elements"]["close"]["click_app_by_attr"]
+        self.assertEqual(close_click["window_target"], "child")
+        self.assertEqual(close_click["auto_id"], "Close")
+        self.assertEqual(close_click["child_window_title"], "Find")
+        self.assertTrue(close_click["allow_invisible_children"])
+        self.assertEqual(
+            find_tree["elements"]["close"]["click_skill_step"],
+            {"tool": "click_app_by_attr", "args": close_click},
+        )
+
+    def test_build_click_app_by_attr_args_top_scope(self) -> None:
+        args = _build_click_app_by_attr_args(
+            scope="top",
+            auto_id="btnnext",
+            title="Next",
+            uia_type="Button",
+        )
+        self.assertEqual(args["window_target"], "top")
+        self.assertEqual(args["auto_id"], "btnnext")
+        self.assertNotIn("allow_invisible_children", args)
+
+    def test_build_click_app_by_attr_args_child_scope(self) -> None:
+        args = _build_click_app_by_attr_args(
+            scope="child",
+            auto_id="buttonlogin",
+            title="Login",
+            uia_type="Button",
+            child_window_title="ezDFS2 Login",
+            child_window_auto_id="LoginDlg",
+        )
+        self.assertEqual(args["window_target"], "child")
+        self.assertEqual(args["child_window_title"], "ezDFS2 Login")
+        self.assertEqual(args["child_window_auto_id"], "LoginDlg")
+        self.assertTrue(args["allow_invisible_children"])
 
     def test_extract_elements_flatten_includes_child_controls(self):
         top = _MockMainWithFind()
@@ -163,6 +208,8 @@ class GenerateLocatorsTest(unittest.TestCase):
         flat = flatten_tree_elements(tree)
         self.assertIn("find__close", flat)
         self.assertEqual(flat["find__close"]["auto_id"], "Close")
+        self.assertEqual(flat["find__close"]["scope"], "child")
+        self.assertEqual(flat["find__close"]["window_target"], "child")
 
     def test_make_locator_key_from_title(self):
         top = _MockTop(title="ezDFS2 Login", control_type="Window", control_id=1, automation_id="LoginWnd")
