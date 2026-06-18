@@ -31,6 +31,8 @@ def normalize_mcp_tool_result(raw_result: Any) -> Dict[str, Any]:
 
         content_text = extract_mcp_text_content(raw_result)
         if content_text:
+            if content_text.startswith("Error:"):
+                return {"success": False, "message": content_text}
             try:
                 parsed = json.loads(content_text)
                 if isinstance(parsed, dict):

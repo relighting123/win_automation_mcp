@@ -7,11 +7,17 @@ Browser MCP Chrome 확장 + Connect 없이 동작합니다.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
-from typing import Any
+from typing import Any, Optional
 
 from core.mcp_result_utils import extract_mcp_text_content, normalize_mcp_tool_result
+
+logger = logging.getLogger(__name__)
+
+_READ_PAGE_WAIT_SECONDS = 2.0
 
 
 def extract_browser_tool_text(result: dict[str, Any]) -> str:
@@ -45,6 +51,25 @@ def extract_browser_tool_text(result: dict[str, Any]) -> str:
             return value.strip()
 
     return raw
+
+
+def extract_openchrome_tab_id(result: dict[str, Any]) -> Optional[str]:
+    normalized = normalize_mcp_tool_result(result)
+    if isinstance(normalized.get("tabId"), str) and normalized["tabId"].strip():
+        return normalized["tabId"].strip()
+
+    raw = extract_mcp_text_content(result)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict):
+        tab_id = parsed.get("tabId")
+        if isinstance(tab_id, str) and tab_id.strip():
+            return tab_id.strip()
+    return None
 
 
 def snapshot_to_text(snapshot: str) -> str:
@@ -84,6 +109,21 @@ def snapshot_to_text(snapshot: str) -> str:
     return "\n".join(lines) if lines else snapshot.strip()
 
 
+def _tool_failure_message(result: dict[str, Any], *, step: str) -> Optional[str]:
+    if result.get("error"):
+        return f"[{step} 오류] {result['error']}"
+
+    normalized = normalize_mcp_tool_result(result)
+    if normalized.get("success") is False:
+        message = normalized.get("message") or extract_browser_tool_text(result)
+        return f"[{step} 오류] {message}"
+
+    text = extract_browser_tool_text(result)
+    if text.startswith("Error:") or text.startswith("[오류]"):
+        return f"[{step} 오류] {text}"
+    return None
+
+
 async def fetch_url_via_browser(url: str) -> str:
     from core.mcp_client import get_shared_extra_mcp_hub
 
@@ -101,16 +141,35 @@ async def fetch_url_via_browser(url: str) -> str:
         )
 
     navigate = await hub.call_tool("openchrome/navigate", {"url": url})
-    navigate_text = extract_browser_tool_text(navigate)
-    if navigate.get("error") or normalize_mcp_tool_result(navigate).get("success") is False:
-        return f"[navigate 오류] {navigate_text}"
+    navigate_error = _tool_failure_message(navigate, step="navigate")
+    if navigate_error:
+        return navigate_error
 
-    read_page = await hub.call_tool(
-        "openchrome/read_page",
-        {"mode": "markdown", "onlyMainContent": True},
-    )
-    if read_page.get("error") or normalize_mcp_tool_result(read_page).get("success") is False:
-        return f"[read_page 오류] {extract_browser_tool_text(read_page)}"
+    tab_id = extract_openchrome_tab_id(navigate)
+    if tab_id and hub.has_tool("openchrome/wait_for"):
+        wait_result = await hub.call_tool(
+            "openchrome/wait_for",
+            {
+                "tabId": tab_id,
+                "type": "navigation",
+                "timeout": 30000,
+            },
+        )
+        wait_error = _tool_failure_message(wait_result, step="wait_for")
+        if wait_error:
+            logger.warning("OpenChrome wait_for 실패, 짧은 대기 후 계속: %s", wait_error)
+            await asyncio.sleep(_READ_PAGE_WAIT_SECONDS)
+    else:
+        await asyncio.sleep(_READ_PAGE_WAIT_SECONDS)
+
+    read_args: dict[str, Any] = {"mode": "markdown", "onlyMainContent": True}
+    if tab_id:
+        read_args["tabId"] = tab_id
+
+    read_page = await hub.call_tool("openchrome/read_page", read_args)
+    read_error = _tool_failure_message(read_page, step="read_page")
+    if read_error:
+        return read_error
 
     text = extract_browser_tool_text(read_page)
     return snapshot_to_text(text) if text.startswith("- role:") else text

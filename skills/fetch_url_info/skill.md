@@ -37,5 +37,4 @@ mcp:
 
 ## 동작
 
-1. `openchrome/navigate` — URL 이동 (CDP, 로그인 세션 유지)
-2. `openchrome/read_page` — 본문 Markdown 추출
+1. `fetch_url_content` — OpenChrome으로 navigate → 대기 → read_page(markdown) 를 한 번에 수행
