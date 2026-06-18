@@ -118,6 +118,7 @@ def register_all_tools() -> None:
     from tools.source_edit_tool import register_source_edit_tools
     from tools.report_file_tool import register_report_file_tools
     from tools.daily_report_tool import register_daily_report_tools
+    from tools.browser_tool import register_browser_tools
     from tools.skill_tool import register_skill_tools
     
     # 애플리케이션 관리 도구
@@ -138,6 +139,7 @@ def register_all_tools() -> None:
     # 업무 보고서 파일/생성 도구
     register_report_file_tools(mcp)
     register_daily_report_tools(mcp)
+    register_browser_tools(mcp)
 
     # 고수준 Skill 기반 도구
     register_skill_tools(mcp)

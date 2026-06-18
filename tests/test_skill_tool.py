@@ -20,7 +20,7 @@ class ExtractSkillAiParamSpecsTest(unittest.TestCase):
     def test_fetch_url_info_requires_url(self) -> None:
         steps = [
             {
-                "tool": "openchrome/navigate",
+                "tool": "fetch_url_content",
                 "args": {"url": {"mode": "ai"}},
             }
         ]

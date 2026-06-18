@@ -33,8 +33,7 @@ class SequenceSkillBrowserStepTest(unittest.IsolatedAsyncioTestCase):
         skill = SequenceSkill.__new__(SequenceSkill)
         skill.skill_name = "fetch_url_info"
         skill.steps = [
-            {"tool": "openchrome/navigate", "args": {"url": {"mode": "ai"}}},
-            {"tool": "openchrome/read_page", "args": {"mode": {"mode": "fixed", "value": "markdown"}}},
+            {"tool": "fetch_url_content", "args": {"url": {"mode": "ai"}}},
         ]
         skill.description = ""
         skill.instruction = ""
@@ -45,7 +44,7 @@ class SequenceSkillBrowserStepTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "필수 인자가 없습니다: url"):
             skill._validate_parsed_step(
                 skill.steps[0],
-                {"tool": "openchrome/navigate", "args": {"url": None}},
+                {"tool": "fetch_url_content", "args": {"url": None}},
             )
 
     async def test_browser_step_retries_after_transient_error(self) -> None:
