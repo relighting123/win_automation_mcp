@@ -1,13 +1,17 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.browser_fetch import extract_browser_tool_text, snapshot_to_text
-from core.mcp_server_config import load_mcp_servers, resolve_chrome_path
+from core.browser_fetch import (
+    fetch_url_via_browser,
+    resolve_browser_profile_dir,
+    resolve_headless,
+    snapshot_to_text,
+)
 
 
 class BrowserFetchTextTest(unittest.TestCase):
@@ -22,96 +26,48 @@ class BrowserFetchTextTest(unittest.TestCase):
         self.assertIn("Welcome", text)
         self.assertIn("Login", text)
 
-    def test_extract_browser_tool_text_reads_markdown_json(self) -> None:
-        result = {
-            "content": [
-                {
-                    "type": "text",
-                    "text": '{"content": "# Title\\nBody text"}',
-                }
-            ]
-        }
-        text = extract_browser_tool_text(result)
-        self.assertIn("Body text", text)
+    def test_resolve_browser_profile_dir_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=False):
+            profile = resolve_browser_profile_dir()
+        self.assertTrue(str(profile).endswith(".chatrtd/browser-profile"))
 
-    def test_extract_browser_tool_text_handles_is_error(self) -> None:
-        result = {
-            "isError": True,
-            "content": [{"type": "text", "text": "navigation failed"}],
-        }
-        text = extract_browser_tool_text(result)
-        self.assertIn("navigation failed", text)
-
-
-class OpenChromeServerConfigTest(unittest.TestCase):
-    def test_openchrome_env_server(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {"MCP_OPENCHROME_ENABLED": "true"},
-            clear=False,
-        ):
-            servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
-        ids = [server.id for server in servers]
-        self.assertIn("openchrome", ids)
-
-    def test_openchrome_env_includes_chrome_path_when_detected(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {"MCP_OPENCHROME_ENABLED": "true", "CHROME_PATH": ""},
-            clear=False,
-        ), patch(
-            "core.mcp_server_config.resolve_chrome_path",
-            return_value="/usr/bin/google-chrome-stable",
-        ):
-            servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
-        openchrome = next(server for server in servers if server.id == "openchrome")
-        self.assertEqual(openchrome.env.get("CHROME_PATH"), "/usr/bin/google-chrome-stable")
-
-    def test_resolve_chrome_path_prefers_env(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {"CHROME_PATH": "/custom/chrome"},
-            clear=False,
-        ), patch("core.mcp_server_config.Path") as path_cls:
-            path_cls.return_value.is_file.return_value = True
-            self.assertEqual(resolve_chrome_path(), "/custom/chrome")
-
-    def test_legacy_browser_env_does_not_register_browsermcp(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "MCP_BROWSER_MCP_ENABLED": "true",
-                "MCP_OPENCHROME_ENABLED": "",
-            },
-            clear=False,
-        ):
-            servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
-        ids = [server.id for server in servers]
-        self.assertNotIn("browsermcp", ids)
+    def test_resolve_headless_defaults_false(self) -> None:
+        with patch.dict("os.environ", {}, clear=False):
+            self.assertFalse(resolve_headless())
 
 
 class FetchUrlViaBrowserTest(unittest.IsolatedAsyncioTestCase):
-    async def test_fetch_url_via_browser_calls_openchrome_tools(self) -> None:
-        from core.browser_fetch import fetch_url_via_browser
+    async def test_fetch_url_via_browser_uses_playwright(self) -> None:
+        page = AsyncMock()
+        page.inner_text = AsyncMock(return_value="Hello page")
+        page.title = AsyncMock(return_value="Example")
+        page.goto = AsyncMock()
+        page.wait_for_load_state = AsyncMock()
 
-        hub = AsyncMock()
-        hub.has_tool = lambda name: name == "openchrome/navigate"
-        hub.call_tool = AsyncMock(
-            side_effect=[
-                {"content": [{"type": "text", "text": "Navigated"}]},
-                {"content": [{"type": "text", "text": '{"content": "Hello page"}'}]},
-            ]
-        )
+        context = AsyncMock()
+        context.pages = [page]
+        context.new_page = AsyncMock(return_value=page)
+        context.close = AsyncMock()
 
-        with patch("core.mcp_client.get_shared_extra_mcp_hub", new=AsyncMock(return_value=hub)):
+        chromium = MagicMock()
+        chromium.launch_persistent_context = AsyncMock(return_value=context)
+
+        playwright = MagicMock()
+        playwright.chromium = chromium
+        playwright.__aenter__ = AsyncMock(return_value=playwright)
+        playwright.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("playwright.async_api.async_playwright", return_value=playwright):
             text = await fetch_url_via_browser("https://example.com")
 
-        self.assertIn("Hello page", text)
-        hub.call_tool.assert_any_await("openchrome/navigate", {"url": "https://example.com"})
-        hub.call_tool.assert_any_await(
-            "openchrome/read_page",
-            {"mode": "markdown", "onlyMainContent": True},
-        )
+        self.assertEqual(text, "Hello page")
+        page.goto.assert_awaited_once()
+
+    async def test_fetch_url_reports_missing_playwright(self) -> None:
+        with patch.dict(sys.modules, {"playwright": None, "playwright.async_api": None}):
+            text = await fetch_url_via_browser("https://example.com")
+
+        self.assertIn("Playwright 미설치", text)
 
 
 if __name__ == "__main__":

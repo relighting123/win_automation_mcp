@@ -2,7 +2,7 @@
 여러 MCP 서버를 통합하는 허브 클라이언트.
 
 - automation MCP: HTTP(streamable-http)
-- OpenChrome: stdio(npx) — CDP로 실제 Chrome 제어 (확장 Connect 불필요)
+- 추가 MCP: stdio 등 (app_config.yaml extra_servers)
 """
 
 from __future__ import annotations
@@ -17,13 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from core.mcp_server_config import (
-    MCPServerConfig,
-    STDIO_CHROME_ENV_KEYS,
-    build_openchrome_stdio_env,
-    load_extra_mcp_servers,
-    load_mcp_servers,
-)
+from core.mcp_server_config import MCPServerConfig, load_extra_mcp_servers, load_mcp_servers
 
 logger = logging.getLogger(__name__)
 
@@ -31,24 +25,15 @@ _SHARED_EXTRA_HUB: Optional["MultiMCPClient"] = None
 
 
 def _build_stdio_subprocess_env(config: MCPServerConfig) -> Dict[str, str]:
-    """stdio MCP 자식 프로세스 환경 (기본 상속 + Chrome/OpenChrome + 서버 설정)."""
+    """stdio MCP 자식 프로세스 환경 (기본 상속 + 서버 설정)."""
     try:
         from mcp.client.stdio import get_default_environment
     except ImportError:
         get_default_environment = lambda: {}  # type: ignore[misc, assignment]
 
     env = dict(get_default_environment())
-
-    for key in STDIO_CHROME_ENV_KEYS:
-        value = (os.getenv(key) or "").strip()
-        if value:
-            env[key] = value
-
-    if config.id == "openchrome":
-        env.update(build_openchrome_stdio_env(config.env))
-    elif config.env:
+    if config.env:
         env.update(config.env)
-
     return env
 
 
@@ -234,7 +219,7 @@ class HttpMCPBackend:
 
 
 class StdioMCPBackend:
-    """stdio MCP 백엔드 (openchrome 등)."""
+    """stdio MCP 백엔드."""
 
     def __init__(self, config: MCPServerConfig):
         self.config = config
@@ -486,7 +471,7 @@ def create_extra_mcp_client(config_path: Optional[str] = None) -> Optional[Multi
 
 
 async def reset_shared_extra_mcp_hub() -> None:
-    """죽은 OpenChrome stdio 세션 등 공유 추가 MCP 허브를 초기화합니다."""
+    """공유 추가 MCP 허브를 초기화합니다."""
     global _SHARED_EXTRA_HUB
     if _SHARED_EXTRA_HUB is not None:
         try:

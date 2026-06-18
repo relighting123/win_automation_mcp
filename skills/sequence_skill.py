@@ -1,6 +1,5 @@
 import inspect
 import logging
-import asyncio
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -204,37 +203,10 @@ class SequenceSkill(BaseSkill):
         """tool 반환값(JSON 문자열/딕셔너리/MCP content)을 공통 딕셔너리 형태로 통일"""
         return normalize_mcp_tool_result(raw_result)
 
-    @staticmethod
-    def _is_browser_automation_tool(tool_name: str) -> bool:
-        return (
-            tool_name.startswith("openchrome/")
-            or tool_name.startswith("openchrome:")
-        )
-
-    @staticmethod
-    def _is_retryable_browser_error(message: str) -> bool:
-        lowered = (message or "").lower()
-        return any(
-            marker in lowered
-            for marker in (
-                "timeout",
-                "timed out",
-                "not ready",
-                "navigation",
-                "chrome",
-                "cdp",
-                "connection",
-                "target closed",
-                "broken pipe",
-                "stream closed",
-                "session is closed",
-            )
-        )
-
     def _format_step_failure(self, tool_name: str, normalized: Dict[str, Any]) -> str:
         message = normalized.get("message") or normalized.get("text") or str(normalized)
         if message in ("", "{}", "{'success': False}"):
-            message = "OpenChrome 도구 호출 실패 (상세 메시지 없음). chatRTD를 재시작하세요."
+            message = f"도구 호출 실패 (상세 메시지 없음): {tool_name}"
         return f"step 실패: tool={tool_name}, message={message}"
 
     async def _call_extra_hub_tool(
@@ -242,64 +214,14 @@ class SequenceSkill(BaseSkill):
         extra_hub: Any,
         tool_name: str,
         tool_args: Dict[str, Any],
-        *,
-        max_attempts: int = 3,
     ) -> tuple[Any, Dict[str, Any]]:
-        last_raw: Any = None
-        last_normalized: Dict[str, Any] = {"success": False, "message": "unknown"}
-
-        for attempt in range(1, max_attempts + 1):
-            if self._is_browser_automation_tool(tool_name) and attempt > 1:
-                await asyncio.sleep(0.5 * attempt)
-
-            last_raw = await extra_hub.call_tool(tool_name, tool_args)
-            last_normalized = self._normalize_result(last_raw)
-            if last_normalized.get("success") is not False:
-                return last_raw, last_normalized
-
-            message = str(last_normalized.get("message", ""))
-            if attempt >= max_attempts or not self._is_retryable_browser_error(message):
-                break
-            logger.warning(
-                "[skill] browser step 재시도 %d/%d: %s (%s)",
-                attempt,
-                max_attempts,
-                tool_name,
-                message,
-            )
-
-        return last_raw, last_normalized
-
-    def _uses_browser_automation(self) -> bool:
-        for raw_step in self.steps:
-            tool_name = raw_step.get("tool") or raw_step.get("type") or raw_step.get("action")
-            if tool_name and self._is_browser_automation_tool(str(tool_name)):
-                return True
-        return False
+        raw_result = await extra_hub.call_tool(tool_name, tool_args)
+        return raw_result, self._normalize_result(raw_result)
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
         logger.info(f"MacroSkill 실행 시작: {self.skill_name} ({self.description})")
 
         try:
-            if self._uses_browser_automation():
-                extra_hub = await get_shared_extra_mcp_hub()
-                if extra_hub is None:
-                    return {
-                        "success": False,
-                        "message": (
-                            "OpenChrome가 활성화되지 않았습니다. "
-                            ".env에 MCP_OPENCHROME_ENABLED=true 를 설정하고 chatRTD를 재시작하세요."
-                        ),
-                    }
-                if not extra_hub.has_tool("openchrome/navigate"):
-                    return {
-                        "success": False,
-                        "message": (
-                            "OpenChrome MCP 서버가 연결되지 않았습니다. "
-                            "Node.js와 Chrome 설치 후 chatRTD를 재시작하세요."
-                        ),
-                    }
-
             tool_registry = get_skill_tool_registry()
             step_results: List[Dict[str, Any]] = []
 
@@ -312,11 +234,6 @@ class SequenceSkill(BaseSkill):
                 tool_func = tool_registry.get(tool_name)
                 if tool_func is None:
                     extra_hub = await get_shared_extra_mcp_hub()
-                    if extra_hub is None and self._is_browser_automation_tool(tool_name):
-                        raise ValueError(
-                            "OpenChrome이 활성화되지 않았습니다. "
-                            ".env에 MCP_OPENCHROME_ENABLED=true 를 설정하고 chatRTD를 재시작하세요."
-                        )
                     if extra_hub is not None and extra_hub.has_tool(tool_name):
                         raw_result, normalized = await self._call_extra_hub_tool(
                             extra_hub,

@@ -13,13 +13,21 @@ copy skills\daily_work_summary\report_config.yaml.example skills\daily_work_summ
 
 2. `report_config.yaml`에 수집할 URL/DB/섹션 편집
 
-3. OpenChrome 활성화 (사내 웹 SSO)
+3. Playwright (사내 웹 SSO)
 
-```dotenv
-MCP_OPENCHROME_ENABLED=true
+```bash
+pip install playwright
+playwright install chromium
 ```
 
-Node.js + Chrome 설치. 첫 호출 시 Chrome이 자동 실행되며 **확장 Connect는 필요 없습니다**.
+`.env` (선택):
+
+```dotenv
+PLAYWRIGHT_CHANNEL=chrome
+CHATRTD_BROWSER_PROFILE_DIR=C:\Users\you\.chatrtd\browser-profile
+```
+
+첫 실행 시 브라우저가 뜨면 로그인해 두면 이후 쿠키가 프로필에 저장됩니다.
 
 4. (선택) 보고서 저장 경로 — `config/app_config.yaml`
 
