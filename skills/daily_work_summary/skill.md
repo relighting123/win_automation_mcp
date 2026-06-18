@@ -13,13 +13,13 @@ copy skills\daily_work_summary\report_config.yaml.example skills\daily_work_summ
 
 2. `report_config.yaml`에 수집할 URL/DB/섹션 편집
 
-3. Browser MCP 활성화 (사내 웹 SSO)
+3. OpenChrome 활성화 (사내 웹 SSO)
 
 ```dotenv
-MCP_BROWSER_MCP_ENABLED=true
+MCP_OPENCHROME_ENABLED=true
 ```
 
-Chrome [Browser MCP 확장](https://chromewebstore.google.com/detail/browser-mcp-automate-your/bjfgambnhccakkhmkepdoekmckoijdlc) 설치 후 **Connect** 클릭.
+Node.js + Chrome 설치. 첫 호출 시 Chrome이 자동 실행되며 **확장 Connect는 필요 없습니다**.
 
 4. (선택) 보고서 저장 경로 — `config/app_config.yaml`
 

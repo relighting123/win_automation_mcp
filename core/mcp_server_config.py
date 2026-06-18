@@ -1,18 +1,21 @@
 """
 MCP 서버 설정 로더.
 
-chatRTD는 기본 automation MCP(HTTP) 외에 Browser MCP 등 추가 MCP 서버를
+chatRTD는 기본 automation MCP(HTTP) 외에 OpenChrome 등 추가 MCP 서버를
 병렬로 연결할 수 있습니다.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from core.llm_config import DEFAULT_MCP_BASE_URL, load_app_config
+
+logger = logging.getLogger(__name__)
 
 
 def _is_truthy(value: Optional[str]) -> bool:
@@ -66,21 +69,25 @@ class MCPServerConfig:
         )
 
 
-def _browser_mcp_enabled_from_env() -> bool:
+def _openchrome_enabled_from_env() -> bool:
+    return _is_truthy(os.getenv("MCP_OPENCHROME_ENABLED"))
+
+
+def _legacy_browser_mcp_enabled_from_env() -> bool:
     return _is_truthy(os.getenv("MCP_BROWSER_MCP_ENABLED")) or _is_truthy(
         os.getenv("MCP_CHROME_DEVTOOLS_ENABLED")
     )
 
 
-def _browser_mcp_server_from_env() -> Optional[MCPServerConfig]:
-    if not _browser_mcp_enabled_from_env():
+def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
+    if not _openchrome_enabled_from_env():
         return None
 
-    args = ["-y", "@browsermcp/mcp@latest"]
+    args = ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
 
     if sys.platform == "win32":
         return MCPServerConfig(
-            id="browsermcp",
+            id="openchrome",
             transport="stdio",
             command="cmd",
             args=["/c", "npx", *args],
@@ -88,7 +95,7 @@ def _browser_mcp_server_from_env() -> Optional[MCPServerConfig]:
         )
 
     return MCPServerConfig(
-        id="browsermcp",
+        id="openchrome",
         transport="stdio",
         command="npx",
         args=args,
@@ -131,9 +138,14 @@ def load_mcp_servers(
             except ValueError as exc:
                 raise ValueError(f"MCP extra_servers 설정 오류: {exc}") from exc
 
-    browser_server = _browser_mcp_server_from_env()
-    if browser_server and not any(server.id == browser_server.id for server in servers):
-        servers.append(browser_server)
+    openchrome_server = _openchrome_server_from_env()
+    if openchrome_server and not any(server.id == openchrome_server.id for server in servers):
+        servers.append(openchrome_server)
+    elif _legacy_browser_mcp_enabled_from_env() and not openchrome_server:
+        logger.warning(
+            "MCP_BROWSER_MCP_ENABLED / MCP_CHROME_DEVTOOLS_ENABLED 는 제거되었습니다. "
+            ".env 에 MCP_OPENCHROME_ENABLED=true 를 설정하세요."
+        )
 
     return [server for server in servers if server.enabled]
 

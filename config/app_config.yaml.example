@@ -62,16 +62,18 @@ server:
 mcp:
   # FastMCP 서버 HTTP endpoint
   base_url: "http://localhost:8000/mcp"
-  # 추가 MCP 서버 (Browser MCP 등)
+  # 추가 MCP 서버 (OpenChrome 등)
   extra_servers:
-    - id: browsermcp
+    - id: openchrome
       transport: stdio
       command: cmd
       args:
         - /c
         - npx
         - -y
-        - "@browsermcp/mcp@latest"
+        - "openchrome-mcp@latest"
+        - serve
+        - --auto-launch
       enabled: false
 
 automation:
