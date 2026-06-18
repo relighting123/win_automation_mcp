@@ -1,10 +1,9 @@
-description: "Browser MCP로 URL을 열고 본문 텍스트를 가져옵니다 (사내 SSO)"
+description: "OpenChrome으로 URL을 열고 본문 텍스트를 가져옵니다 (사내 SSO)"
 tools:
-  - tool: browsermcp/browser_navigate
+  - tool: openchrome/navigate
     args:
       url: { mode: "ai" }
-  - tool: browsermcp/browser_wait
+  - tool: openchrome/read_page
     args:
-      time: { mode: "fixed", value: 2 }
-  - tool: browsermcp/browser_snapshot
-    args: {}
+      mode: { mode: "fixed", value: "markdown" }
+      onlyMainContent: { mode: "fixed", value: true }

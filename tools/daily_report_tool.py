@@ -48,9 +48,9 @@ def _load_report_config(config_path: Optional[str] = None) -> dict[str, Any]:
 
 
 async def _fetch_url_via_browser(url: str) -> str:
-    from core.browser_mcp_fetch import fetch_url_via_browser_mcp
+    from core.browser_fetch import fetch_url_via_browser
 
-    return await fetch_url_via_browser_mcp(url)
+    return await fetch_url_via_browser(url)
 
 
 async def _run_oracle_query(entry: dict[str, Any]) -> str:

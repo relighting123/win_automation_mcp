@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.browser_mcp_fetch import snapshot_to_text
+from core.browser_fetch import snapshot_to_text
 from core.mcp_hub import MultiMCPClient, _openai_tool_name, _split_tool_name
 from core.mcp_server_config import MCPServerConfig, load_mcp_servers
 
@@ -12,25 +12,15 @@ class MCPServerConfigTest(unittest.TestCase):
         self.assertEqual(servers[0].id, "automation")
         self.assertEqual(servers[0].url, "http://localhost:9000/mcp")
 
-    def test_browser_mcp_env_server(self) -> None:
+    def test_openchrome_env_server(self) -> None:
         with patch.dict(
             "os.environ",
-            {"MCP_BROWSER_MCP_ENABLED": "true"},
+            {"MCP_OPENCHROME_ENABLED": "true"},
             clear=False,
         ):
             servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
         ids = [server.id for server in servers]
-        self.assertIn("browsermcp", ids)
-
-    def test_legacy_chrome_env_enables_browser_mcp(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {"MCP_CHROME_DEVTOOLS_ENABLED": "true", "MCP_BROWSER_MCP_ENABLED": ""},
-            clear=False,
-        ):
-            servers = load_mcp_servers(base_url_override="http://localhost:8000/mcp")
-        ids = [server.id for server in servers]
-        self.assertIn("browsermcp", ids)
+        self.assertIn("openchrome", ids)
 
 
 class SnapshotTextTest(unittest.TestCase):
@@ -56,7 +46,7 @@ class MultiMCPClientTest(unittest.IsolatedAsyncioTestCase):
 
         browser = MagicMock()
         browser.list_tools = AsyncMock(
-            return_value=[{"name": "browser_navigate", "description": "go", "inputSchema": {}}]
+            return_value=[{"name": "navigate", "description": "go", "inputSchema": {}}]
         )
         browser.call_tool = AsyncMock(
             return_value={"content": [{"type": "text", "text": "navigated"}], "isError": False}
@@ -65,33 +55,33 @@ class MultiMCPClientTest(unittest.IsolatedAsyncioTestCase):
         hub = MultiMCPClient(
             [
                 MCPServerConfig(id="automation", transport="http", url="http://localhost:8000/mcp", tool_prefix=False),
-                MCPServerConfig(id="browsermcp", transport="stdio", command="npx", args=[], tool_prefix=True),
+                MCPServerConfig(id="openchrome", transport="stdio", command="npx", args=[], tool_prefix=True),
             ]
         )
-        hub._backends = {"automation": automation, "browsermcp": browser}
+        hub._backends = {"automation": automation, "openchrome": browser}
 
         tools = await hub.list_tools()
         names = [tool["name"] for tool in tools]
         self.assertIn("describe_current_state", names)
-        self.assertIn("browsermcp/browser_navigate", names)
+        self.assertIn("openchrome/navigate", names)
 
-        result = await hub.call_tool("browsermcp/browser_navigate", {"url": "https://example.com"})
-        browser.call_tool.assert_awaited_once_with("browser_navigate", {"url": "https://example.com"})
+        result = await hub.call_tool("openchrome/navigate", {"url": "https://example.com"})
+        browser.call_tool.assert_awaited_once_with("navigate", {"url": "https://example.com"})
         self.assertIn("content", result)
 
     async def test_has_tool_for_prefixed_name_before_list_tools(self) -> None:
         hub = MultiMCPClient(
-            [MCPServerConfig(id="browsermcp", transport="stdio", command="npx", args=[])]
+            [MCPServerConfig(id="openchrome", transport="stdio", command="npx", args=[])]
         )
-        self.assertTrue(hub.has_tool("browsermcp/browser_navigate"))
+        self.assertTrue(hub.has_tool("openchrome/navigate"))
 
     def test_name_helpers(self) -> None:
         self.assertEqual(
-            _openai_tool_name("browsermcp", "browser_navigate", use_prefix=True),
-            "browsermcp/browser_navigate",
+            _openai_tool_name("openchrome", "navigate", use_prefix=True),
+            "openchrome/navigate",
         )
         self.assertEqual(_openai_tool_name("automation", "describe_current_state", use_prefix=False), "describe_current_state")
-        self.assertEqual(_split_tool_name("browsermcp/browser_snapshot"), ("browsermcp", "browser_snapshot"))
+        self.assertEqual(_split_tool_name("openchrome/read_page"), ("openchrome", "read_page"))
 
 
 if __name__ == "__main__":

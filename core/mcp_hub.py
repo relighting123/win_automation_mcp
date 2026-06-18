@@ -2,7 +2,7 @@
 여러 MCP 서버를 통합하는 허브 클라이언트.
 
 - automation MCP: HTTP(streamable-http)
-- Browser MCP: stdio(npx) — Chrome 확장 + Connect 필요
+- OpenChrome: stdio(npx) — CDP로 실제 Chrome 제어 (확장 Connect 불필요)
 """
 
 from __future__ import annotations
@@ -205,7 +205,7 @@ class HttpMCPBackend:
 
 
 class StdioMCPBackend:
-    """stdio MCP 백엔드 (browsermcp 등)."""
+    """stdio MCP 백엔드 (openchrome 등)."""
 
     def __init__(self, config: MCPServerConfig):
         self.config = config
