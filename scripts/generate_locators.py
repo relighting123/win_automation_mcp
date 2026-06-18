@@ -229,8 +229,8 @@ def _build_click_app_by_attr_args(
 
     args: Dict[str, Any] = {
         "window_target": "child" if scope == "child" else "top",
-        "timeout": 5.0,
-        "poll_interval": 0.3,
+        "timeout": 8.0,
+        "poll_interval": 0.5,
     }
     if auto_id:
         args["auto_id"] = auto_id
