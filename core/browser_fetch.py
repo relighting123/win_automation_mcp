@@ -13,7 +13,11 @@ import logging
 import re
 from typing import Any, Optional
 
-from core.chrome_paths import chrome_missing_help_message, is_chrome_missing_error
+from core.chrome_paths import (
+    chrome_missing_help_message,
+    find_chrome_binary,
+    is_chrome_missing_error,
+)
 from core.mcp_result_utils import extract_mcp_text_content, normalize_mcp_tool_result
 
 logger = logging.getLogger(__name__)
@@ -148,6 +152,9 @@ async def fetch_url_via_browser(url: str) -> str:
             "Node.js 설치 후 MCP_OPENCHROME_ENABLED=true 로 chatRTD를 재시작하세요.\n\n"
             f"{chrome_missing_help_message()}"
         )
+
+    if not find_chrome_binary():
+        return chrome_missing_help_message()
 
     navigate = await hub.call_tool("openchrome/navigate", {"url": url})
     navigate_error = _tool_failure_message(navigate, step="navigate")

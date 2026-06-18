@@ -13,7 +13,11 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from core.chrome_paths import find_chrome_binary
+from core.chrome_paths import (
+    apply_chrome_binary_args,
+    build_openchrome_chrome_env,
+    find_chrome_binary,
+)
 from core.llm_config import DEFAULT_MCP_BASE_URL, load_app_config
 
 logger = logging.getLogger(__name__)
@@ -80,19 +84,35 @@ def _legacy_browser_mcp_enabled_from_env() -> bool:
     )
 
 
-def _openchrome_env_from_env() -> Dict[str, str]:
-    """openchrome-mcp stdio 프로세스에 전달할 환경 변수."""
-    env: Dict[str, str] = {}
+def _apply_openchrome_chrome_config(server: MCPServerConfig) -> MCPServerConfig:
+    """openchrome 서버에 Chrome/Edge 경로를 env 및 CLI 인자로 주입합니다."""
+    if server.id != "openchrome":
+        return server
+
     chrome_path = find_chrome_binary()
+    env = dict(server.env)
+    args = list(server.args)
+
     if chrome_path:
-        env["CHROME_PATH"] = chrome_path
+        env.update(build_openchrome_chrome_env(chrome_path))
+        args = apply_chrome_binary_args(args, chrome_path)
         logger.info("OpenChrome CHROME_PATH=%s", chrome_path)
     else:
         logger.warning(
             "Chrome/Chromium 실행 파일을 찾지 못했습니다. "
             "Chrome 또는 Edge를 설치하거나 .env에 CHROME_PATH를 설정하세요."
         )
-    return env
+
+    return MCPServerConfig(
+        id=server.id,
+        transport=server.transport,
+        url=server.url,
+        command=server.command,
+        args=args,
+        env=env,
+        enabled=server.enabled,
+        tool_prefix=server.tool_prefix,
+    )
 
 
 def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
@@ -100,26 +120,25 @@ def _openchrome_server_from_env() -> Optional[MCPServerConfig]:
         return None
 
     args = ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
-    env = _openchrome_env_from_env()
 
     if sys.platform == "win32":
-        return MCPServerConfig(
+        server = MCPServerConfig(
             id="openchrome",
             transport="stdio",
             command="cmd",
             args=["/c", "npx", *args],
-            env=env,
+            tool_prefix=True,
+        )
+    else:
+        server = MCPServerConfig(
+            id="openchrome",
+            transport="stdio",
+            command="npx",
+            args=args,
             tool_prefix=True,
         )
 
-    return MCPServerConfig(
-        id="openchrome",
-        transport="stdio",
-        command="npx",
-        args=args,
-        env=env,
-        tool_prefix=True,
-    )
+    return _apply_openchrome_chrome_config(server)
 
 
 def load_mcp_servers(
@@ -166,6 +185,7 @@ def load_mcp_servers(
             ".env 에 MCP_OPENCHROME_ENABLED=true 를 설정하세요."
         )
 
+    servers = [_apply_openchrome_chrome_config(server) for server in servers]
     return [server for server in servers if server.enabled]
 
 

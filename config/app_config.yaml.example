@@ -74,6 +74,7 @@ mcp:
         - "openchrome-mcp@latest"
         - serve
         - --auto-launch
+      # Chrome/Edge 경로는 .env CHROME_PATH 또는 자동 탐지로 주입됩니다.
       enabled: false
 
 automation:

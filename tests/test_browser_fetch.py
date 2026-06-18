@@ -91,7 +91,8 @@ class FetchUrlViaBrowserTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("core.mcp_client.get_shared_extra_mcp_hub", new=AsyncMock(return_value=hub)):
-            text = await fetch_url_via_browser("https://example.com")
+            with patch("core.browser_fetch.find_chrome_binary", return_value=r"C:\Chrome\chrome.exe"):
+                text = await fetch_url_via_browser("https://example.com")
 
         self.assertIn("Hello page", text)
         hub.call_tool.assert_any_await("openchrome/navigate", {"url": "https://example.com"})

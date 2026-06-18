@@ -48,6 +48,30 @@ class ChromePathsTest(unittest.TestCase):
 
         openchrome = next(server for server in servers if server.id == "openchrome")
         self.assertEqual(openchrome.env.get("CHROME_PATH"), r"C:\Edge\msedge.exe")
+        self.assertEqual(openchrome.env.get("CHROME_BINARY"), r"C:\Edge\msedge.exe")
+        self.assertIn("--chrome-binary", openchrome.args)
+        self.assertIn(r"C:\Edge\msedge.exe", openchrome.args)
+
+    def test_yaml_openchrome_server_gets_chrome_path(self) -> None:
+        from core.mcp_server_config import MCPServerConfig, _apply_openchrome_chrome_config
+
+        with patch("core.mcp_server_config.find_chrome_binary", return_value=r"C:\Chrome\chrome.exe"):
+            server = _apply_openchrome_chrome_config(
+                MCPServerConfig(
+                    id="openchrome",
+                    transport="stdio",
+                    command="cmd",
+                    args=["/c", "npx", "-y", "openchrome-mcp@latest", "serve", "--auto-launch"],
+                )
+            )
+
+        self.assertEqual(server.env["CHROME_PATH"], r"C:\Chrome\chrome.exe")
+        self.assertIn("--chrome-binary", server.args)
+
+    def test_is_chrome_missing_error_matches_openchrome_message(self) -> None:
+        self.assertTrue(
+            is_chrome_missing_error("Please install google Chrome or set Chrome path env")
+        )
 
 
 if __name__ == "__main__":
