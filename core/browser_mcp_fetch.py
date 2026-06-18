@@ -58,14 +58,13 @@ def snapshot_to_text(snapshot: str) -> str:
 
 
 async def fetch_url_via_browser_mcp(url: str) -> str:
+    from core.browser_mcp_connect import ensure_browser_mcp_connected
     from core.mcp_client import get_shared_extra_mcp_hub
 
     hub = await get_shared_extra_mcp_hub()
-    if hub is None:
-        return (
-            "[Browser MCP 미활성화] .env에 MCP_BROWSER_MCP_ENABLED=true 설정 후 "
-            "Chrome 확장 프로그램에서 Connect를 눌러 주세요."
-        )
+    connected, message = await ensure_browser_mcp_connected(hub)
+    if not connected:
+        return f"[Browser MCP 미연결] {message}"
 
     navigate = await hub.call_tool("browsermcp/browser_navigate", {"url": url})
     if navigate.get("error"):
