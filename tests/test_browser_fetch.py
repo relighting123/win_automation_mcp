@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, patch
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.browser_fetch import extract_browser_tool_text, snapshot_to_text
+from core.browser_fetch import (
+    _enrich_chrome_missing_message,
+    extract_browser_tool_text,
+    snapshot_to_text,
+)
 from core.mcp_server_config import load_mcp_servers
 
 
@@ -41,6 +45,11 @@ class BrowserFetchTextTest(unittest.TestCase):
         }
         text = extract_browser_tool_text(result)
         self.assertIn("navigation failed", text)
+
+    def test_enrich_chrome_missing_message(self) -> None:
+        message = _enrich_chrome_missing_message("[navigate 오류] Chrome executable not found")
+        self.assertIn("Chrome", message)
+        self.assertIn("CHROME_PATH", message)
 
 
 class OpenChromeServerConfigTest(unittest.TestCase):
@@ -82,7 +91,8 @@ class FetchUrlViaBrowserTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("core.mcp_client.get_shared_extra_mcp_hub", new=AsyncMock(return_value=hub)):
-            text = await fetch_url_via_browser("https://example.com")
+            with patch("core.browser_fetch.find_chrome_binary", return_value=r"C:\Chrome\chrome.exe"):
+                text = await fetch_url_via_browser("https://example.com")
 
         self.assertIn("Hello page", text)
         hub.call_tool.assert_any_await("openchrome/navigate", {"url": "https://example.com"})
