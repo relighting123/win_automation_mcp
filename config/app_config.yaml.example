@@ -70,11 +70,15 @@ automation:
   mode: "manual"
 
 file_access:
-  # 소스 파일 검색/치환(find_text_in_file 등) 허용 경로
+  # 파일 읽기/쓰기 공통 허용 폴더 (하위 파일 접근 가능)
   allow_workspace: true
   allowed_paths:
     - "D:\\개발\\폴더"
     # - "C:\\Rules"
+  # 읽기 전용 추가 폴더 (read_text_file / list_directory_files 만 허용)
+  read_paths:
+    - "D:\\참고자료"
+    # - "\\\\fileserver\\share\\docs"
 
 reports:
   # 일일/주간 업무 보고서 저장 경로 (워크스페이스 기준 상대경로 가능)
