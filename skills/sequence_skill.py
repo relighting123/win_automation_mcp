@@ -5,6 +5,7 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from core.app_session import AppSession
+from core.browser_mcp_connect import ensure_browser_mcp_connected
 from core.launch_paths import canonicalize_launch_arg_keys, pick_launch_target, resolve_launch_paths
 from skills.base_skill import BaseSkill
 from tools.tool_registry import get_skill_tool_registry
@@ -213,10 +214,30 @@ class SequenceSkill(BaseSkill):
             return raw_result.to_dict()
         return {"success": True, "result": raw_result}
 
+    def _uses_browser_mcp(self) -> bool:
+        for raw_step in self.steps:
+            tool_name = raw_step.get("tool") or raw_step.get("type") or raw_step.get("action")
+            if not tool_name:
+                continue
+            if (
+                str(tool_name).startswith("browsermcp/")
+                or str(tool_name).startswith("browsermcp:")
+                or str(tool_name).startswith("chrome-devtools/")
+                or str(tool_name).startswith("chrome-devtools:")
+            ):
+                return True
+        return False
+
     async def execute(self, **kwargs) -> Dict[str, Any]:
         logger.info(f"MacroSkill 실행 시작: {self.skill_name} ({self.description})")
 
         try:
+            if self._uses_browser_mcp():
+                extra_hub = await get_shared_extra_mcp_hub()
+                connected, connect_message = await ensure_browser_mcp_connected(extra_hub)
+                if not connected:
+                    return {"success": False, "message": connect_message}
+
             tool_registry = get_skill_tool_registry()
             step_results: List[Dict[str, Any]] = []
 
