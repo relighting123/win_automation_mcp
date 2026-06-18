@@ -128,17 +128,27 @@ class GenerateLocatorsTest(unittest.TestCase):
         top = _MockTop(title="Login", control_type="Window", control_id=1, automation_id="LoginWnd")
         tree = build_locator_tree(top)
         self.assertEqual(tree["window"]["auto_id"], "LoginWnd")
+        self.assertEqual(tree["scope"], "top")
+        self.assertEqual(tree["window_target"], "top")
         self.assertIn("close", tree["elements"])
+        self.assertEqual(tree["elements"]["close"]["scope"], "top")
+        self.assertEqual(tree["elements"]["close"]["window_target"], "top")
         self.assertNotIn("child_windows", tree)
 
     def test_build_locator_tree_includes_child_windows(self):
         top = _MockMainWithFind()
         tree = build_locator_tree(top)
         self.assertIn("btnnext", tree["elements"])
+        self.assertEqual(tree["elements"]["btnnext"]["scope"], "top")
         self.assertIn("find", tree["child_windows"])
         find_tree = tree["child_windows"]["find"]
+        self.assertEqual(find_tree["scope"], "child")
+        self.assertEqual(find_tree["window_target"], "child")
         self.assertEqual(find_tree["window"]["title"], "Find")
         self.assertIn("close", find_tree["elements"])
+        self.assertEqual(find_tree["elements"]["close"]["scope"], "child")
+        self.assertEqual(find_tree["elements"]["close"]["window_target"], "child")
+        self.assertEqual(find_tree["elements"]["close"]["child_window_title"], "Find")
         self.assertEqual(find_tree["elements"]["close"]["path"], "top/child_windows/find")
 
     def test_extract_elements_flatten_includes_child_controls(self):
@@ -163,6 +173,8 @@ class GenerateLocatorsTest(unittest.TestCase):
         flat = flatten_tree_elements(tree)
         self.assertIn("find__close", flat)
         self.assertEqual(flat["find__close"]["auto_id"], "Close")
+        self.assertEqual(flat["find__close"]["scope"], "child")
+        self.assertEqual(flat["find__close"]["window_target"], "child")
 
     def test_make_locator_key_from_title(self):
         top = _MockTop(title="ezDFS2 Login", control_type="Window", control_id=1, automation_id="LoginWnd")

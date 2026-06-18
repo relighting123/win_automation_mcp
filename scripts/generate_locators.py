@@ -190,10 +190,37 @@ def _make_element_key(
     return element_key
 
 
+def _element_scope_payload(
+    *,
+    scope: str,
+    path: str,
+    child_window_key: str = "",
+    parent_window: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """click_app_by_attr용 top/child 구분 메타데이터."""
+    payload: Dict[str, Any] = {
+        "scope": scope,
+        "window_target": "top" if scope == "top" else "child",
+        "path": path,
+    }
+    if scope == "child":
+        if child_window_key:
+            payload["child_window_key"] = child_window_key
+        parent = parent_window or {}
+        if parent.get("title"):
+            payload["child_window_title"] = parent["title"]
+        if parent.get("auto_id"):
+            payload["child_window_auto_id"] = parent["auto_id"]
+    return payload
+
+
 def _node_to_element_record(
     node: Any,
     *,
     path: str,
+    scope: str = "top",
+    child_window_key: str = "",
+    parent_window: Optional[Dict[str, Any]] = None,
     include_without_auto_id: bool,
     all_types: bool,
     existing: Dict[str, Any],
@@ -216,12 +243,17 @@ def _node_to_element_record(
         existing=existing,
     )
     return element_key, {
-        "path": path,
+        **_element_scope_payload(
+            scope=scope,
+            path=path,
+            child_window_key=child_window_key,
+            parent_window=parent_window,
+        ),
         "auto_id": auto_id,
         "control_id": control_id,
         "title": name,
         "uia_control_type": uia_type,
-        "description": f"{name} ({uia_type})" if name else uia_type,
+        "description": f"{name} ({uia_type}, scope={scope})" if name else f"{uia_type} (scope={scope})",
     }
 
 
@@ -231,6 +263,9 @@ def build_locator_tree(
     include_without_auto_id: bool = False,
     all_types: bool = False,
     path: str = "top",
+    scope: str = "top",
+    child_window_key: str = "",
+    parent_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Inspect 트리와 유사한 계층 구조를 반환합니다.
@@ -262,6 +297,9 @@ def build_locator_tree(
         record = _node_to_element_record(
             node,
             path=path,
+            scope=scope,
+            child_window_key=child_window_key,
+            parent_window=parent_window,
             include_without_auto_id=include_without_auto_id,
             all_types=all_types,
             existing=elements,
@@ -273,6 +311,12 @@ def build_locator_tree(
 
     tree: Dict[str, Any] = {
         "window": extract_window_info(wrapper),
+        **_element_scope_payload(
+            scope=scope,
+            path=path,
+            child_window_key=child_window_key,
+            parent_window=parent_window if scope == "child" else extract_window_info(wrapper),
+        ),
         "elements": elements,
     }
 
@@ -291,6 +335,9 @@ def build_locator_tree(
                 include_without_auto_id=include_without_auto_id,
                 all_types=all_types,
                 path=child_path,
+                scope="child",
+                child_window_key=child_key,
+                parent_window=extract_window_info(child),
             )
             if child_tree.get("elements") or child_tree.get("child_windows"):
                 child_windows[child_key] = child_tree
@@ -345,6 +392,10 @@ def collect_all_descendant_records(window_spec: Any, *, include_root: bool = Tru
                 {
                     "index": global_index,
                     "path": element.get("path", path),
+                    "scope": element.get("scope", "top"),
+                    "window_target": element.get("window_target", "top"),
+                    "child_window_title": element.get("child_window_title", ""),
+                    "child_window_auto_id": element.get("child_window_auto_id", ""),
                     "depth": depth + 1,
                     "title": element.get("title", ""),
                     "auto_id": element.get("auto_id", ""),
@@ -367,6 +418,11 @@ def collect_all_descendant_records(window_spec: Any, *, include_root: bool = Tru
                     {
                         "index": global_index,
                         "path": child_path,
+                        "scope": "child",
+                        "window_target": "child",
+                        "child_window_key": child_key,
+                        "child_window_title": window_info.get("title", ""),
+                        "child_window_auto_id": window_info.get("auto_id", ""),
                         "depth": depth + 1,
                         "title": window_info.get("title", ""),
                         "auto_id": window_info.get("auto_id", ""),
@@ -381,6 +437,10 @@ def collect_all_descendant_records(window_spec: Any, *, include_root: bool = Tru
                         {
                             "index": global_index,
                             "path": element.get("path", child_path),
+                            "scope": element.get("scope", "child"),
+                            "window_target": element.get("window_target", "child"),
+                            "child_window_title": element.get("child_window_title", ""),
+                            "child_window_auto_id": element.get("child_window_auto_id", ""),
                             "depth": depth + 2,
                             "title": element.get("title", ""),
                             "auto_id": element.get("auto_id", ""),
@@ -401,11 +461,13 @@ def print_descendant_records(records: List[Dict[str, Any]], *, window_label: str
     for record in records:
         indent = "  " * int(record.get("depth", 0) + 1)
         print(
-            f"{indent}[{record['index']}] path={record.get('path', '-')}, "
+            f"{indent}[{record['index']}] scope={record.get('scope', '-')}, "
+            f"path={record.get('path', '-')}, "
             f"title={record['title'] or '-'}, "
             f"auto_id={record['auto_id'] or '-'}, "
             f"control_id={record['control_id'] or '-'}, "
             f"uia_type={record['uia_control_type'] or '-'}, "
+            f"child_window_title={record.get('child_window_title') or '-'}, "
             f"visible={record['visible']}"
         )
 
@@ -415,8 +477,9 @@ def print_locator_tree(tree: Dict[str, Any], *, window_label: str = "", depth: i
     prefix = f"{window_label} " if window_label and depth == 0 else ""
     indent = "  " * depth
     window_info = tree.get("window", {})
+    scope = tree.get("scope", "top")
     print(
-        f"{prefix}{indent}window: title={window_info.get('title') or '-'}, "
+        f"{prefix}{indent}window(scope={scope}): title={window_info.get('title') or '-'}, "
         f"auto_id={window_info.get('auto_id') or '-'}, "
         f"control_id={window_info.get('control_id') or '-'}, "
         f"uia_type={window_info.get('uia_control_type') or '-'}"
@@ -424,11 +487,13 @@ def print_locator_tree(tree: Dict[str, Any], *, window_label: str = "", depth: i
 
     for element_key, element in tree.get("elements", {}).items():
         print(
-            f"{indent}  element.{element_key}: "
+            f"{indent}  element.{element_key}(scope={element.get('scope', 'top')}): "
+            f"window_target={element.get('window_target', 'top')}, "
             f"title={element.get('title') or '-'}, "
             f"auto_id={element.get('auto_id') or '-'}, "
             f"control_id={element.get('control_id') or '-'}, "
-            f"uia_type={element.get('uia_control_type') or '-'}"
+            f"uia_type={element.get('uia_control_type') or '-'}, "
+            f"child_window_title={element.get('child_window_title') or '-'}"
         )
 
     for child_key, child_tree in tree.get("child_windows", {}).items():
