@@ -1138,6 +1138,11 @@ class AppUIAction:
             kernel32 = ctypes.windll.kernel32
             root = self._get_hwnd_root(hwnd)
 
+            # 이미 foreground이면 Alt 키 전송 없이 바로 반환
+            # (_release_foreground_lock의 Alt 키가 앱 메뉴바를 활성화하는 부작용 방지)
+            if not win32gui.IsIconic(root) and self._is_hwnd_foreground(root):
+                return True
+
             if win32gui.IsIconic(root):
                 win32gui.ShowWindow(root, win32con.SW_RESTORE)
 

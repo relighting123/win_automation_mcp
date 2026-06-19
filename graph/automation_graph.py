@@ -51,10 +51,32 @@ def _force_close_target_app() -> None:
     """그래프가 예외로 중단된 경우 연결된 대상 앱을 강제 종료합니다."""
     try:
         from core.app_launcher import get_launcher
+        from core.app_session import AppSession
+
+        session = AppSession.get_instance()
         launcher = get_launcher()
-        if launcher and launcher._session.is_connected:
-            logger.info("자동화 그래프 비정상 중단 — 대상 앱 강제 종료")
-            launcher.close(force=True)
+
+        # 1순위: 세션이 연결된 상태면 정상 경로로 강제 종료
+        if session.is_connected:
+            try:
+                launcher.close(force=True)
+                logger.info("자동화 그래프 비정상 중단 — 대상 앱 강제 종료 (launcher.close)")
+                return
+            except Exception as exc:
+                logger.warning("launcher.close 실패, fallback 시도: %s", exc)
+
+        # 2순위: 세션이 DISCONNECTED여도 _app 객체가 남아 있으면 직접 kill
+        # (그래프 예외 발생 시 세션 상태가 DISCONNECTED로 바뀌어 is_connected=False가 되는 경우 처리)
+        app = getattr(session, "_app", None)
+        if app is not None:
+            try:
+                app.kill()
+                logger.info("자동화 그래프 비정상 중단 — 대상 앱 강제 종료 (app.kill)")
+                return
+            except Exception as exc:
+                logger.warning("app.kill() 실패: %s", exc)
+
+        logger.info("자동화 그래프 중단 — 대상 앱이 연결되지 않아 종료 건너뜀")
     except Exception as exc:
         logger.warning("대상 앱 강제 종료 실패: %s", exc)
 
