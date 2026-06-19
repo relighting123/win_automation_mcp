@@ -47,6 +47,18 @@ class MiniHybridAgent:
             reporter_llm=self.reporter_llm,
         )
 
+def _force_close_target_app() -> None:
+    """그래프가 예외로 중단된 경우 연결된 대상 앱을 강제 종료합니다."""
+    try:
+        from core.app_launcher import get_launcher
+        launcher = get_launcher()
+        if launcher and launcher._session.is_connected:
+            logger.info("자동화 그래프 비정상 중단 — 대상 앱 강제 종료")
+            launcher.close(force=True)
+    except Exception as exc:
+        logger.warning("대상 앱 강제 종료 실패: %s", exc)
+
+
 async def run_automation(
     mcp,
     query,
@@ -134,6 +146,7 @@ async def run_automation(
     }
 
     begin_run_control(resolved_mode)
+    _aborted_by_exception = False
     try:
         if on_progress is None:
             final = await agent.graph.ainvoke(initial_state)
@@ -154,8 +167,13 @@ async def run_automation(
                         on_progress(line)
             final = accumulated
             on_progress("자동화 그래프 완료")
+    except BaseException:
+        _aborted_by_exception = True
+        raise
     finally:
         end_run_control()
+        if _aborted_by_exception:
+            _force_close_target_app()
     if include_details:
         return {
             "report": final.get("report", ""),
