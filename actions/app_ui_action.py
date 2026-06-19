@@ -1146,7 +1146,13 @@ class AppUIAction:
             if win32gui.IsIconic(root):
                 win32gui.ShowWindow(root, win32con.SW_RESTORE)
 
-            self._release_foreground_lock()
+            # 이미 foreground이면 바로 반환
+            if self._is_hwnd_foreground(root):
+                return True
+
+            # _release_foreground_lock(Alt 키 전송)은 비동기 큐 특성상
+            # SetForegroundWindow 이후 타겟 앱이 Alt를 수신해 메뉴바를 열 수 있으므로
+            # 제거하고 AttachThreadInput만으로 foreground 전환을 수행한다.
 
             fg = user32.GetForegroundWindow()
             target_tid = user32.GetWindowThreadProcessId(root, None)
