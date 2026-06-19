@@ -370,6 +370,8 @@ class AppUIAction:
     def _get_pyautogui(self):
         try:
             import pyautogui
+            # MCP 서버 환경에서는 마우스를 코너로 이동해 중단하는 대화형 안전장치가 불필요하므로 비활성화
+            pyautogui.FAILSAFE = False
         except Exception as e:  # pragma: no cover
             logger.error("pyautogui 로드 실패: %s", e)
             return None, AppUIActionResult(result="error", message=f"pyautogui 로드 실패: {e}")
@@ -2795,6 +2797,9 @@ class AppUIAction:
         button = button.lower()
         if button not in {"left", "right", "middle"}:
             return AppUIActionResult(result="error", message=f"지원하지 않는 버튼: {button}")
+
+        if x < 0 or y < 0:
+            return AppUIActionResult(result="error", message=f"유효하지 않은 클릭 좌표: ({x}, {y})")
 
         try:
             method = self._perform_screen_click(x, y, button=button, clicks=clicks, click_method="mouse")
