@@ -12,8 +12,6 @@ logs/
 *.log
 gemma-windows-automation-lora/
 tool_calling_dataset.jsonl
-.gemini/*
-!.gemini/.gitkeep
 .idea/
 .vscode/
 .chatrtd/
