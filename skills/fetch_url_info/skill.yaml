@@ -1,5 +1,0 @@
-description: "Playwright로 URL을 열고 본문 텍스트를 가져옵니다 (사내 SSO)"
-tools:
-  - tool: fetch_url_content
-    args:
-      url: { mode: "ai" }

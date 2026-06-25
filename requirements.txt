@@ -32,7 +32,6 @@ requests>=2.31.0
 pandas>=3.0.2
 pyperclip>=1.11.0
 oracledb>=2.0.0
-playwright>=1.49.0
 
 # LangGraph and LangChain
 langchain>=0.1.0

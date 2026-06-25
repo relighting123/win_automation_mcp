@@ -102,15 +102,6 @@ def load_mcp_servers(
             except ValueError as exc:
                 raise ValueError(f"MCP extra_servers 설정 오류: {exc}") from exc
 
-    legacy_browser = _is_truthy(os.getenv("MCP_OPENCHROME_ENABLED")) or _is_truthy(
-        os.getenv("MCP_BROWSER_MCP_ENABLED")
-    ) or _is_truthy(os.getenv("MCP_CHROME_DEVTOOLS_ENABLED"))
-    if legacy_browser:
-        logger.warning(
-            "MCP_OPENCHROME_ENABLED / MCP_BROWSER_MCP_ENABLED 는 제거되었습니다. "
-            "URL 수집은 Playwright(fetch_url_content)를 사용하세요."
-        )
-
     return [server for server in servers if server.enabled]
 
 

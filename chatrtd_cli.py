@@ -125,7 +125,7 @@ HELP_TEXT = f"""
 [secondary]Tools & Skills[/secondary]
   [text]/tools[/text]             사용 가능한 도구 목록
   [text]/skills[/text]            스킬 목록
-  [text]/skill <id>[/text]        스킬 직접 실행  (/skill fetch_url_info url=https://...)
+  [text]/skill <id>[/text]        스킬 직접 실행  (/skill query_oracle_db sql=...)
 
 [secondary]Model Management[/secondary]
   [text]/models[/text]                                                   등록된 모델 목록

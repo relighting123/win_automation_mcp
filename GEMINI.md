@@ -5,7 +5,6 @@
 ## 역할
 
 - Windows 프로그램 UI 자동화 (pywinauto)
-- 사내 URL 수집 (`fetch_url_info`, Playwright)
 - Oracle DB 조회 (`query_oracle_db`, `db=prd` 등)
 - 일일/주간 업무 보고서 (`daily_work_summary`, `weekly_report`)
 
@@ -18,7 +17,6 @@
 
 | 스킬 | 용도 |
 |------|------|
-| `fetch_url_info` | SSO/사내 URL 페이지 수집 |
 | `query_oracle_db` | Oracle SELECT 조회 |
 | `daily_work_summary` | 일일 업무 MD 보고서 |
 | `weekly_report` | 주간 보고서 (일일 MD 병합) |

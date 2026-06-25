@@ -47,12 +47,6 @@ def _load_report_config(config_path: Optional[str] = None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-async def _fetch_url_via_browser(url: str) -> str:
-    from core.browser_fetch import fetch_url_via_browser
-
-    return await fetch_url_via_browser(url)
-
-
 async def _run_oracle_query(entry: dict[str, Any]) -> str:
     from tools.oracle_db_tool import query_oracle_db
 
@@ -98,7 +92,7 @@ async def build_daily_work_report(
 
         urls = config.get("urls") or []
         if urls:
-            lines.append("## 웹 수집")
+            lines.append("## 참고 URL")
             lines.append("")
             for item in urls:
                 if isinstance(item, str):
@@ -110,15 +104,8 @@ async def build_daily_work_report(
                     continue
                 if not url:
                     continue
-                lines.append(f"### {name}")
-                lines.append(f"- URL: {url}")
-                body = await _fetch_url_via_browser(url)
-                preview = body[:8000] + ("..." if len(body) > 8000 else "")
-                lines.append("")
-                lines.append("```text")
-                lines.append(preview)
-                lines.append("```")
-                lines.append("")
+                lines.append(f"- **{name}**: {url}")
+            lines.append("")
 
         queries = config.get("oracle_queries") or []
         if queries:

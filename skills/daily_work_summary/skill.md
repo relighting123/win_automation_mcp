@@ -1,6 +1,6 @@
 # Daily Work Summary (일일 업무 정리)
 
-`report_config.yaml`에 지정한 **웹 URL**, **Oracle 쿼리**, **고정 섹션**을 모아  
+`report_config.yaml`에 지정한 **참고 URL**, **Oracle 쿼리**, **고정 섹션**을 모아  
 `reports/daily/YYYY-MM-DD.md` 파일로 저장합니다.
 
 ## 사전 준비
@@ -11,25 +11,9 @@
 copy skills\daily_work_summary\report_config.yaml.example skills\daily_work_summary\report_config.yaml
 ```
 
-2. `report_config.yaml`에 수집할 URL/DB/섹션 편집
+2. `report_config.yaml`에 참고 URL/DB/섹션 편집
 
-3. Playwright (사내 웹 SSO)
-
-```bash
-pip install playwright
-playwright install chromium
-```
-
-`.env` (선택):
-
-```dotenv
-PLAYWRIGHT_CHANNEL=chrome
-CHATRTD_BROWSER_PROFILE_DIR=C:\Users\you\.chatrtd\browser-profile
-```
-
-첫 실행 시 브라우저가 뜨면 로그인해 두면 이후 쿠키가 프로필에 저장됩니다.
-
-4. (선택) 보고서 저장 경로 — `config/app_config.yaml`
+3. (선택) 보고서 저장 경로 — `config/app_config.yaml`
 
 ```yaml
 reports:
