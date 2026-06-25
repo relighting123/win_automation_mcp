@@ -76,6 +76,28 @@ file_access:
     - "D:\\개발\\폴더"
     # - "C:\\Rules"
 
+api_access:
+  # HTTP API 호출 도구(http_request) 사용 여부
+  enabled: false
+  default_timeout: 30
+  max_response_chars: 200000
+  # 허용 호스트 (와일드카드 *.example.com 지원)
+  allowed_hosts:
+    - "api.example.com"
+    # - "*.internal.company.local"
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+  # 자주 쓰는 API 프로필 (base_url + 기본 헤더)
+  apis:
+    - alias: demo
+      base_url: "https://api.example.com/v1"
+      headers:
+        Authorization: "Bearer ${DEMO_API_TOKEN}"
+
 reports:
   # 일일/주간 업무 보고서 저장 경로 (워크스페이스 기준 상대경로 가능)
   daily_dir: "reports/daily"

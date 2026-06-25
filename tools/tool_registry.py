@@ -29,6 +29,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
     from tools.source_edit_tool import find_text_in_file, replace_text_in_file
     from tools.report_file_tool import list_report_files, read_text_file, write_text_file
     from tools.daily_report_tool import build_daily_work_report, build_weekly_report
+    from tools.api_call_tool import http_request
 
     return {
         # app_mgmt_tool
@@ -64,4 +65,6 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         "list_report_files": list_report_files,
         "build_daily_work_report": build_daily_work_report,
         "build_weekly_report": build_weekly_report,
+        # api_call_tool
+        "http_request": http_request,
     }
