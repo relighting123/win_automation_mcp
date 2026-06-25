@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from core.llm_config import DEFAULT_MCP_BASE_URL
+from core.llm_config import DEFAULT_MCP_BASE_URL, load_app_config
 
 logger = logging.getLogger(__name__)
 
