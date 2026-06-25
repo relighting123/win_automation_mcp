@@ -77,12 +77,9 @@ def _ensure_gemini_settings(mcp_url: str) -> None:
 
 
 def _mcp_reachable(mcp_url: str, timeout: float = 2.0) -> bool:
-    try:
-        # MCP streamable-http는 HEAD/GET이 405일 수 있어 연결만 확인
-        requests.get(mcp_url, timeout=timeout)
-        return True
-    except requests.RequestException:
-        return False
+    from core.mcp_probe import probe_mcp_http
+
+    return probe_mcp_http(mcp_url, timeout=timeout)
 
 
 def _start_mcp_server() -> None:

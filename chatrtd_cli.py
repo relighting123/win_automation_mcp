@@ -237,6 +237,9 @@ def _reset_mcp_hub() -> None:
 def _get_mcp_hub(mcp_url: str):
     global _MCP_HUB, _MCP_HUB_URL
     from core.mcp_client import create_mcp_client
+    from core.mcp_probe import normalize_mcp_url
+
+    mcp_url = normalize_mcp_url(mcp_url)
 
     if _MCP_HUB is None or _MCP_HUB_URL != mcp_url:
         _reset_mcp_hub()
@@ -277,8 +280,10 @@ def _parse_sse_result(res: requests.Response) -> Optional[dict]:
 
 
 def fetch_mcp_tools(mcp_url: str) -> list:
+    from core.mcp_probe import normalize_mcp_url
+
     try:
-        hub = _get_mcp_hub(mcp_url)
+        hub = _get_mcp_hub(normalize_mcp_url(mcp_url))
         return run_async(hub.list_openai_tools())
     except Exception:
         return []
@@ -295,29 +300,38 @@ def call_mcp_tool(mcp_url: str, name: str, arguments: dict) -> dict:
 # ── Server subprocess ─────────────────────────────────────────────────────────
 
 def _is_mcp_running(mcp_url: str) -> bool:
-    """MCP 서버가 이미 실행 중인지 확인."""
-    try:
-        requests.get(mcp_url.rstrip("/mcp").rstrip("/"), timeout=2)
-        return True
-    except Exception:
-        return False
+    """MCP 서버가 streamable-http initialize를 처리하는지 확인."""
+    from core.mcp_probe import probe_mcp_http
+
+    return probe_mcp_http(mcp_url)
 
 
-def start_mcp_server(port: int = 8000) -> Optional[subprocess.Popen]:
+def start_mcp_server(mcp_url: str) -> Optional[subprocess.Popen]:
+    from core.mcp_probe import parse_mcp_endpoint, wait_for_mcp_http
+
     script = _PROJECT_ROOT / "mcp_server.py"
     if not script.exists():
         return None
+
+    host, port, path = parse_mcp_endpoint(mcp_url)
     proc = subprocess.Popen(
-        [sys.executable, str(script), "--transport", "http", "--port", str(port)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        [
+            sys.executable,
+            str(script),
+            "--transport",
+            "http",
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--path",
+            path,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    for _ in range(15):
-        time.sleep(1)
-        try:
-            requests.get(f"http://localhost:{port}/", timeout=1)
-            return proc
-        except Exception:
-            pass
+    if wait_for_mcp_http(mcp_url, attempts=20, interval=0.5):
+        return proc
     return proc
 
 
@@ -450,15 +464,24 @@ class ChatRTDCLI:
     # ── Tool loading ──────────────────────────────────────────────────────────
 
     def load_tools(self) -> None:
+        from core.mcp_probe import normalize_mcp_url, probe_mcp_http
+
+        mcp_url = normalize_mcp_url(self.mcp_url)
         with self.console.status(
             f"[muted]connecting to MCP server...[/muted]", spinner="dots",
             spinner_style=f"bold {_C['primary']}",
         ):
-            self.tools = fetch_mcp_tools(self.mcp_url)
+            self.tools = fetch_mcp_tools(mcp_url)
         if not self.tools:
-            self.console.print(
-                f"  [warn]⚠[/warn]  [muted]도구를 가져오지 못했습니다. MCP 서버가 실행 중인지 확인하세요.[/muted]\n"
-            )
+            if not probe_mcp_http(mcp_url):
+                self.console.print(
+                    f"  [warn]⚠[/warn]  [muted]MCP 서버에 연결하지 못했습니다 ({mcp_url}). "
+                    f"서버가 실행 중인지, URL이 /mcp 인지 확인하세요.[/muted]\n"
+                )
+            else:
+                self.console.print(
+                    f"  [warn]⚠[/warn]  [muted]도구를 가져오지 못했습니다. MCP 서버가 실행 중인지 확인하세요.[/muted]\n"
+                )
 
     # ── Chat / tool-calling loop ───────────────────────────────────────────────
 
@@ -1123,16 +1146,12 @@ def main() -> None:
     # MCP 서버가 응답 없으면 자동 시작 (--no-server 로 비활성화 가능)
     server_proc = None
     if not args.no_server and not _is_mcp_running(mcp_url):
-        try:
-            port = int(mcp_url.split(":")[-1].split("/")[0])
-        except Exception:
-            port = 8000
         con = Console(force_terminal=True, theme=_THEME)
         with con.status(f"[muted]starting MCP server...[/muted]", spinner="dots",
                         spinner_style=f"bold {_C['primary']}"):
-            server_proc = start_mcp_server(port)
-        if server_proc:
-            con.print(f"  [ok]✓[/ok]  [muted]MCP server started (port {port})[/muted]\n")
+            server_proc = start_mcp_server(mcp_url)
+        if server_proc and _is_mcp_running(mcp_url):
+            con.print(f"  [ok]✓[/ok]  [muted]MCP server started ({mcp_url})[/muted]\n")
         else:
             con.print(f"  [warn]⚠[/warn]  [muted]MCP server 시작 실패 — mcp_server.py 경로 확인[/muted]\n")
 
