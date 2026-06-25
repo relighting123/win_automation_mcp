@@ -12,7 +12,12 @@ from typing import Any, Optional, TYPE_CHECKING
 
 import yaml
 
-from core.file_path_policy import is_path_allowed, resolve_allowed_file, resolve_allowed_output_path
+from core.file_path_policy import (
+    is_path_allowed,
+    resolve_allowed_directory,
+    resolve_allowed_file,
+    resolve_allowed_output_path,
+)
 from core.report_paths import get_report_settings, parse_report_date
 
 if TYPE_CHECKING:
@@ -91,6 +96,56 @@ def _parse_file_date(path: Path) -> Optional[date]:
         return None
 
 
+async def list_directory_files(
+    directory: str,
+    pattern: str = "*",
+    recursive: bool = False,
+    max_entries: int = 500,
+) -> str:
+    """
+    읽기 허용 폴더에서 파일 목록을 반환합니다.
+
+    Args:
+        directory: 검색 폴더 (file_access.read_paths / allowed_paths 하위)
+        pattern: glob 패턴 (예: *.txt, *.md)
+        recursive: True면 하위 폴더까지 검색
+        max_entries: 최대 반환 개수
+    """
+    try:
+        root = resolve_allowed_directory(directory, workspace=_PROJECT_ROOT)
+        globber = root.rglob if recursive else root.glob
+        files: list[dict[str, Any]] = []
+
+        for path in sorted(globber(pattern)):
+            if not path.is_file():
+                continue
+            if not is_path_allowed(path, workspace=_PROJECT_ROOT):
+                continue
+            files.append(
+                {
+                    "file_path": str(path),
+                    "name": path.name,
+                    "size": path.stat().st_size,
+                }
+            )
+            if len(files) >= max(1, int(max_entries)):
+                break
+
+        return json.dumps(
+            {
+                "success": True,
+                "directory": str(root),
+                "pattern": pattern,
+                "recursive": bool(recursive),
+                "count": len(files),
+                "files": files,
+            },
+            ensure_ascii=False,
+        )
+    except Exception as exc:
+        return json.dumps({"success": False, "message": str(exc)}, ensure_ascii=False)
+
+
 async def list_report_files(
     directory: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -155,5 +210,6 @@ async def list_report_files(
 def register_report_file_tools(mcp: "FastMCP") -> None:
     mcp.tool()(write_text_file)
     mcp.tool()(read_text_file)
+    mcp.tool()(list_directory_files)
     mcp.tool()(list_report_files)
     logger.info("보고서 파일 도구 등록 완료")

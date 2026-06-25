@@ -27,7 +27,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
     from tools.data_analysis_tool import read_clipboard_as_dataframe
     from tools.oracle_db_tool import query_oracle_db
     from tools.source_edit_tool import find_text_in_file, replace_text_in_file
-    from tools.report_file_tool import list_report_files, read_text_file, write_text_file
+    from tools.report_file_tool import list_directory_files, list_report_files, read_text_file, write_text_file
     from tools.daily_report_tool import build_daily_work_report, build_weekly_report
     from tools.browser_tool import fetch_url_content
 
@@ -62,6 +62,7 @@ def get_skill_tool_registry() -> Dict[str, Callable]:
         # report tools
         "write_text_file": write_text_file,
         "read_text_file": read_text_file,
+        "list_directory_files": list_directory_files,
         "list_report_files": list_report_files,
         "build_daily_work_report": build_daily_work_report,
         "build_weekly_report": build_weekly_report,
