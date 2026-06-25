@@ -20,8 +20,10 @@ from core.mcp_server_config import load_mcp_servers
 class MCPClient(MultiMCPClient):
     """하위 호환 래퍼. base_url 하나만 넘기던 기존 코드를 지원합니다."""
 
-    def __init__(self, base_url: str = "http://localhost:8000/mcp"):
-        super().__init__(load_mcp_servers(base_url_override=base_url))
+    def __init__(self, base_url: Optional[str] = None):
+        from core.llm_config import DEFAULT_MCP_BASE_URL
+
+        super().__init__(load_mcp_servers(base_url_override=base_url or DEFAULT_MCP_BASE_URL))
 
 
 async def example_usage():

@@ -36,7 +36,7 @@ class MultiMCPClientTest(unittest.IsolatedAsyncioTestCase):
 
         hub = MultiMCPClient(
             [
-                MCPServerConfig(id="automation", transport="http", url="http://localhost:8000/mcp", tool_prefix=False),
+                MCPServerConfig(id="automation", transport="http", url="http://localhost:8001/mcp", tool_prefix=False),
                 MCPServerConfig(id="extra", transport="stdio", command="npx", args=[], tool_prefix=True),
             ]
         )

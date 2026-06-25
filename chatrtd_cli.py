@@ -39,7 +39,7 @@ except ImportError:
 _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from core.llm_config import get_llm_settings, get_mcp_settings
+from core.llm_config import get_llm_settings, get_mcp_settings, DEFAULT_MCP_BASE_URL
 from core.async_loop_runner import run_async, shutdown_async_runner
 from core.tool_call_utils import parse_kv_args, parse_text_tool_calls
 
@@ -212,7 +212,7 @@ def get_active_settings(cli_config: dict, overrides: Optional[dict] = None) -> d
         "api_key":     overrides.get("api_key")   or active_cfg.get("api_key")   or app.get("api_key", ""),
         "base_url":    overrides.get("base_url")  or active_cfg.get("base_url")  or app.get("base_url", ""),
         "model":       overrides.get("model")     or active_cfg.get("model")     or app.get("model", ""),
-        "mcp_url":     overrides.get("mcp_url")   or cli_config.get("mcp_url")   or mcp.get("base_url", "http://localhost:8000/mcp"),
+        "mcp_url":     overrides.get("mcp_url")   or cli_config.get("mcp_url")   or mcp.get("base_url") or DEFAULT_MCP_BASE_URL,
         "active_name": active_name,
     }
 

@@ -7,8 +7,8 @@ from core.mcp_probe import normalize_mcp_url, parse_mcp_endpoint, probe_mcp_http
 class MCPProbeTest(unittest.TestCase):
     def test_normalize_mcp_url_appends_mcp_path(self) -> None:
         self.assertEqual(
-            normalize_mcp_url("http://localhost:8000"),
-            "http://localhost:8000/mcp",
+            normalize_mcp_url("http://localhost:8001"),
+            "http://localhost:8001/mcp",
         )
 
     def test_parse_mcp_endpoint(self) -> None:
@@ -22,7 +22,7 @@ class MCPProbeTest(unittest.TestCase):
         response.status_code = 200
         response.headers = {"mcp-session-id": "abc"}
         with patch("core.mcp_probe.requests.post", return_value=response):
-            self.assertTrue(probe_mcp_http("http://localhost:8000/mcp"))
+            self.assertTrue(probe_mcp_http("http://localhost:8001/mcp"))
 
     def test_probe_mcp_http_rejects_404(self) -> None:
         response = MagicMock()
@@ -30,7 +30,7 @@ class MCPProbeTest(unittest.TestCase):
         response.text = '{"detail":"Not Found"}'
         response.headers = {}
         with patch("core.mcp_probe.requests.post", return_value=response):
-            self.assertFalse(probe_mcp_http("http://localhost:8000/mcp"))
+            self.assertFalse(probe_mcp_http("http://localhost:8001/mcp"))
 
 
 if __name__ == "__main__":

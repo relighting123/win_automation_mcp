@@ -21,7 +21,8 @@ load_dotenv()
 DEFAULT_LLM_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_LLM_MODEL = "openai/gpt-oss-120b"
 DEFAULT_LLM_PROVIDER = "openai_compatible"
-DEFAULT_MCP_BASE_URL = "http://localhost:8000/mcp"
+DEFAULT_MCP_PORT = 8001
+DEFAULT_MCP_BASE_URL = f"http://localhost:{DEFAULT_MCP_PORT}/mcp"
 
 
 def _resolve_config_path(config_path: Optional[str] = None) -> Optional[Path]:

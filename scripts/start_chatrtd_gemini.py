@@ -25,7 +25,7 @@ import requests
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from core.llm_config import get_llm_settings, get_mcp_settings  # noqa: E402
+from core.llm_config import DEFAULT_MCP_PORT, get_llm_settings, get_mcp_settings  # noqa: E402
 
 _GEMINI_DIR = _PROJECT_ROOT / ".gemini"
 _SETTINGS_EXAMPLE = _PROJECT_ROOT / "config" / "gemini_settings.json.example"
@@ -102,7 +102,7 @@ def _start_mcp_server() -> None:
             "--host",
             "127.0.0.1",
             "--port",
-            "8000",
+            str(DEFAULT_MCP_PORT),
             "--path",
             "/mcp",
         ],

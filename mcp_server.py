@@ -338,8 +338,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="HTTP 포트 (기본: 8000)"
+        default=None,
+        help="HTTP 포트 (기본: config/환경변수, 없으면 8001)"
     )
     parser.add_argument(
         "--path",
@@ -353,6 +353,11 @@ def main():
     )
     
     args = parser.parse_args()
+
+    if args.port is None:
+        from core.llm_config import DEFAULT_MCP_PORT
+
+        args.port = DEFAULT_MCP_PORT
     
     if args.reload:
         run_with_reloader(args)

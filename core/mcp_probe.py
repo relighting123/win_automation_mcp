@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from core.llm_config import DEFAULT_MCP_BASE_URL, DEFAULT_MCP_PORT
+
 logger = logging.getLogger(__name__)
 
 _MCP_HEADERS = {
@@ -29,7 +31,7 @@ _INIT_PAYLOAD = {
 
 def normalize_mcp_url(url: str) -> str:
     """MCP endpoint URL을 정규화합니다."""
-    raw = (url or "").strip() or "http://localhost:8000/mcp"
+    raw = (url or "").strip() or DEFAULT_MCP_BASE_URL
     parsed = urlparse(raw)
     host = parsed.hostname or "localhost"
     if parsed.port is not None:
@@ -37,7 +39,7 @@ def normalize_mcp_url(url: str) -> str:
     elif parsed.scheme == "https":
         port = 443
     elif host in {"localhost", "127.0.0.1"}:
-        port = 8000
+        port = DEFAULT_MCP_PORT
     else:
         port = 80
     scheme = parsed.scheme or "http"
@@ -52,7 +54,7 @@ def parse_mcp_endpoint(url: str) -> tuple[str, int, str]:
     normalized = normalize_mcp_url(url)
     parsed = urlparse(normalized)
     host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 8000
+    port = parsed.port or DEFAULT_MCP_PORT
     path = parsed.path or "/mcp"
     return host, port, path
 

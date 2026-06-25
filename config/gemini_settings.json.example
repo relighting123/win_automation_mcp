@@ -26,7 +26,7 @@
   },
   "mcpServers": {
     "win-automation": {
-      "httpUrl": "http://localhost:8000/mcp",
+      "httpUrl": "http://localhost:8001/mcp",
       "trust": true,
       "timeout": 600000
     }

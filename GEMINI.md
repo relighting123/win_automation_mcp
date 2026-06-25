@@ -10,7 +10,7 @@
 
 ## MCP 서버
 
-- 기본 URL: `http://localhost:8000/mcp`
+- 기본 URL: `http://localhost:8001/mcp`
 - 런처(`scripts/start_chatrtd_gemini.py`)가 서버 미기동 시 자동 시작을 시도합니다.
 
 ## 주요 스킬
