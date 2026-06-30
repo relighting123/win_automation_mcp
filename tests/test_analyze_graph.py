@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 from pathlib import Path
@@ -140,6 +141,32 @@ class AnalyzeGraphInteractiveControlTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["execution_halted"])
         self.nodes.mcp.call_tool.assert_not_awaited()
         self.assertTrue(any(item.get("tool") == "__user_skip__" for item in result["history"]))
+
+    async def test_run_interrupts_long_running_tool_on_stop(self) -> None:
+        """도구 실행 도중 중지를 누르면 즉시 중단되어야 한다 (단계 경계 대기 X)."""
+        started = asyncio.Event()
+
+        async def slow_tool(tool, args):
+            started.set()
+            await asyncio.sleep(10)
+            return {"success": True}
+
+        self.nodes.mcp.call_tool = slow_tool
+        state = AgentState(
+            query="demo",
+            skill_ids=["demo_skill"],
+            mode="semi",
+            enriched_plan=[ToolCall(tool="wait", args={"seconds": 10})],
+        )
+
+        async def trigger_stop():
+            await started.wait()
+            self.control.request_stop()
+
+        asyncio.create_task(trigger_stop())
+        result = await asyncio.wait_for(self.nodes.run(state), timeout=3)
+        self.assertTrue(result["execution_halted"])
+        self.assertIn("중지", result["halt_reason"])
 
     async def test_manual_check_situation_honors_user_skip(self) -> None:
         state = AgentState(

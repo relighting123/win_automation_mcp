@@ -832,7 +832,23 @@ class GraphNodes:
                 break
 
             logger.info("[Run] %s 실행 시작 (args=%s)", call.tool, call.args)
-            out = await self.mcp.call_tool(call.tool, call.args)
+            try:
+                out = await self._await_with_interactive_control(
+                    state, self.mcp.call_tool(call.tool, call.args)
+                )
+            except UserInterrupt as interrupt:
+                if interrupt.action == "skip":
+                    self._append_user_skip_history(
+                        results,
+                        current_skill_id,
+                        "사용자가 도구 실행 중 남은 단계를 건너뜀",
+                    )
+                    logger.info("[Run] 사용자 스킵 요청으로 도구 실행을 중단합니다.")
+                    break
+                execution_halted = True
+                halt_reason = "사용자가 실행을 중지했습니다."
+                logger.info("[Run] 사용자 중지 요청으로 도구 실행을 즉시 중단합니다.")
+                break
             decoded = self._decode_tool_output(out)
             results.append({
                 "skill": current_skill_id,
