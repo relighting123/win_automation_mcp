@@ -47,7 +47,10 @@ _GLOW_MARGIN = 16
 _GLOW_RADIUS = 18
 _BORDER_PX = 2
 
-_FONT = ("Roboto", "Segoe UI", "Helvetica Neue", "Arial", 9)
+# Tk 폰트 튜플은 (family, size[, style]) 형식이어야 합니다.
+# 여러 패밀리를 나열하면 두 번째 값이 크기(정수)로 해석되어 오류가 납니다.
+_FONT = ("Segoe UI", 9)
+_ICON_FONT = ("Segoe UI Symbol", 10)
 
 _GWL_EXSTYLE = -20
 _WS_EX_NOACTIVATE = 0x08000000
@@ -297,7 +300,7 @@ class _ChromeIconButton(tk.Canvas):
             h // 2,
             text=self._icon,
             fill=(self._accent or _TEXT),
-            font=("Segoe UI Symbol", 10),
+            font=_ICON_FONT,
         )
 
     def create_round_rect(
