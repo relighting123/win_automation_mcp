@@ -19,12 +19,16 @@ class AutomationRunControlTest(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         end_run_control()
 
-    def test_begin_run_control_only_for_semi_manual(self) -> None:
-        self.assertIsNone(begin_run_control("auto"))
-        control = begin_run_control("semi")
-        self.assertIsNotNone(control)
-        self.assertEqual(control.mode, "semi")
-        end_run_control()
+    def test_begin_run_control_for_all_automation_modes(self) -> None:
+        for mode in ("auto", "semi", "manual"):
+            with self.subTest(mode=mode):
+                control = begin_run_control(mode)
+                self.assertIsNotNone(control)
+                self.assertEqual(control.mode, mode)
+                end_run_control()
+
+    def test_begin_run_control_rejects_unknown_mode(self) -> None:
+        self.assertIsNone(begin_run_control("invalid"))
 
     def test_stop_and_skip_flags(self) -> None:
         control = AutomationRunControl()

@@ -43,7 +43,7 @@ class GraphNodes:
         self._mcp_tools_cache: Optional[List[Dict[str, Any]]] = None
 
     def _interactive_modes(self) -> set[str]:
-        return {"semi", "manual"}
+        return {"auto", "semi", "manual"}
 
     def _append_user_skip_history(
         self,
@@ -72,7 +72,7 @@ class GraphNodes:
         step_index: int = 0,
         step_total: int = 0,
     ) -> Optional[Dict[str, Any]]:
-        """semi/manual 실행 중 사용자 중지·스킵·일시정지를 처리합니다."""
+        """자동화 실행 중 사용자 중지·스킵·일시정지를 처리합니다."""
         if state.mode not in self._interactive_modes():
             return None
 
@@ -453,10 +453,13 @@ class GraphNodes:
         structured_llm = self.planner_llm.with_structured_output(SkillPlanModel)
 
         try:
-            plan = await structured_llm.ainvoke([
-                ("system", PLANNER_SYSTEM_PROMPT),
-                ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
-            ])
+            plan = await self._await_with_interactive_control(
+                state,
+                structured_llm.ainvoke([
+                    ("system", PLANNER_SYSTEM_PROMPT),
+                    ("user", f"질의: {state.query}\n\n사용 가능한 스킬 목록:\n{skills_info}")
+                ]),
+            )
 
             result_ids = [sid for sid in getattr(plan, "skill_ids", []) if sid in runnable_ids]
             logger.info(f"AI 계획 결과: {result_ids}")
@@ -470,12 +473,40 @@ class GraphNodes:
                     ),
                 }
             return {"skill_ids": result_ids}
+        except UserInterrupt as interrupt:
+            if interrupt.action == "skip":
+                return {
+                    "skill_ids": [],
+                    "execution_halted": True,
+                    "halt_reason": "사용자가 계획 단계를 건너뛰었습니다.",
+                }
+            return {
+                "skill_ids": [],
+                "execution_halted": True,
+                "halt_reason": "사용자가 실행을 중지했습니다.",
+            }
         except Exception as e:
             logger.error(f"계획 수립 중 오류 발생: {e}. 기본 매핑을 시도합니다.")
-            raw_res = await self.planner_llm.ainvoke(
-                f"질의: {state.query}\n목록: {runnable_ids}\n"
-                "위 목록에 있는 스킬 ID만 콤마로 구분해 답하세요. 질의 문장 자체는 답하지 마세요."
-            )
+            try:
+                raw_res = await self._await_with_interactive_control(
+                    state,
+                    self.planner_llm.ainvoke(
+                        f"질의: {state.query}\n목록: {runnable_ids}\n"
+                        "위 목록에 있는 스킬 ID만 콤마로 구분해 답하세요. 질의 문장 자체는 답하지 마세요."
+                    ),
+                )
+            except UserInterrupt as interrupt:
+                if interrupt.action == "skip":
+                    return {
+                        "skill_ids": [],
+                        "execution_halted": True,
+                        "halt_reason": "사용자가 계획 단계를 건너뛰었습니다.",
+                    }
+                return {
+                    "skill_ids": [],
+                    "execution_halted": True,
+                    "halt_reason": "사용자가 실행을 중지했습니다.",
+                }
             potential_ids = [s.strip() for s in raw_res.content.split(",") if s.strip()]
             mapped_ids = []
             for pid in potential_ids:
@@ -494,6 +525,18 @@ class GraphNodes:
 
     async def plan(self, state: AgentState):
         """실행할 skill_ids를 결정합니다."""
+        gate = await self._handle_interactive_gate(state, phase="plan")
+        if gate:
+            return {
+                **gate,
+                "skill_ids": [],
+                "execution_halted": gate.get("execution_halted", True),
+                "halt_reason": gate.get(
+                    "halt_reason",
+                    "사용자가 실행을 중지했습니다." if gate.get("next_action") == "abort" else "",
+                ),
+            }
+
         skills_config = self._get_skills_config()
         valid_ids = list(skills_config.keys())
 

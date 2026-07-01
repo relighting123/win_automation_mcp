@@ -179,6 +179,29 @@ class AnalyzeGraphInteractiveControlTest(unittest.IsolatedAsyncioTestCase):
         result = await self.nodes.check_situation(state)
         self.assertEqual(result["next_action"], "skip")
 
+    async def test_plan_stops_when_user_requests_stop(self) -> None:
+        state = AgentState(query="demo", skill_ids=[], mode="auto")
+        self.control.request_stop()
+        result = await self.nodes.plan(state)
+        self.assertTrue(result["execution_halted"])
+        self.assertEqual(result["skill_ids"], [])
+        self.assertIn("중지", result["halt_reason"])
+
+    async def test_auto_mode_run_honors_pause_gate(self) -> None:
+        control = begin_run_control("auto")
+        try:
+            state = AgentState(
+                query="demo",
+                skill_ids=["demo_skill"],
+                mode="auto",
+                enriched_plan=[ToolCall(tool="wait", args={"seconds": 0.01})],
+            )
+            control.request_stop()
+            result = await self.nodes.run(state)
+            self.assertTrue(result["execution_halted"])
+        finally:
+            end_run_control()
+
 
 if __name__ == "__main__":
     unittest.main()
