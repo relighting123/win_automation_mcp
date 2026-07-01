@@ -25,7 +25,9 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.automation_control_overlay_ui import (
+    _FONT,
     _GLOW_MARGIN,
+    _ICON_FONT,
     AutomationControlOverlay,
     _get_target_rect,
     _lerp_color,
@@ -101,6 +103,15 @@ class AutomationControlOverlayTest(unittest.TestCase):
         with patch("core.app_session.AppSession") as app_session:
             app_session.get_instance.return_value = session
             self.assertIsNone(_get_target_rect())
+
+    def test_font_tuples_are_valid_tk_specs(self) -> None:
+        """Tk 폰트 튜플은 (family:str, size:int[, style:str]) 형식이어야 한다."""
+        for spec in (_FONT, _ICON_FONT):
+            self.assertGreaterEqual(len(spec), 2)
+            self.assertIsInstance(spec[0], str)
+            self.assertIsInstance(spec[1], int)
+            for style in spec[2:]:
+                self.assertIsInstance(style, str)
 
     def test_border_geom_wraps_target_with_glow_margin(self) -> None:
         bx, by, bw, bh = AutomationControlOverlay._border_geom((100, 200, 800, 600))
