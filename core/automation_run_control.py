@@ -1,4 +1,4 @@
-"""semi/manual 자동화 실행 중 사용자 개입(일시정지/중지/스킵) 제어."""
+"""자동화 실행 중 사용자 개입(일시정지/중지/스킵) 및 대상 앱 오버레이 제어."""
 
 from __future__ import annotations
 
@@ -188,13 +188,14 @@ def drain_overlay_shutdown(*, timeout: float = 5.0, interval: float = 0.02) -> N
 def begin_run_control(mode: str) -> Optional[AutomationRunControl]:
     global _active_control
     normalized = (mode or "").strip().lower()
-    if normalized not in {"semi", "manual"}:
+    if normalized not in {"auto", "semi", "manual"}:
         return None
 
     with _active_lock:
         end_run_control()
         control = AutomationRunControl()
         control.mode = normalized
+        control.set_context(mode=normalized, phase="ready")
         control.start_overlay()
         _active_control = control
         logger.info("사용자 개입 컨트롤 시작 (mode=%s)", normalized)

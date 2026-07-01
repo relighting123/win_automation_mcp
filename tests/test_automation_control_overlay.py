@@ -25,6 +25,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.automation_control_overlay_ui import (
+    _CHROME_BANNER_TEXT,
     _FONT,
     _GLOW_MARGIN,
     _ICON_FONT,
@@ -103,6 +104,10 @@ class AutomationControlOverlayTest(unittest.TestCase):
         with patch("core.app_session.AppSession") as app_session:
             app_session.get_instance.return_value = session
             self.assertIsNone(_get_target_rect())
+
+    def test_chrome_banner_text_matches_infobar_message(self) -> None:
+        self.assertIn("자동화", _CHROME_BANNER_TEXT)
+        self.assertIn("제어", _CHROME_BANNER_TEXT)
 
     def test_font_tuples_are_valid_tk_specs(self) -> None:
         """Tk 폰트 튜플은 (family:str, size:int[, style:str]) 형식이어야 한다."""

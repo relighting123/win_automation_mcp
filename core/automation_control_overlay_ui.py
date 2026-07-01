@@ -19,7 +19,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Design tokens (Claude Desktop / Chrome inspired, dark + rounded) ─────────
+# Chrome "자동화 소프트웨어가 제어 중" 인포바 느낌의 배너 문구
+_CHROME_BANNER_TEXT = "자동화 소프트웨어가 제어 중"
+_CHROME_INFO_BG = "#e8f0fe"
+# ── Design tokens (Chrome automated-test infobar + dark pill controls) ───────
 _BG = "#1f2023"
 _SURFACE = "#2a2c31"
 _SURFACE_HOVER = "#3a3d44"
@@ -36,7 +39,7 @@ _GLOW_OUTER = "#0a1730"
 # transparentcolor 키 — 이 색 픽셀은 완전히 투명(클릭 통과)해집니다.
 _TRANSPARENT_KEY = "#010203"
 
-_OVERLAY_HEIGHT = 38
+_OVERLAY_HEIGHT = 44
 _OVERLAY_MAX_WIDTH = 480
 _OVERLAY_MIN_WIDTH = 300
 _OVERLAY_TOP_INSET = 8
@@ -336,7 +339,7 @@ class AutomationControlOverlay:
         self._hud_canvas: tk.Canvas | None = None
         self._hud_content: tk.Frame | None = None
         self._hud_window_id: int | None = None
-        self._status_var: tk.StringVar | None = None
+        self._detail_var: tk.StringVar | None = None
         self._pause_btn: _ChromeIconButton | None = None
         self._commands: queue.Queue[str] = queue.Queue()
         self._closing = False
@@ -435,17 +438,32 @@ class AutomationControlOverlay:
         content = tk.Frame(canvas, bg=_SURFACE)
         self._hud_content = content
 
-        self._status_var = tk.StringVar(value="자동화 준비중")
+        self._detail_var = tk.StringVar(value="준비 중")
+
+        banner = tk.Frame(content, bg=_CHROME_INFO_BG)
+        banner.pack(side="top", fill="x", padx=1, pady=(1, 0))
         tk.Label(
-            content,
-            textvariable=self._status_var,
+            banner,
+            text=_CHROME_BANNER_TEXT,
+            bg=_CHROME_INFO_BG,
+            fg=_CHROME_INFO_FG,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(side="left", fill="x", expand=True, padx=(10, 6), pady=2)
+
+        body = tk.Frame(content, bg=_SURFACE)
+        body.pack(side="top", fill="both", expand=True)
+
+        tk.Label(
+            body,
+            textvariable=self._detail_var,
             bg=_SURFACE,
-            fg=_TEXT,
+            fg=_TEXT_DIM,
             font=_FONT,
             anchor="w",
         ).pack(side="left", fill="x", expand=True, padx=(12, 8), pady=2)
 
-        btn_row = tk.Frame(content, bg=_SURFACE)
+        btn_row = tk.Frame(body, bg=_SURFACE)
         btn_row.pack(side="right", padx=(0, 8))
 
         self._pause_btn = _ChromeIconButton(
@@ -672,7 +690,7 @@ class AutomationControlOverlay:
         except tk.TclError:
             pass
         self._root = None
-        self._status_var = None
+        self._detail_var = None
         self._pause_btn = None
         self._hud_canvas = None
         self._hud_content = None
@@ -724,7 +742,7 @@ class AutomationControlOverlay:
         self._refresh_labels()
 
     def _refresh_labels(self) -> None:
-        if self._status_var is None or self._root is None:
+        if self._detail_var is None or self._root is None:
             return
         snap = self._control.snapshot()
         skill = snap.get("skill_id") or "-"
@@ -734,9 +752,9 @@ class AutomationControlOverlay:
         mode = snap.get("mode") or ""
 
         progress = f"{step_index}/{step_total}" if step_total > 0 else "-"
-        paused = "일시정지" if snap.get("paused") else "실행중"
+        paused = "일시정지" if snap.get("paused") else "실행 중"
         text = f"{mode} · {skill} · {phase} · {progress} · {paused}"
-        self._status_var.set(text[:72])
+        self._detail_var.set(text[:72])
 
         if self._pause_btn is not None:
             self._pause_btn.configure_icon("▶" if snap.get("paused") else "⏸")
