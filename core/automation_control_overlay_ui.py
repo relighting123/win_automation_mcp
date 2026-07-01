@@ -1,8 +1,8 @@
 """Windows 자동화 제어 오버레이 — 대상 앱을 감싸는 둥근 글로우 테두리 + 제어 HUD.
 
-크롬의 "자동화 소프트웨어가 제어 중" 배너나 Claude Desktop 제어 오버레이처럼,
 대상 프로그램(PID) 윈도우 주변에 부드러운 음영(글로우) 테두리를 그리고,
-상단에는 둥근 알약(pill) 형태의 일시정지/스킵/중지 컨트롤을 띄웁니다.
+상단에는 영상 플레이어 스타일의 어두운 알약(pill) HUD를 띄웁니다.
+아이콘(원형 테두리 + 삼각형/기호)과 한글 라벨이 세로로 배치됩니다.
 """
 
 from __future__ import annotations
@@ -19,41 +19,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Chrome "자동화 소프트웨어가 제어 중" 인포바 느낌의 배너 문구
-_CHROME_BANNER_TEXT = "자동화 소프트웨어가 제어 중"
-_CHROME_INFO_BG = "#e8f0fe"
-# ── Design tokens (Chrome automated-test infobar + dark pill controls) ───────
-_BG = "#1f2023"
-_SURFACE = "#2a2c31"
-_SURFACE_HOVER = "#3a3d44"
-_BORDER = "#42454d"
-_TEXT = "#ececf1"
-_TEXT_DIM = "#9aa0a6"
-_ACCENT = "#8ab4f8"
-_ACCENT_STRONG = "#b3ccff"
+# ── Design tokens (video-player style dark pill HUD) ─────────────────────────
+_PILL_BG = "#1a1a1a"
+_PILL_HOVER = "#2a2a2a"
+_PILL_BORDER = "#333333"
+_TEXT = "#d1d1d1"
+_TEXT_HOVER = "#f0f0f0"
 _STOP = "#f28b82"
-_SHADOW = "#15161a"
+_SHADOW = "#0a0a0a"
 # 대상 윈도우를 감싸는 글로우의 안쪽(밝음)/바깥쪽(어두움) 색
 _GLOW_INNER = "#9fc1ff"
 _GLOW_OUTER = "#0a1730"
+_ACCENT_STRONG = "#b3ccff"
 # transparentcolor 키 — 이 색 픽셀은 완전히 투명(클릭 통과)해집니다.
 _TRANSPARENT_KEY = "#010203"
 
-_OVERLAY_HEIGHT = 44
-_OVERLAY_MAX_WIDTH = 480
-_OVERLAY_MIN_WIDTH = 300
-_OVERLAY_TOP_INSET = 8
-_HUD_RADIUS = 18
+_OVERLAY_HEIGHT = 72
+_PILL_H_PAD = 18
+_PILL_V_PAD = 10
+_BTN_WIDTH = 62
+_BTN_GAP = 4
+_HUD_RADIUS = 28
 _SHADOW_PAD = 8
+_OVERLAY_TOP_INSET = 12
 
 _GLOW_MARGIN = 16
 _GLOW_RADIUS = 18
 _BORDER_PX = 2
 
 # Tk 폰트 튜플은 (family, size[, style]) 형식이어야 합니다.
-# 여러 패밀리를 나열하면 두 번째 값이 크기(정수)로 해석되어 오류가 납니다.
-_FONT = ("Segoe UI", 9)
-_ICON_FONT = ("Segoe UI Symbol", 10)
+_LABEL_FONT = ("Segoe UI", 8)
 
 _GWL_EXSTYLE = -20
 _WS_EX_NOACTIVATE = 0x08000000
@@ -243,28 +238,30 @@ def _apply_no_activate(hwnd: int) -> None:
         logger.debug("WS_EX_NOACTIVATE 설정 실패: %s", exc)
 
 
-class _ChromeIconButton(tk.Canvas):
-    """둥근 아이콘 버튼 (호버 시 배경 강조)."""
+class _PillNavButton(tk.Canvas):
+    """영상 HUD 스타일 — 원형 아이콘 + 하단 한글 라벨."""
 
     def __init__(
         self,
         parent: tk.Misc,
         *,
+        label: str,
         icon: str,
         command: Callable[[], None],
-        width: int = 30,
-        height: int = 26,
+        width: int = _BTN_WIDTH,
+        height: int = 52,
         accent: Optional[str] = None,
     ) -> None:
         super().__init__(
             parent,
             width=width,
             height=height,
-            bg=_SURFACE,
+            bg=_PILL_BG,
             highlightthickness=0,
             bd=0,
             cursor="hand2",
         )
+        self._label = label
         self._icon = icon
         self._command = command
         self._accent = accent
@@ -273,6 +270,10 @@ class _ChromeIconButton(tk.Canvas):
         self.bind("<Button-1>", self._on_click)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self._redraw()
+
+    def configure_label(self, label: str) -> None:
+        self._label = label
         self._redraw()
 
     def configure_icon(self, icon: str) -> None:
@@ -291,19 +292,51 @@ class _ChromeIconButton(tk.Canvas):
         self._hover = False
         self._redraw()
 
+    def _icon_color(self) -> str:
+        if self._accent and self._hover:
+            return self._accent
+        return _TEXT_HOVER if self._hover else _TEXT
+
+    def _draw_icon(self, cx: int, cy: int, color: str) -> None:
+        r = 11
+        self.create_oval(cx - r, cy - r, cx + r, cy + r, outline=color, width=1.5)
+        icon = self._icon
+        if icon == "left":
+            self.create_polygon(
+                cx - 3, cy, cx + 4, cy - 5, cx + 4, cy + 5, fill=color, outline=""
+            )
+        elif icon == "right":
+            self.create_polygon(
+                cx + 3, cy, cx - 4, cy - 5, cx - 4, cy + 5, fill=color, outline=""
+            )
+        elif icon == "pause":
+            self.create_rectangle(cx - 5, cy - 5, cx - 1, cy + 5, fill=color, outline="")
+            self.create_rectangle(cx + 1, cy - 5, cx + 5, cy + 5, fill=color, outline="")
+        elif icon == "play":
+            self.create_polygon(
+                cx + 4, cy, cx - 5, cy - 6, cx - 5, cy + 6, fill=color, outline=""
+            )
+        elif icon == "stop":
+            self.create_rectangle(cx - 4, cy - 4, cx + 4, cy + 4, fill=color, outline="")
+
     def _redraw(self) -> None:
         self.delete("all")
         w = int(self.cget("width"))
         h = int(self.cget("height"))
-        pad = 2
-        fill = _SURFACE_HOVER if self._hover else _SURFACE
-        self.create_round_rect(pad, pad, w - pad, h - pad, radius=8, fill=fill, outline="")
+        pad_x = 4
+        pad_y = 2
+        if self._hover:
+            self.create_round_rect(
+                pad_x, pad_y, w - pad_x, h - pad_y, radius=10, fill=_PILL_HOVER, outline=""
+            )
+        color = self._icon_color()
+        self._draw_icon(w // 2, 18, color)
         self.create_text(
             w // 2,
-            h // 2,
-            text=self._icon,
-            fill=(self._accent or _TEXT),
-            font=_ICON_FONT,
+            h - 10,
+            text=self._label,
+            fill=color,
+            font=_LABEL_FONT,
         )
 
     def create_round_rect(
@@ -339,8 +372,7 @@ class AutomationControlOverlay:
         self._hud_canvas: tk.Canvas | None = None
         self._hud_content: tk.Frame | None = None
         self._hud_window_id: int | None = None
-        self._detail_var: tk.StringVar | None = None
-        self._pause_btn: _ChromeIconButton | None = None
+        self._pause_btn: _PillNavButton | None = None
         self._commands: queue.Queue[str] = queue.Queue()
         self._closing = False
         self._shutdown_done = threading.Event()
@@ -406,7 +438,7 @@ class AutomationControlOverlay:
             except tk.TclError:
                 pass
             try:
-                root.attributes("-alpha", 0.97)
+                root.attributes("-alpha", 0.88)
             except tk.TclError:
                 pass
 
@@ -430,59 +462,42 @@ class AutomationControlOverlay:
             self._shutdown_done.set()
 
     def _build_hud(self, root: tk.Tk) -> None:
-        """둥근 알약(pill) 형태의 제어 HUD를 구성합니다."""
+        """영상 플레이어 스타일 둥근 알약(pill) 제어 HUD."""
         canvas = tk.Canvas(root, bg=_TRANSPARENT_KEY, highlightthickness=0, bd=0)
         canvas.pack(fill="both", expand=True)
         self._hud_canvas = canvas
 
-        content = tk.Frame(canvas, bg=_SURFACE)
+        content = tk.Frame(canvas, bg=_PILL_BG)
         self._hud_content = content
 
-        self._detail_var = tk.StringVar(value="준비 중")
+        btn_row = tk.Frame(content, bg=_PILL_BG)
+        btn_row.pack(side="top", padx=_PILL_H_PAD, pady=_PILL_V_PAD)
 
-        banner = tk.Frame(content, bg=_CHROME_INFO_BG)
-        banner.pack(side="top", fill="x", padx=1, pady=(1, 0))
-        tk.Label(
-            banner,
-            text=_CHROME_BANNER_TEXT,
-            bg=_CHROME_INFO_BG,
-            fg=_CHROME_INFO_FG,
-            font=("Segoe UI", 9, "bold"),
-            anchor="w",
-        ).pack(side="left", fill="x", expand=True, padx=(10, 6), pady=2)
-
-        body = tk.Frame(content, bg=_SURFACE)
-        body.pack(side="top", fill="both", expand=True)
-
-        tk.Label(
-            body,
-            textvariable=self._detail_var,
-            bg=_SURFACE,
-            fg=_TEXT_DIM,
-            font=_FONT,
-            anchor="w",
-        ).pack(side="left", fill="x", expand=True, padx=(12, 8), pady=2)
-
-        btn_row = tk.Frame(body, bg=_SURFACE)
-        btn_row.pack(side="right", padx=(0, 8))
-
-        self._pause_btn = _ChromeIconButton(
+        self._pause_btn = _PillNavButton(
             btn_row,
-            icon="⏸",
+            label="일시정지",
+            icon="pause",
             command=self._on_toggle_pause,
         )
-        self._pause_btn.pack(side="left", padx=2)
-        _ChromeIconButton(
+        self._pause_btn.pack(side="left", padx=_BTN_GAP)
+        _PillNavButton(
             btn_row,
-            icon="⏭",
+            label="다음",
+            icon="right",
             command=self._control.request_skip_skill,
-        ).pack(side="left", padx=2)
-        _ChromeIconButton(
+        ).pack(side="left", padx=_BTN_GAP)
+        _PillNavButton(
             btn_row,
-            icon="■",
+            label="중지",
+            icon="stop",
             command=self._control.request_stop,
             accent=_STOP,
-        ).pack(side="left", padx=2)
+        ).pack(side="left", padx=_BTN_GAP)
+
+    @staticmethod
+    def _pill_width() -> int:
+        """버튼 3개 + 패딩 기준 알약 너비."""
+        return _PILL_H_PAD * 2 + _BTN_WIDTH * 3 + _BTN_GAP * 4
 
     def _draw_hud_pill(self, width: int, height: int) -> None:
         """HUD 배경(그림자 + 둥근 알약)을 그리고 컨텐츠 프레임을 배치합니다."""
@@ -491,7 +506,6 @@ class AutomationControlOverlay:
             return
         try:
             canvas.delete("hud_bg")
-            # 부드러운 그림자 (약간 오프셋된 어두운 둥근 사각형)
             canvas.create_polygon(
                 _round_rect_points(4, 5, width + 4, height + 4, _HUD_RADIUS),
                 smooth=True,
@@ -499,12 +513,11 @@ class AutomationControlOverlay:
                 outline="",
                 tags="hud_bg",
             )
-            # 알약 본체
             canvas.create_polygon(
                 _round_rect_points(2, 1, width + 1, height, _HUD_RADIUS),
                 smooth=True,
-                fill=_SURFACE,
-                outline=_BORDER,
+                fill=_PILL_BG,
+                outline=_PILL_BORDER,
                 width=1,
                 tags="hud_bg",
             )
@@ -512,14 +525,14 @@ class AutomationControlOverlay:
 
             content = self._hud_content
             if content is not None:
-                cw = max(40, width - 8)
-                ch = max(20, height - 6)
+                cw = max(40, width - 4)
+                ch = max(20, height - 4)
                 if self._hud_window_id is None:
                     self._hud_window_id = canvas.create_window(
-                        4, 3, anchor="nw", window=content, width=cw, height=ch
+                        2, 2, anchor="nw", window=content, width=cw, height=ch
                     )
                 else:
-                    canvas.coords(self._hud_window_id, 4, 3)
+                    canvas.coords(self._hud_window_id, 2, 2)
                     canvas.itemconfigure(self._hud_window_id, width=cw, height=ch)
         except Exception as exc:
             logger.debug("HUD 알약 그리기 실패: %s", exc)
@@ -599,7 +612,7 @@ class AutomationControlOverlay:
     def _calc_overlay_pos(rect: Tuple[int, int, int, int]) -> Tuple[int, int, int]:
         """(x, y, width)를 반환합니다."""
         t_left, t_top, t_w, _ = rect
-        ov_w = max(_OVERLAY_MIN_WIDTH, min(t_w - 24, _OVERLAY_MAX_WIDTH))
+        ov_w = AutomationControlOverlay._pill_width()
         ov_x = t_left + (t_w - ov_w) // 2
         ov_y = t_top + _OVERLAY_TOP_INSET
         return (ov_x, ov_y, ov_w)
@@ -690,7 +703,6 @@ class AutomationControlOverlay:
         except tk.TclError:
             pass
         self._root = None
-        self._detail_var = None
         self._pause_btn = None
         self._hud_canvas = None
         self._hud_content = None
@@ -742,19 +754,13 @@ class AutomationControlOverlay:
         self._refresh_labels()
 
     def _refresh_labels(self) -> None:
-        if self._detail_var is None or self._root is None:
+        if self._pause_btn is None or self._root is None:
             return
         snap = self._control.snapshot()
-        skill = snap.get("skill_id") or "-"
-        phase = snap.get("phase") or "ready"
-        step_index = int(snap.get("step_index") or 0)
-        step_total = int(snap.get("step_total") or 0)
-        mode = snap.get("mode") or ""
-
-        progress = f"{step_index}/{step_total}" if step_total > 0 else "-"
-        paused = "일시정지" if snap.get("paused") else "실행 중"
-        text = f"{mode} · {skill} · {phase} · {progress} · {paused}"
-        self._detail_var.set(text[:72])
-
-        if self._pause_btn is not None:
-            self._pause_btn.configure_icon("▶" if snap.get("paused") else "⏸")
+        paused = bool(snap.get("paused"))
+        if paused:
+            self._pause_btn.configure_icon("play")
+            self._pause_btn.configure_label("재개")
+        else:
+            self._pause_btn.configure_icon("pause")
+            self._pause_btn.configure_label("일시정지")
