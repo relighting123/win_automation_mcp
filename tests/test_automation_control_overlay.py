@@ -25,10 +25,8 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.automation_control_overlay_ui import (
-    _CHROME_BANNER_TEXT,
-    _FONT,
     _GLOW_MARGIN,
-    _ICON_FONT,
+    _LABEL_FONT,
     AutomationControlOverlay,
     _get_target_rect,
     _lerp_color,
@@ -94,9 +92,9 @@ class AutomationControlOverlayTest(unittest.TestCase):
 
     def test_calc_overlay_pos_docks_to_target_top(self) -> None:
         ov_x, ov_y, ov_w = AutomationControlOverlay._calc_overlay_pos((100, 200, 800, 600))
-        self.assertEqual(ov_x, 260)
-        self.assertEqual(ov_y, 208)
-        self.assertEqual(ov_w, 480)
+        self.assertEqual(ov_w, AutomationControlOverlay._pill_width())
+        self.assertEqual(ov_x, 100 + (800 - ov_w) // 2)
+        self.assertEqual(ov_y, 212)
 
     def test_get_target_rect_returns_none_when_not_connected(self) -> None:
         session = MagicMock()
@@ -105,18 +103,14 @@ class AutomationControlOverlayTest(unittest.TestCase):
             app_session.get_instance.return_value = session
             self.assertIsNone(_get_target_rect())
 
-    def test_chrome_banner_text_matches_infobar_message(self) -> None:
-        self.assertIn("자동화", _CHROME_BANNER_TEXT)
-        self.assertIn("제어", _CHROME_BANNER_TEXT)
-
     def test_font_tuples_are_valid_tk_specs(self) -> None:
         """Tk 폰트 튜플은 (family:str, size:int[, style:str]) 형식이어야 한다."""
-        for spec in (_FONT, _ICON_FONT):
-            self.assertGreaterEqual(len(spec), 2)
-            self.assertIsInstance(spec[0], str)
-            self.assertIsInstance(spec[1], int)
-            for style in spec[2:]:
-                self.assertIsInstance(style, str)
+        spec = _LABEL_FONT
+        self.assertGreaterEqual(len(spec), 2)
+        self.assertIsInstance(spec[0], str)
+        self.assertIsInstance(spec[1], int)
+        for style in spec[2:]:
+            self.assertIsInstance(style, str)
 
     def test_border_geom_wraps_target_with_glow_margin(self) -> None:
         bx, by, bw, bh = AutomationControlOverlay._border_geom((100, 200, 800, 600))
