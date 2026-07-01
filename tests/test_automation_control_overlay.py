@@ -25,8 +25,11 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.automation_control_overlay_ui import (
+    _GLOW_MARGIN,
     AutomationControlOverlay,
     _get_target_rect,
+    _lerp_color,
+    _round_rect_points,
 )
 
 
@@ -98,6 +101,25 @@ class AutomationControlOverlayTest(unittest.TestCase):
         with patch("core.app_session.AppSession") as app_session:
             app_session.get_instance.return_value = session
             self.assertIsNone(_get_target_rect())
+
+    def test_border_geom_wraps_target_with_glow_margin(self) -> None:
+        bx, by, bw, bh = AutomationControlOverlay._border_geom((100, 200, 800, 600))
+        self.assertEqual((bx, by), (100 - _GLOW_MARGIN, 200 - _GLOW_MARGIN))
+        self.assertEqual((bw, bh), (800 + _GLOW_MARGIN * 2, 600 + _GLOW_MARGIN * 2))
+
+    def test_lerp_color_interpolates_endpoints_and_midpoint(self) -> None:
+        self.assertEqual(_lerp_color("#000000", "#ffffff", 0.0), "#000000")
+        self.assertEqual(_lerp_color("#000000", "#ffffff", 1.0), "#ffffff")
+        self.assertEqual(_lerp_color("#000000", "#ffffff", 0.5), "#808080")
+
+    def test_round_rect_points_returns_closed_polygon(self) -> None:
+        pts = _round_rect_points(0, 0, 100, 40, 10)
+        self.assertEqual(len(pts), 24)
+        # 모든 좌표가 사각형 경계 안에 있어야 함
+        xs = pts[0::2]
+        ys = pts[1::2]
+        self.assertTrue(all(0 <= x <= 100 for x in xs))
+        self.assertTrue(all(0 <= y <= 40 for y in ys))
 
     def test_sync_visibility_hides_without_target(self) -> None:
         control = MagicMock()
