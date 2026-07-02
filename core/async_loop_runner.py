@@ -40,15 +40,56 @@ class AsyncLoopRunner:
 
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         while not future.done():
-            pump_overlay()
             try:
+                pump_overlay()
                 future.result(timeout=0.02)
             except FutureTimeoutError:
+                continue
+            except KeyboardInterrupt:
+                if not self._on_keyboard_interrupt(future):
+                    raise
                 continue
         try:
             return future.result()
         finally:
             drain_overlay_shutdown()
+
+    def _on_keyboard_interrupt(self, future: Any) -> bool:
+        """실행 중 Ctrl+C 처리.
+
+        대화형(semi/manual) 자동화가 진행 중이면 종료 대신 일시정지/재개/중지로
+        해석합니다. 그런 세션이 없으면 기존처럼 실행을 취소하고 종료를 전파합니다.
+
+        Returns: True면 루프를 계속 유지, False면 KeyboardInterrupt를 다시 전파.
+        """
+        from core.automation_run_control import get_active_control
+
+        control = get_active_control()
+        if control is None:
+            # 대화형 자동화가 아니면 코루틴을 취소하고 종료를 전파합니다.
+            self._loop.call_soon_threadsafe(future.cancel)
+            return False
+
+        # 이미 중지 요청 상태에서 또 Ctrl+C를 눌렀다면 강제 종료 탈출구 제공.
+        if control.peek_stop():
+            self._loop.call_soon_threadsafe(future.cancel)
+            return False
+
+        action = control.on_ctrl_c()
+        message = {
+            "pause": (
+                "\n  ⏸  일시정지됨 · 재개하려면 Ctrl+C, "
+                "중지하려면 Ctrl+C를 빠르게 두 번 누르세요."
+            ),
+            "resume": "\n  ▶  재개됨.",
+            "stop": "\n  ■  중지 요청됨. 안전하게 마무리하는 중…",
+        }.get(action, "")
+        if message:
+            try:
+                print(message, flush=True)
+            except Exception:
+                pass
+        return True
 
     def shutdown(self, timeout: float = 3.0) -> None:
         if self._loop.is_closed():

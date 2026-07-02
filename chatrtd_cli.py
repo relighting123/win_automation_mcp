@@ -448,7 +448,7 @@ class ChatRTDCLI:
         foot.append("/tools", style=_C["text"])
         foot.append(" tools     ", style=_C["muted"])
         foot.append("ctrl+c", style=_C["text"])
-        foot.append(" exit", style=_C["muted"])
+        foot.append(" pause/exit", style=_C["muted"])
         return foot
 
     def print_header(self) -> None:
@@ -891,6 +891,11 @@ class ChatRTDCLI:
         c.print(f"  [muted]Analyze[/muted]  [border]{'─' * 48}[/border]")
         c.print(f"  [muted]mode :[/muted]  [secondary]{mode}[/secondary]")
         c.print(f"  [muted]query:[/muted]  {query}")
+        if mode in {"semi", "manual"}:
+            c.print(
+                f"  [muted]hint :[/muted]  [muted]Ctrl+C 일시정지/재개 · "
+                f"Ctrl+C 빠르게 두 번 중지[/muted]"
+            )
         c.print()
 
         try:
@@ -1110,10 +1115,14 @@ class ChatRTDCLI:
             if user_input == "/":
                 self._print_slash_commands()
                 continue
-            if user_input.startswith("/"):
-                self._handle_command(user_input)
-            else:
-                self.chat(user_input)
+            try:
+                if user_input.startswith("/"):
+                    self._handle_command(user_input)
+                else:
+                    self.chat(user_input)
+            except KeyboardInterrupt:
+                # 명령 실행 중 Ctrl+C는 프로그램을 종료하지 않고 프롬프트로 복귀.
+                self.console.print(f"\n  [muted]중단됨.[/muted]\n")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

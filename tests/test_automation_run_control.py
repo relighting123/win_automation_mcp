@@ -40,6 +40,23 @@ class AutomationRunControlTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(control.consume_skip_skill())
         self.assertFalse(control.consume_skip_skill())
 
+    def test_on_ctrl_c_toggles_pause_and_resume(self) -> None:
+        control = AutomationRunControl()
+        self.assertEqual(control.on_ctrl_c(), "pause")
+        self.assertTrue(control.is_paused())
+        # 시간 창을 벗어난 뒤의 두 번째 입력은 재개로 처리되어야 함
+        control._last_ctrl_c -= 10.0
+        self.assertEqual(control.on_ctrl_c(), "resume")
+        self.assertFalse(control.is_paused())
+
+    def test_on_ctrl_c_double_press_requests_stop(self) -> None:
+        control = AutomationRunControl()
+        self.assertEqual(control.on_ctrl_c(), "pause")
+        # 곧바로(시간 창 안에서) 다시 누르면 중지
+        self.assertEqual(control.on_ctrl_c(), "stop")
+        self.assertTrue(control.peek_stop())
+        self.assertFalse(control.is_paused())
+
     async def test_wait_if_paused_unblocks_on_resume(self) -> None:
         import asyncio
 
