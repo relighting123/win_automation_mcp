@@ -75,6 +75,13 @@ file_access:
   allowed_paths:
     - "D:\\개발\\폴더"
     # - "C:\\Rules"
+  # 워크스페이스(cwd) 밖의 파일은 기본적으로 차단됩니다. 위 allowed_paths 에
+  # 예외 경로를 등록하면 해당 디렉터리 하위 파일 접근이 허용됩니다.
+  # 설정 파일을 수정하지 않고 임시로 예외를 추가하려면 환경변수를 사용하세요:
+  #   Windows : set CHATRTD_ALLOWED_PATHS=C:\Rules;D:\Data
+  #   PowerShell: $env:CHATRTD_ALLOWED_PATHS="C:\Rules;D:\Data"
+  #   POSIX   : export CHATRTD_ALLOWED_PATHS=/srv/rules:/data
+  # CLI 에서는 `/files add <path>` 로 현재 세션에 예외 경로를 추가할 수 있습니다.
 
 api_access:
   # HTTP API 호출 도구(http_request) 사용 여부

@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -8,7 +9,9 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.file_path_policy import (
+    ALLOWED_PATHS_ENV,
     get_allowed_file_roots,
+    get_file_access_settings,
     is_path_allowed,
     resolve_allowed_file,
 )
@@ -82,6 +85,40 @@ class FilePathPolicyTest(unittest.TestCase):
 
             self.assertIn(workspace.resolve(), roots)
             self.assertIn(extra.resolve(), roots)
+
+    def test_env_var_adds_exception_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve() / "project"
+            workspace.mkdir()
+            exception_dir = Path(tmp).resolve() / "rules"
+            exception_dir.mkdir()
+            target = exception_dir / "assign.rul"
+            target.write_text("rule", encoding="utf-8")
+
+            # 설정에는 예외 경로가 없지만 환경변수로 지정하면 허용되어야 함
+            with patch(
+                "core.file_path_policy.load_app_config",
+                return_value={"file_access": {"allow_workspace": True, "allowed_paths": []}},
+            ):
+                with patch.dict(os.environ, {ALLOWED_PATHS_ENV: str(exception_dir)}):
+                    settings = get_file_access_settings()
+                    self.assertIn(str(exception_dir), settings["allowed_paths"])
+                    resolved = resolve_allowed_file(str(target), workspace=workspace)
+                    self.assertEqual(resolved, target.resolve())
+
+    def test_env_var_supports_multiple_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp).resolve() / "a"
+            second = Path(tmp).resolve() / "b"
+            joined = os.pathsep.join([str(first), str(second)])
+            with patch(
+                "core.file_path_policy.load_app_config",
+                return_value={"file_access": {"allow_workspace": True, "allowed_paths": []}},
+            ):
+                with patch.dict(os.environ, {ALLOWED_PATHS_ENV: joined}):
+                    settings = get_file_access_settings()
+            self.assertIn(str(first), settings["allowed_paths"])
+            self.assertIn(str(second), settings["allowed_paths"])
 
     def test_is_path_allowed_uses_relative_to_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

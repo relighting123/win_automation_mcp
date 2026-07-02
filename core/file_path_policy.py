@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 from core.llm_config import load_app_config
+
+# 설정 파일을 수정하지 않고도 예외(허용) 경로를 지정할 수 있는 환경변수.
+# os.pathsep(윈도우 ';', POSIX ':')로 여러 경로를 구분합니다.
+ALLOWED_PATHS_ENV = "CHATRTD_ALLOWED_PATHS"
+
+
+def _env_allowed_paths() -> List[str]:
+    """환경변수로 지정된 예외 허용 경로 목록을 반환합니다."""
+    raw = os.environ.get(ALLOWED_PATHS_ENV, "")
+    if not raw or not raw.strip():
+        return []
+    return [part.strip() for part in raw.split(os.pathsep) if part.strip()]
 
 
 def _normalize_root(path: Path) -> Path:
@@ -39,13 +52,16 @@ def get_file_access_settings(config_path: Optional[str] = None) -> dict:
             pass
 
     if not isinstance(file_access, dict):
-        return {"allow_workspace": True, "allowed_paths": []}
+        file_access = {}
 
     allow_workspace = file_access.get("allow_workspace", True)
     raw_paths = file_access.get("allowed_paths", [])
     allowed_paths = []
     if isinstance(raw_paths, list):
         allowed_paths = [str(p).strip() for p in raw_paths if str(p).strip()]
+
+    # 환경변수(CHATRTD_ALLOWED_PATHS)로 지정한 예외 경로를 병합합니다.
+    allowed_paths.extend(_env_allowed_paths())
 
     return {
         "allow_workspace": bool(allow_workspace),
