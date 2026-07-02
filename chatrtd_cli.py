@@ -377,7 +377,31 @@ class ChatRTDCLI:
         self.tools: list  = []
         self.messages: list = [{"role": "system", "content": SYSTEM_PROMPT}]
         self._automation_mcp = None
+        # 명령/채팅 실행 중인지 여부 (프롬프트 Ctrl+C 동작 분기에 사용).
+        self._busy = False
         self._init_llm_client()
+
+    def _has_active_work(self) -> bool:
+        """진행 중인 작업(자동화 실행 또는 명령/채팅 처리)이 있는지 여부."""
+        if getattr(self, "_busy", False):
+            return True
+        try:
+            from core.automation_run_control import get_active_control
+
+            return get_active_control() is not None
+        except Exception:
+            return False
+
+    def _stop_active_work(self) -> None:
+        """진행 중인 자동화가 있으면 중지를 요청합니다."""
+        try:
+            from core.automation_run_control import get_active_control
+
+            control = get_active_control()
+            if control is not None:
+                control.request_stop()
+        except Exception:
+            pass
 
     def _get_automation_mcp(self):
         """automation graph 실행용 MCP 클라이언트를 재사용합니다."""
@@ -1176,7 +1200,17 @@ class ChatRTDCLI:
         while True:
             try:
                 user_input = self._read_user_input()
-            except (KeyboardInterrupt, EOFError):
+            except EOFError:
+                # Ctrl+D는 항상 종료.
+                self.console.print(f"\n  [muted]bye.[/muted]\n")
+                break
+            except KeyboardInterrupt:
+                # 프롬프트에서 Ctrl+C: 진행 중인 작업이 있으면 그 작업을 중지하고,
+                # 아무 작업도 없으면(대기 상태) 프로그램을 종료합니다.
+                if self._has_active_work():
+                    self._stop_active_work()
+                    self.console.print(f"\n  [muted]진행 중인 작업을 중지했습니다.[/muted]\n")
+                    continue
                 self.console.print(f"\n  [muted]bye.[/muted]\n")
                 break
 
@@ -1185,6 +1219,7 @@ class ChatRTDCLI:
             if user_input == "/":
                 self._print_slash_commands()
                 continue
+            self._busy = True
             try:
                 if user_input.startswith("/"):
                     self._handle_command(user_input)
@@ -1193,6 +1228,8 @@ class ChatRTDCLI:
             except KeyboardInterrupt:
                 # 명령 실행 중 Ctrl+C는 프로그램을 종료하지 않고 프롬프트로 복귀.
                 self.console.print(f"\n  [muted]중단됨.[/muted]\n")
+            finally:
+                self._busy = False
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
