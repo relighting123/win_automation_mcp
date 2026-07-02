@@ -173,6 +173,9 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/schedule run",   "예약 작업 즉시 실행"),
     ("/config",         "현재 설정 확인"),
     ("/config set",     "설정 변경  (/config set mcp-url <url>)"),
+    ("/files",          "파일 접근 허용 경로 확인"),
+    ("/files add",      "예외 허용 경로 추가  (/files add <path>)"),
+    ("/files remove",   "예외 허용 경로 제거"),
 ]
 
 
@@ -448,7 +451,7 @@ class ChatRTDCLI:
         foot.append("/tools", style=_C["text"])
         foot.append(" tools     ", style=_C["muted"])
         foot.append("ctrl+c", style=_C["text"])
-        foot.append(" exit", style=_C["muted"])
+        foot.append(" pause/exit", style=_C["muted"])
         return foot
 
     def print_header(self) -> None:
@@ -810,6 +813,9 @@ class ChatRTDCLI:
             else:
                 self._cmd_config_show()
 
+        elif command == "/files":
+            self._cmd_files(parts[1:])
+
         else:
             self.console.print(
                 f"  [err]unknown command:[/err] {command}  [muted](try /help)[/muted]\n"
@@ -891,6 +897,11 @@ class ChatRTDCLI:
         c.print(f"  [muted]Analyze[/muted]  [border]{'─' * 48}[/border]")
         c.print(f"  [muted]mode :[/muted]  [secondary]{mode}[/secondary]")
         c.print(f"  [muted]query:[/muted]  {query}")
+        if mode in {"semi", "manual"}:
+            c.print(
+                f"  [muted]hint :[/muted]  [muted]Ctrl+C 일시정지/재개 · "
+                f"Ctrl+C 빠르게 두 번 중지[/muted]"
+            )
         c.print()
 
         try:
@@ -1062,6 +1073,70 @@ class ChatRTDCLI:
         else:
             self.console.print(f"  [err]✗[/err]  unknown key: {key}  [muted](supported: mcp-url)[/muted]\n")
 
+    # ── /files (파일 접근 허용 경로) ────────────────────────────────────────────
+
+    def _cmd_files(self, parts: list[str]) -> None:
+        """파일 접근 허용 경로 확인 및 예외 경로 추가/제거.
+
+        기본적으로 워크스페이스(cwd) 밖의 파일은 차단됩니다. 여기서 예외 경로를
+        추가하면 해당 디렉터리 하위 파일을 읽고 쓸 수 있습니다. 추가한 경로는
+        현재 세션에 즉시 반영되며(CHATRTD_ALLOWED_PATHS 환경변수), 영구 반영은
+        config/app_config.yaml 의 file_access.allowed_paths 에 등록하세요.
+        """
+        from core.file_path_policy import (
+            ALLOWED_PATHS_ENV,
+            _env_allowed_paths,
+            get_allowed_file_roots,
+        )
+
+        c = self.console
+        sub = parts[0].lower() if parts else ""
+
+        if sub in ("add", "remove"):
+            if len(parts) < 2:
+                c.print(f"  [err]usage:[/err] /files {sub} <path>\n")
+                return
+            raw = " ".join(parts[1:]).strip().strip('"').strip("'")
+            norm = str(Path(raw).expanduser())
+            current = _env_allowed_paths()
+            if sub == "add":
+                if norm not in current:
+                    current.append(norm)
+                os.environ[ALLOWED_PATHS_ENV] = os.pathsep.join(current)
+                c.print(f"  [ok]✓[/ok]  예외 경로 추가: [secondary]{norm}[/secondary]\n")
+            else:
+                current = [p for p in current if p != norm]
+                if current:
+                    os.environ[ALLOWED_PATHS_ENV] = os.pathsep.join(current)
+                else:
+                    os.environ.pop(ALLOWED_PATHS_ENV, None)
+                c.print(f"  [ok]✓[/ok]  예외 경로 제거: [secondary]{norm}[/secondary]\n")
+            return
+
+        # 목록 출력
+        roots = get_allowed_file_roots()
+        c.print()
+        c.print(f"  [muted]File access roots[/muted]  [border]{'─' * 38}[/border]")
+        if roots:
+            for root in roots:
+                c.print(f"  [tool]◆[/tool]  {root}")
+        else:
+            c.print(f"  [err]✗[/err]  [muted]허용 경로가 없어 파일 접근이 차단됩니다.[/muted]")
+
+        env_paths = _env_allowed_paths()
+        if env_paths:
+            c.print()
+            c.print(f"  [muted]session exceptions ({ALLOWED_PATHS_ENV}):[/muted]")
+            for path in env_paths:
+                c.print(f"  [muted]•[/muted]  {path}")
+
+        c.print()
+        c.print(
+            f"  [muted]add:[/muted] /files add <path>    "
+            f"[muted]remove:[/muted] /files remove <path>"
+        )
+        c.print()
+
     # ── REPL ──────────────────────────────────────────────────────────────────
 
     def _print_slash_commands(self, prefix: str = "/") -> None:
@@ -1110,10 +1185,14 @@ class ChatRTDCLI:
             if user_input == "/":
                 self._print_slash_commands()
                 continue
-            if user_input.startswith("/"):
-                self._handle_command(user_input)
-            else:
-                self.chat(user_input)
+            try:
+                if user_input.startswith("/"):
+                    self._handle_command(user_input)
+                else:
+                    self.chat(user_input)
+            except KeyboardInterrupt:
+                # 명령 실행 중 Ctrl+C는 프로그램을 종료하지 않고 프롬프트로 복귀.
+                self.console.print(f"\n  [muted]중단됨.[/muted]\n")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

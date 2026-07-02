@@ -6,7 +6,11 @@ import asyncio
 import logging
 import sys
 import threading
+import time
 from typing import Any, Dict, Optional
+
+# 빠르게 두 번 Ctrl+C를 누르면 일시정지가 아니라 중지로 처리하는 시간 창(초).
+_DOUBLE_CTRL_C_WINDOW = 1.0
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,7 @@ class AutomationRunControl:
         self._paused = False
         self._stop_requested = False
         self._skip_skill_requested = False
+        self._last_ctrl_c: Optional[float] = None
         self._overlay: Any = None
         self.mode = ""
         self.skill_id = ""
@@ -103,6 +108,29 @@ class AutomationRunControl:
             self._skip_skill_requested = True
             self._paused = False
         self._sync_overlay()
+
+    def on_ctrl_c(self) -> str:
+        """Ctrl+C 입력을 일시정지/재개/중지로 해석합니다.
+
+        - 실행 중 → 일시정지 ("pause")
+        - 일시정지 중 → 재개 ("resume")
+        - 직전 Ctrl+C 후 짧은 시간 안에 다시 누르면 → 중지 ("stop")
+        """
+        now = time.monotonic()
+        with self._lock:
+            prev = self._last_ctrl_c
+            self._last_ctrl_c = now
+            is_double = prev is not None and (now - prev) <= _DOUBLE_CTRL_C_WINDOW
+            currently_paused = self._paused
+
+        if is_double:
+            self.request_stop()
+            return "stop"
+        if currently_paused:
+            self.resume()
+            return "resume"
+        self.pause()
+        return "pause"
 
     def is_paused(self) -> bool:
         with self._lock:
