@@ -78,10 +78,9 @@ class AsyncLoopRunner:
         action = control.on_ctrl_c()
         message = {
             "pause": (
-                "\n  ⏸  일시정지됨 · 재개하려면 Ctrl+C, "
-                "중지하려면 Ctrl+C를 빠르게 두 번 누르세요."
+                "\n  ⏸  일시정지됨 · 중지하려면 Ctrl+C를 한 번 더 누르세요 "
+                "(재개는 오버레이 ▶ 버튼)."
             ),
-            "resume": "\n  ▶  재개됨.",
             "stop": "\n  ■  중지 요청됨. 안전하게 마무리하는 중…",
         }.get(action, "")
         if message:

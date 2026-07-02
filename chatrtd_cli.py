@@ -923,8 +923,8 @@ class ChatRTDCLI:
         c.print(f"  [muted]query:[/muted]  {query}")
         if mode in {"semi", "manual"}:
             c.print(
-                f"  [muted]hint :[/muted]  [muted]Ctrl+C 일시정지/재개 · "
-                f"Ctrl+C 빠르게 두 번 중지[/muted]"
+                f"  [muted]hint :[/muted]  [muted]Ctrl+C 일시정지 · "
+                f"한 번 더 누르면 중지 (재개는 오버레이 ▶)[/muted]"
             )
         c.print()
 
@@ -1102,15 +1102,19 @@ class ChatRTDCLI:
     def _cmd_files(self, parts: list[str]) -> None:
         """파일 접근 허용 경로 확인 및 예외 경로 추가/제거.
 
-        기본적으로 워크스페이스(cwd) 밖의 파일은 차단됩니다. 여기서 예외 경로를
-        추가하면 해당 디렉터리 하위 파일을 읽고 쓸 수 있습니다. 추가한 경로는
-        현재 세션에 즉시 반영되며(CHATRTD_ALLOWED_PATHS 환경변수), 영구 반영은
-        config/app_config.yaml 의 file_access.allowed_paths 에 등록하세요.
+        기본적으로 워크스페이스(cwd) 밖의 파일은 차단됩니다. 예외 경로를 추가하면
+        해당 디렉터리 하위 파일을 읽고 쓸 수 있습니다. 추가한 경로는 공유 파일
+        (config/allowed_paths.local)에 저장되어 CLI와 MCP 서버 프로세스 양쪽에
+        즉시 반영됩니다. 영구/버전관리 반영은 config/app_config.yaml 의
+        file_access.allowed_paths 에 등록하세요.
         """
         from core.file_path_policy import (
             ALLOWED_PATHS_ENV,
             _env_allowed_paths,
+            add_allowed_path,
             get_allowed_file_roots,
+            read_local_allowed_paths,
+            remove_allowed_path,
         )
 
         c = self.console
@@ -1121,19 +1125,15 @@ class ChatRTDCLI:
                 c.print(f"  [err]usage:[/err] /files {sub} <path>\n")
                 return
             raw = " ".join(parts[1:]).strip().strip('"').strip("'")
-            norm = str(Path(raw).expanduser())
-            current = _env_allowed_paths()
             if sub == "add":
-                if norm not in current:
-                    current.append(norm)
-                os.environ[ALLOWED_PATHS_ENV] = os.pathsep.join(current)
+                norm = add_allowed_path(raw)
+                if not Path(norm).exists():
+                    c.print(
+                        f"  [muted]![/muted]  [muted]경고: 경로가 아직 존재하지 않습니다 — {norm}[/muted]"
+                    )
                 c.print(f"  [ok]✓[/ok]  예외 경로 추가: [secondary]{norm}[/secondary]\n")
             else:
-                current = [p for p in current if p != norm]
-                if current:
-                    os.environ[ALLOWED_PATHS_ENV] = os.pathsep.join(current)
-                else:
-                    os.environ.pop(ALLOWED_PATHS_ENV, None)
+                norm = remove_allowed_path(raw)
                 c.print(f"  [ok]✓[/ok]  예외 경로 제거: [secondary]{norm}[/secondary]\n")
             return
 
@@ -1146,6 +1146,13 @@ class ChatRTDCLI:
                 c.print(f"  [tool]◆[/tool]  {root}")
         else:
             c.print(f"  [err]✗[/err]  [muted]허용 경로가 없어 파일 접근이 차단됩니다.[/muted]")
+
+        local_paths = read_local_allowed_paths()
+        if local_paths:
+            c.print()
+            c.print(f"  [muted]exception paths (config/allowed_paths.local):[/muted]")
+            for path in local_paths:
+                c.print(f"  [muted]•[/muted]  {path}")
 
         env_paths = _env_allowed_paths()
         if env_paths:

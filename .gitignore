@@ -19,6 +19,9 @@ tool_calling_dataset.jsonl
 # 실제 설정 파일 (API 키, 프로그램 경로 등 민감 정보 포함)
 config/app_config.yaml
 
+# /files 명령으로 관리하는 로컬 파일 접근 예외 경로 (사용자별)
+config/allowed_paths.local
+
 # 스킬별 실제 설정 파일 (.example 파일은 추적됨)
 skills/edit_source_by_find_replace/skill.yaml
 skills/edit_source_by_find_replace/skill.md
