@@ -12,6 +12,11 @@ from core.llm_config import load_app_config
 # os.pathsep(윈도우 ';', POSIX ':')로 여러 경로를 구분합니다.
 ALLOWED_PATHS_ENV = "CHATRTD_ALLOWED_PATHS"
 
+# CLI(`/files add`)와 MCP 서버는 별도 프로세스이므로, 환경변수만으로는 서버
+# 프로세스에 예외 경로가 전달되지 않습니다. 그래서 두 프로세스가 공유하는
+# 디스크 파일에 예외 경로를 저장하고, 파일 접근 검사 시마다 새로 읽습니다.
+_LOCAL_ALLOWLIST_FILENAME = "allowed_paths.local"
+
 
 def _env_allowed_paths() -> List[str]:
     """환경변수로 지정된 예외 허용 경로 목록을 반환합니다."""
@@ -19,6 +24,55 @@ def _env_allowed_paths() -> List[str]:
     if not raw or not raw.strip():
         return []
     return [part.strip() for part in raw.split(os.pathsep) if part.strip()]
+
+
+def _local_allowlist_path() -> Path:
+    """프로세스 간 공유되는 예외 경로 저장 파일 경로."""
+    return Path(__file__).resolve().parent.parent / "config" / _LOCAL_ALLOWLIST_FILENAME
+
+
+def read_local_allowed_paths() -> List[str]:
+    """디스크에 저장된 예외 허용 경로 목록을 읽습니다 (매 호출마다 새로 읽음)."""
+    path = _local_allowlist_path()
+    try:
+        if not path.exists():
+            return []
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    result: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            result.append(stripped)
+    return result
+
+
+def _write_local_allowed_paths(paths: List[str]) -> None:
+    path = _local_allowlist_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = "# chatRTD 파일 접근 예외 경로 (자동 생성) — CLI의 /files 명령으로 관리하세요.\n"
+    body = "\n".join(paths)
+    path.write_text(header + body + ("\n" if body else ""), encoding="utf-8")
+
+
+def add_allowed_path(path: str) -> str:
+    """예외 허용 경로를 영구(공유 파일)로 추가하고 정규화된 경로를 반환합니다."""
+    norm = str(Path(path).expanduser())
+    current = read_local_allowed_paths()
+    if norm not in current:
+        current.append(norm)
+        _write_local_allowed_paths(current)
+    return norm
+
+
+def remove_allowed_path(path: str) -> str:
+    """예외 허용 경로를 공유 파일에서 제거하고 정규화된 경로를 반환합니다."""
+    norm = str(Path(path).expanduser())
+    current = read_local_allowed_paths()
+    if norm in current:
+        _write_local_allowed_paths([p for p in current if p != norm])
+    return norm
 
 
 def _normalize_root(path: Path) -> Path:
@@ -60,8 +114,10 @@ def get_file_access_settings(config_path: Optional[str] = None) -> dict:
     if isinstance(raw_paths, list):
         allowed_paths = [str(p).strip() for p in raw_paths if str(p).strip()]
 
-    # 환경변수(CHATRTD_ALLOWED_PATHS)로 지정한 예외 경로를 병합합니다.
+    # 환경변수(CHATRTD_ALLOWED_PATHS) 및 공유 파일(allowed_paths.local)로 지정한
+    # 예외 경로를 병합합니다. 공유 파일은 CLI와 MCP 서버 프로세스가 함께 읽습니다.
     allowed_paths.extend(_env_allowed_paths())
+    allowed_paths.extend(read_local_allowed_paths())
 
     return {
         "allow_workspace": bool(allow_workspace),

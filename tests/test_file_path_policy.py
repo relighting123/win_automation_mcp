@@ -8,11 +8,15 @@ from unittest.mock import patch
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+import core.file_path_policy as fpp
 from core.file_path_policy import (
     ALLOWED_PATHS_ENV,
+    add_allowed_path,
     get_allowed_file_roots,
     get_file_access_settings,
     is_path_allowed,
+    read_local_allowed_paths,
+    remove_allowed_path,
     resolve_allowed_file,
 )
 
@@ -119,6 +123,57 @@ class FilePathPolicyTest(unittest.TestCase):
                     settings = get_file_access_settings()
             self.assertIn(str(first), settings["allowed_paths"])
             self.assertIn(str(second), settings["allowed_paths"])
+
+    def test_local_allowlist_add_remove_and_merge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            allowlist_file = Path(tmp) / "allowed_paths.local"
+            exception_dir = Path(tmp).resolve() / "rules"
+            exception_dir.mkdir()
+
+            with patch.object(
+                fpp, "_local_allowlist_path", return_value=allowlist_file
+            ):
+                # 추가 → 공유 파일에 기록되고 다시 읽힘
+                add_allowed_path(str(exception_dir))
+                self.assertIn(str(exception_dir), read_local_allowed_paths())
+
+                # get_file_access_settings 가 공유 파일 경로를 병합해야 함
+                with patch(
+                    "core.file_path_policy.load_app_config",
+                    return_value={"file_access": {"allow_workspace": True, "allowed_paths": []}},
+                ):
+                    settings = get_file_access_settings()
+                self.assertIn(str(exception_dir), settings["allowed_paths"])
+
+                # 제거 → 목록에서 사라짐
+                remove_allowed_path(str(exception_dir))
+                self.assertNotIn(str(exception_dir), read_local_allowed_paths())
+
+    def test_local_allowlist_enables_file_access_across_process(self) -> None:
+        """공유 파일에 등록된 예외 경로로 워크스페이스 밖 파일이 허용되어야 한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            allowlist_file = Path(tmp) / "allowed_paths.local"
+            workspace = Path(tmp).resolve() / "project"
+            workspace.mkdir()
+            exception_dir = Path(tmp).resolve() / "external"
+            exception_dir.mkdir()
+            target = exception_dir / "data.rul"
+            target.write_text("x", encoding="utf-8")
+
+            with patch.object(
+                fpp, "_local_allowlist_path", return_value=allowlist_file
+            ):
+                with patch(
+                    "core.file_path_policy.load_app_config",
+                    return_value={"file_access": {"allow_workspace": True, "allowed_paths": []}},
+                ):
+                    # 등록 전에는 차단
+                    with self.assertRaises(ValueError):
+                        resolve_allowed_file(str(target), workspace=workspace)
+                    # 등록 후에는 허용
+                    add_allowed_path(str(exception_dir))
+                    resolved = resolve_allowed_file(str(target), workspace=workspace)
+                    self.assertEqual(resolved, target.resolve())
 
     def test_is_path_allowed_uses_relative_to_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
